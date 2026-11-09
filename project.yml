@@ -1,6 +1,7 @@
 name: Localia
 options:
   bundleIdPrefix: fr.vincentlauriat
+  developmentLanguage: en
   deploymentTarget:
     macOS: "14.0"
 packages:
@@ -18,7 +19,9 @@ targets:
         excludes:
           - Info.plist
           - Localia.entitlements
-          - Resources
+          - Resources/llmfit
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
       - path: Localia/Resources/llmfit
         buildPhase:
           copyFiles:
@@ -54,6 +57,33 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
-        GENERATE_INFOPLIST_FILE: NO
+  LocaliaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: LocaliaTests
+    dependencies:
+      - target: Localia
+      - package: LocaliaCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia.tests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Localia.app/Contents/MacOS/Localia"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  Localia:
+    build:
+      targets:
+        Localia: all
+        LocaliaTests: [test]
+    test:
+      targets:
+        - LocaliaTests
+      gatherCoverageData: false
