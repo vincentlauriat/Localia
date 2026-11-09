@@ -51,6 +51,9 @@ public struct Recommendation: Sendable {
         self.candidates = candidates; self.uncertain = uncertain; self.emptyReason = emptyReason
     }
 
+    /// Some models fit, but none reaches the speed floor: this Mac is slow for local Claude Code (spec 6.6).
+    public var allSlow: Bool { !candidates.isEmpty && candidates.allSatisfy(\.slow) }
+
     /// First candidate that is not slow, supports tools and is graded perfect or good.
     public var onboardingDefault: ModelCandidate? {
         candidates.first { !$0.slow && $0.supportsTools && ($0.fit == .perfect || $0.fit == .good) }

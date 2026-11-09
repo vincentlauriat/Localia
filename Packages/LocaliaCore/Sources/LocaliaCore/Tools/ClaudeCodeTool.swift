@@ -113,6 +113,18 @@ extension ClaudeCodeTool {
     }
 }
 
+extension ClaudeCodeTool {
+    /// Best-effort check for a cloud login: an `oauthAccount` in Claude Code's `~/.claude.json` (read only,
+    /// never written) or an `ANTHROPIC_API_KEY`. A GUI app does not see keys exported by the user's shell
+    /// rc, so a `false` here is a hint, never a reason to block a launch.
+    public static func hasCloudLogin(claudeJSON: URL, environment: [String: String]) -> Bool {
+        if let key = environment["ANTHROPIC_API_KEY"], !key.isEmpty { return true }
+        guard let data = try? Data(contentsOf: claudeJSON),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        return obj["oauthAccount"] is [String: Any]
+    }
+}
+
 private final class LocatedBinary: @unchecked Sendable {
     private let lock = NSLock()
     private var url: URL?

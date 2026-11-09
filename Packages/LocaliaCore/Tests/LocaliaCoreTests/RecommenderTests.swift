@@ -126,6 +126,10 @@ final class RecommenderTests: XCTestCase {
         XCTAssertTrue(r.candidates.allSatisfy(\.slow))
         let t = r.candidates.map(\.estimatedTPS)
         XCTAssertEqual(t, t.sorted(by: >))
+        XCTAssertTrue(r.allSlow, "the UI must say this Mac is slow for local Claude Code")
+        XCTAssertNil(r.emptyReason)
+        XCTAssertFalse(try rec(m5).allSlow)
+        XCTAssertFalse(Recommendation(candidates: [], uncertain: [], emptyReason: .nothingFits).allSlow)
     }
     func test_allFiltered_returnsEmptyReason() throws {
         let bad = try rows().filter { $0.name.lowercased().contains("uncensored") || $0.name.lowercased().contains("abliterated") }

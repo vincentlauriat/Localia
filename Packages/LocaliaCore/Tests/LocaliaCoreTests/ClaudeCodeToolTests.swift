@@ -122,4 +122,21 @@ final class ClaudeCodeToolTests: XCTestCase {
         XCTAssertEqual(runner.calls.first?.0.path, "/bin/bash")
         XCTAssertEqual(runner.calls.first?.1, ["-c", "curl -fsSL https://claude.ai/install.sh | bash"])
     }
+
+    // MARK: - Final review: cloud login hint (spec 6.4)
+
+    func test_hasCloudLogin_readsOAuthAccountOrAPIKey() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("login-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let json = dir.appendingPathComponent(".claude.json")
+        XCTAssertFalse(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: [:]), "no file")
+        try #"{"numStartups":3}"#.write(to: json, atomically: true, encoding: .utf8)
+        XCTAssertFalse(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: ["ANTHROPIC_API_KEY": ""]))
+        XCTAssertTrue(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: ["ANTHROPIC_API_KEY": "sk-x"]))
+        try #"{"oauthAccount":{"emailAddress":"a@b"}}"#.write(to: json, atomically: true, encoding: .utf8)
+        XCTAssertTrue(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: [:]))
+        try "not json".write(to: json, atomically: true, encoding: .utf8)
+        XCTAssertFalse(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: [:]))
+    }
 }
