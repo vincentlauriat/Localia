@@ -146,7 +146,7 @@ final class LlamaCppEngineTests: XCTestCase {
         try fakeModel("o/s/b-Q4_K_M-00002-of-00002.gguf", bytes: 7)
         let models = try await engine.installedModels()
         XCTAssertEqual(models.map(\.name), ["o/r/a-Q4_K_M.gguf", "o/s/b-Q4_K_M-00001-of-00002.gguf"])
-        XCTAssertEqual(models[1].sizeGB, 12e-9, accuracy: 1e-12)
+        XCTAssertEqual(models[1].sizeGB, 12 / 1_073_741_824.0, accuracy: 1e-12)
     }
 
     func test_load_launchesWithExactArgs_andMMProj() async throws {
@@ -284,7 +284,7 @@ final class LlamaCppEngineTests: XCTestCase {
                                    startupTimeout: 1, pollInterval: 0.02, inspector: inspector)
         let loaded = try await fresh.loadedModels()
         XCTAssertEqual(loaded.map(\.name), ["o/r/a-Q4_K_M.gguf"])
-        XCTAssertEqual(loaded[0].memoryGB, 8e-9, accuracy: 1e-12)
+        XCTAssertEqual(loaded[0].memoryGB, 8 / 1_073_741_824.0, accuracy: 1e-12)
         // delete of the served model stops our recorded server first.
         try await fresh.delete("o/r/a-Q4_K_M.gguf")
         XCTAssertEqual(inspector.signals.first?.0, 321)

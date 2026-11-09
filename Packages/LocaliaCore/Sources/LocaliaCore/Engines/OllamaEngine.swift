@@ -3,6 +3,8 @@ import Foundation
 /// Ollama as an inference engine. Reuses the user's own Ollama (server, app or CLI) when present;
 /// otherwise installs the CLI-only `ollama-darwin.tgz` under `AppSupport/engines/ollama`.
 public actor OllamaEngine: Engine {
+    /// How long a loaded model stays resident; also used by the speed test so it does not reset it.
+    public static let keepAlive = "30m"
     public nonisolated let id = EngineID.ollama
     public nonisolated let baseURL: URL
 
@@ -244,7 +246,7 @@ public actor OllamaEngine: Engine {
         }
     }
 
-    private static func gb(_ v: Any?) -> Double { ((v as? NSNumber)?.doubleValue ?? 0) / 1e9 }
+    private static func gb(_ v: Any?) -> Double { ((v as? NSNumber)?.doubleValue ?? 0) / 1_073_741_824 }
 
     public func pull(_ c: ModelCandidate, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> String {
         let tag = "hf.co/\(c.ggufRepo):\(c.quant)"
@@ -306,7 +308,7 @@ public actor OllamaEngine: Engine {
     /// `contextTokens` is already baked into the `-localia` variant by `pull`, so it is not sent again:
     /// a different `num_ctx` here would force Ollama to reload the model.
     public func load(_ modelName: String, contextTokens: Int) async throws {
-        _ = try await send(try post("api/generate", ["model": modelName, "keep_alive": "30m"], timeout: 300))
+        _ = try await send(try post("api/generate", ["model": modelName, "keep_alive": Self.keepAlive], timeout: 300))
     }
 
     public func unload(_ modelName: String) async throws {

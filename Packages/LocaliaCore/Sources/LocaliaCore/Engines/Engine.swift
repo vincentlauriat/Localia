@@ -11,12 +11,14 @@ public enum InstallState: Sendable, Equatable {
 
 public struct InstalledModel: Sendable, Equatable {
     public let name: String
+    /// GiB (bytes / 1024^3).
     public let sizeGB: Double
     public init(name: String, sizeGB: Double) { self.name = name; self.sizeGB = sizeGB }
 }
 
 public struct LoadedModel: Sendable, Equatable {
     public let name: String
+    /// GiB (bytes / 1024^3).
     public let memoryGB: Double
     public init(name: String, memoryGB: Double) { self.name = name; self.memoryGB = memoryGB }
 }

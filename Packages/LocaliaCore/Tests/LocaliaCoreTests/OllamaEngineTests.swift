@@ -134,9 +134,9 @@ final class OllamaEngineTests: XCTestCase {
         }
         let engine = makeEngine()
         let installed = try await engine.installedModels()
-        XCTAssertEqual(installed, [InstalledModel(name: "a:latest", sizeGB: 2.0)])
+        XCTAssertEqual(installed, [InstalledModel(name: "a:latest", sizeGB: 2e9 / 1_073_741_824)])
         let loaded = try await engine.loadedModels()
-        XCTAssertEqual(loaded, [LoadedModel(name: "a:latest", memoryGB: 3.0)])
+        XCTAssertEqual(loaded, [LoadedModel(name: "a:latest", memoryGB: 3e9 / 1_073_741_824)])
     }
 
     func test_loadUnloadDelete_requestBodies() async throws {

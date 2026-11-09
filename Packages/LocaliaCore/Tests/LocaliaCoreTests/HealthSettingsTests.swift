@@ -22,6 +22,8 @@ final class SpeedMeterTests: XCTestCase {
         let gen = EngineStubProtocol.recorded.first { $0.path == "/api/generate" }?.json
         XCTAssertEqual((gen?["options"] as? NSDictionary)?["num_predict"] as? Int, 64)
         XCTAssertEqual(gen?["stream"] as? Bool, false)
+        XCTAssertEqual(gen?["keep_alive"] as? String, OllamaEngine.keepAlive)
+        XCTAssertEqual(OllamaEngine.keepAlive, "30m")
     }
 
     func test_speedMeter_parsesLlamaTimings() async throws {

@@ -250,7 +250,7 @@ public actor LlamaCppEngine: Engine {
     }
 
     public func installedModels() async throws -> [InstalledModel] {
-        scanModels().map { InstalledModel(name: $0.name, sizeGB: Double($0.sizeBytes) / 1e9) }
+        scanModels().map { InstalledModel(name: $0.name, sizeGB: Double($0.sizeBytes) / 1_073_741_824) }
     }
 
     public func loadedModels() async throws -> [LoadedModel] {
@@ -263,7 +263,7 @@ public actor LlamaCppEngine: Engine {
             name = (obj?["data"] as? [[String: Any]])?.first?["id"] as? String
         }
         guard let name, let m = scanModels().first(where: { $0.name == name }) else { return [] }
-        return [LoadedModel(name: name, memoryGB: Double(m.sizeBytes) / 1e9)]
+        return [LoadedModel(name: name, memoryGB: Double(m.sizeBytes) / 1_073_741_824)]
     }
 
     struct HFFile: Equatable { let path: String; let size: Int64; let sha256: String }

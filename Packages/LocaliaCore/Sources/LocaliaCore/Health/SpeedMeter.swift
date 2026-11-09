@@ -34,6 +34,7 @@ public struct SpeedMeter: Sendable {
 
     private func measureOllama(_ engine: any Engine, _ model: String) async throws -> (Double, Double) {
         let body: [String: Any] = ["model": model, "prompt": Self.probePrompt, "stream": false,
+                                   "keep_alive": OllamaEngine.keepAlive,
                                    "options": ["num_predict": Self.probeTokens]]
         let obj = try await postJSON(engine.baseURL.appendingPathComponent("api/generate"), body)
         if let err = obj["error"] as? String { throw EngineError.server(err) }
@@ -63,6 +64,7 @@ public struct SpeedMeter: Sendable {
               let tps = (timings["predicted_per_second"] as? NSNumber)?.doubleValue, tps > 0
         else { throw SpeedMeterError.badResponse("missing timings.predicted_per_second") }
 
+        // Note: RSS may undercount mmapped / Metal-resident weights, so this memory figure is a lower bound.
         guard let llama = engine as? LlamaCppEngine else { throw SpeedMeterError.unsupportedEngine }
         guard let pid = await llama.serverPID(), let rss = rssProvider(pid) else {
             throw SpeedMeterError.badResponse("llama-server pid / RSS unavailable")
