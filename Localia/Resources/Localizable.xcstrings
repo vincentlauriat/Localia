@@ -1937,6 +1937,22 @@
         }
       }
     },
+    "No model yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model yet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle pour l’instant"
+          }
+        }
+      }
+    },
     "No session launched by Localia is running.": {
       "localizations": {
         "en": {
@@ -2637,6 +2653,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Désinstaller %@ ?"
+          }
+        }
+      }
+    },
+    "Unknown folder": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown folder"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dossier inconnu"
+          }
+        }
+      }
+    },
+    "Unload the models Localia loaded": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unload the models Localia loaded"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décharger les modèles chargés par Localia"
           }
         }
       }

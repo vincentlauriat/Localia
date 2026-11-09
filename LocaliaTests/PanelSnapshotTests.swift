@@ -13,6 +13,8 @@ import LocaliaCore
 final class PanelSnapshotTests: XCTestCase {
     private var base: URL!
     private var suite: String!
+    /// One defaults suite per variant, so local mode and the last model never leak from one variant to the next.
+    private var suites: [String] = []
 
     override func setUp() async throws {
         base = FileManager.default.temporaryDirectory.appendingPathComponent("LocaliaPanelTests-\(UUID().uuidString)")
@@ -22,18 +24,18 @@ final class PanelSnapshotTests: XCTestCase {
 
     override func tearDown() async throws {
         try? FileManager.default.removeItem(at: base)
-        UserDefaults().removePersistentDomain(forName: suite)
+        for s in suites + [suite].compactMap({ $0 }) { UserDefaults().removePersistentDomain(forName: s) }
     }
 
     private static let served = "qwen3-coder:30b"
 
-    private func makeModel(heavyApps: [String] = []) -> AppModel {
+    private func makeModel(heavyApps: [String] = [], installed: [String] = [served, "gemma3:12b"]) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         settings.modelIDs = [Self.served: "Qwen/Qwen3-Coder-30B-A3B-Instruct"]
         settings.measurements = Measurements(tps: ["Qwen/Qwen3-Coder-30B-A3B-Instruct": 32])
         settings.recentFolders = ["/Users/vincent/DevApps/Localia", "/Users/vincent/Documents/GitHub/ClaudeCockpit"]
-        let engine = FakeEngine(installed: [Self.served, "gemma3:12b"], loaded: [Self.served])
+        let engine = FakeEngine(installed: installed, loaded: installed.isEmpty ? [] : [Self.served])
         let deps = AppDependencies(
             settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
@@ -59,14 +61,17 @@ final class PanelSnapshotTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let lang = Bundle.main.preferredLocalizations.first ?? "en"
 
-        struct Variant { let name: String; let on: Bool; let heavy: [String]; let expanded: Bool }
+        struct Variant { let name: String; let on: Bool; let heavy: [String]; let expanded: Bool; var empty = false }
         let variants = [
             Variant(name: "off", on: false, heavy: [], expanded: false),
             Variant(name: "on", on: true, heavy: [], expanded: false),
             Variant(name: "on-expanded", on: true, heavy: ["Google Chrome", "Microsoft Teams"], expanded: true),
+            Variant(name: "empty", on: false, heavy: [], expanded: false, empty: true),
         ]
         for v in variants {
-            let model = makeModel(heavyApps: v.heavy)
+            suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
+            suites.append(suite)
+            let model = makeModel(heavyApps: v.heavy, installed: v.empty ? [] : [Self.served, "gemma3:12b"])
             await model.startEngine()
             await model.refreshAll()
             if v.on { await model.setLocalMode(true) }
@@ -76,22 +81,32 @@ final class PanelSnapshotTests: XCTestCase {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 await model.launch(folder: folder)
                 await model.refreshStatus()
-                XCTAssertEqual(model.runningSessions, [ModelKey(engine: .ollama, model: Self.served): 1])
+                XCTAssertEqual(model.runningSessions.map(\.model), [Self.served])
+                XCTAssertEqual(model.runningSessions.first?.folder?.lastPathComponent, "project")
             }
             XCTAssertEqual(model.isLocalModeOn, v.on)
             XCTAssertNil(model.alert)
             XCTAssertEqual(model.launchModel, v.on ? Self.served : nil)
             XCTAssertEqual(model.heavyApps, v.heavy)
             XCTAssertEqual(model.usedGB, 14.4, accuracy: 0.001)
-            let speed = model.wordsPerSecond(for: Self.served)
-            XCTAssertEqual(speed?.value ?? 0, 24, accuracy: 0.001)   // 32 tok/s x 0.75
-            XCTAssertEqual(speed?.measured, true)
+            if v.empty {
+                XCTAssertNil(model.chatModel(for: .ollama))
+            } else {
+                let speed = model.wordsPerSecond(for: Self.served)
+                XCTAssertEqual(speed?.value ?? 0, 24, accuracy: 0.001)   // 32 tok/s x 0.75
+                XCTAssertEqual(speed?.measured, true)
+            }
+            // Card state lives in the test suite, never in the app's own defaults.
+            let cards = UserDefaults(suiteName: suite)!
+            for key in [MenuBarPanel.Key.models, MenuBarPanel.Key.apps, MenuBarPanel.Key.sessions, MenuBarPanel.Key.engine] {
+                cards.set(v.expanded, forKey: key)
+            }
 
             for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 let url = dir.appendingPathComponent("panel-\(v.name)-\(suffix)-\(lang).png")
                 let size = render(MenuBarPanel(model: model, windows: WindowManager(model: model),
                                                updater: Updater(enabled: false), scrolls: false,
-                                               expansion: v.expanded ? .all : .init()),
+                                               store: cards, launchOpen: v.expanded),
                                   appearance: appearance, to: url)
                 XCTAssertGreaterThan(size.height, 300, url.lastPathComponent)
                 let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0

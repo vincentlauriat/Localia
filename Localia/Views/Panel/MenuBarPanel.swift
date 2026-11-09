@@ -3,38 +3,48 @@ import LocaliaCore
 import SwiftUI
 
 /// The menu-bar panel (`MenuBarExtra` in `.window` style), laid out like Juicy's: a hero card (model speed,
-/// free memory, local-mode badge, memory bar), three collapsible cards (installed models and engine, memory-
-/// hungry apps, running sessions), then a list card with the actions and the local-mode switch. Every action
-/// goes through `AppModel`.
+/// free memory, local-mode badge, memory bar), four collapsible cards (installed models, memory-hungry apps,
+/// running sessions, engine), then a list card with the actions and the local-mode switch. Every action goes
+/// through `AppModel`.
 struct MenuBarPanel: View {
     @ObservedObject var model: AppModel
     let windows: WindowManager
     let updater: Updater
     /// `false` renders the content without a scroll container: used by `PanelSizer` and snapshots.
     var scrolls = true
+    /// Where the open/closed state of the cards is kept (standard defaults in the app, a scratch suite in tests).
+    private let store: UserDefaults
 
-    /// Which collapsible parts are open (cards and the inline folder list).
-    struct Expansion: Equatable {
-        var launch = false
-        var models = false
-        var apps = false
-        var sessions = false
-        static let all = Expansion(launch: true, models: true, apps: true, sessions: true)
-    }
-
-    @State private var open: Expansion
+    @AppStorage private var modelsOpen: Bool
+    @AppStorage private var appsOpen: Bool
+    @AppStorage private var sessionsOpen: Bool
+    @AppStorage private var engineOpen: Bool
+    /// The inline folder list under "Launch Claude Code": not persisted, it is a submenu.
+    @State private var launchOpen: Bool
     @State private var freeing = false
     /// The panel's natural height, measured through AppKit (see `remeasure`).
     @State private var contentHeight: CGFloat = 0
     @State private var host = PanelHost()
 
+    enum Key {
+        static let models = "panel.modelsOpen"
+        static let apps = "panel.appsOpen"
+        static let sessions = "panel.sessionsOpen"
+        static let engine = "panel.engineOpen"
+    }
+
     init(model: AppModel, windows: WindowManager, updater: Updater, scrolls: Bool = true,
-         expansion: Expansion = Expansion()) {
+         store: UserDefaults = .standard, launchOpen: Bool = false) {
         self.model = model
         self.windows = windows
         self.updater = updater
         self.scrolls = scrolls
-        _open = State(initialValue: expansion)
+        self.store = store
+        _modelsOpen = AppStorage(wrappedValue: false, Key.models, store: store)
+        _appsOpen = AppStorage(wrappedValue: false, Key.apps, store: store)
+        _sessionsOpen = AppStorage(wrappedValue: false, Key.sessions, store: store)
+        _engineOpen = AppStorage(wrappedValue: false, Key.engine, store: store)
+        _launchOpen = State(initialValue: launchOpen)
     }
 
     // MARK: Height
@@ -46,20 +56,21 @@ struct MenuBarPanel: View {
     }
 
     /// Never zero: an unmeasured panel falls back to a plausible height and scrolls.
-    private var resolvedHeight: CGFloat { min(contentHeight > 0 ? contentHeight : 560, maxHeight) }
+    private var resolvedHeight: CGFloat { min(contentHeight > 0 ? contentHeight : 600, maxHeight) }
 
     private func remeasure() {
         contentHeight = PanelSizer.naturalHeight(of: MenuBarPanel(
-            model: model, windows: windows, updater: updater, scrolls: false, expansion: open))
+            model: model, windows: windows, updater: updater, scrolls: false, store: store, launchOpen: launchOpen))
     }
 
     /// Everything that changes how tall the panel wants to be. Text that merely gets longer is absorbed
     /// by the scroll view.
     private var layoutSignature: String {
-        let flags = [model.isLocalModeOn, isBusy, model.launchModel != nil, updater.isAvailable]
+        let flags = [modelsOpen, appsOpen, sessionsOpen, engineOpen, launchOpen, model.isLocalModeOn, isBusy,
+                     model.launchModel != nil]
         let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
                       model.recentFolders().count]
-        return "\(open)|\(flags)|\(counts)"
+        return "\(flags)|\(counts)"
     }
 
     // MARK: Body
@@ -90,6 +101,7 @@ struct MenuBarPanel: View {
             modelsCard
             appsCard
             sessionsCard
+            engineCard
             listCard
         }
         .padding(10)
@@ -104,46 +116,43 @@ struct MenuBarPanel: View {
         model.launchModel ?? model.loaded.first?.name ?? model.chatModel(for: model.settings.activeEngine)
     }
 
-    private var heroTint: Color { model.isLocalModeOn ? Theme.local : Theme.blue }
-
     private var heroCard: some View {
-        let speed = heroModel.flatMap { model.wordsPerSecond(for: $0) }
+        let served = heroModel
+        let speed = served.flatMap { model.wordsPerSecond(for: $0) }
         let number = speed.map { ($0.measured ? "" : "≈") + String(Int($0.value.rounded())) } ?? "—"
         let total = model.profile.totalRAMGB
         let fraction = total > 0 ? model.usedGB / total : 0
-        return VStack(alignment: .leading, spacing: 16) {
+        return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(number)
-                            .font(.display(46, weight: .bold))
+                            .font(.display(48, weight: speed == nil ? .light : .bold))
                             .monospacedDigit()
-                            .minimumScaleFactor(0.6)
-                        Text(String(localized: "words/s"))
-                            .font(.display(17, weight: .semibold))
+                        if speed != nil {
+                            Text(String(localized: "words/s"))
+                                .font(.display(18, weight: .semibold))
+                        }
                     }
-                    .foregroundStyle(heroTint)
+                    .foregroundStyle(speed == nil ? Color.secondary : Theme.local)
                     .lineLimit(1)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(Text(speed?.measured == false
                                              ? String(localized: "Estimated speed") : String(localized: "Speed")))
 
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "cpu")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(heroTint)
+                        Image(systemName: "cpu.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.accentInk)
                             .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(heroModel.map(model.displayName(for:)) ?? String(localized: "No local model"))
-                                .font(.system(size: 13, weight: .semibold))
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(AppModel.engineName(model.settings.activeEngine))
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
-                        }
+                        Text(heroLine(served))
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(3)
                     }
                 }
-                Spacer(minLength: 8)
+                // The left column takes exactly what the fixed-size right column leaves: no width to negotiate,
+                // so the wrapped model line has one height (a Spacer here made AppKit loop on constraints).
+                .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .trailing, spacing: 3) {
                     Text(String(localized: "Free memory").uppercased())
                         .font(.system(size: 11, weight: .semibold))
@@ -166,6 +175,12 @@ struct MenuBarPanel: View {
         .card()
     }
 
+    /// `<model> · <engine>`, or the empty state when nothing is installed.
+    private func heroLine(_ served: String?) -> String {
+        guard let served else { return String(localized: "No model yet") }
+        return "\(model.displayName(for: served)) · \(AppModel.engineName(model.settings.activeEngine))"
+    }
+
     /// "✈︎ Local mode" while local mode is on, a spinner while switching or loading, nothing otherwise.
     @ViewBuilder private var statusPill: some View {
         if isBusy {
@@ -182,9 +197,9 @@ struct MenuBarPanel: View {
                 Image(systemName: "airplane").font(.system(size: 11, weight: .bold))
                 Text(String(localized: "Local mode")).font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(Theme.local)
+            .foregroundStyle(Theme.accentInk)
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Theme.local.opacity(0.18), in: Capsule())
+            .background(Theme.accent.opacity(0.22), in: Capsule())
         }
     }
 
@@ -198,43 +213,13 @@ struct MenuBarPanel: View {
 
     private var modelsCard: some View {
         DisclosureCard(title: String(localized: "Installed models"), icon: "square.stack.3d.up.fill",
-                       iconColor: Theme.blue, value: String(model.installed.count), expanded: $open.models) {
-            Picker(String(localized: "Active Engine"), selection: Binding(
-                get: { model.settings.activeEngine },
-                set: { id in Task { await model.setActiveEngine(id) } })) {
-                ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-
-            Button {
-                Task {
-                    if model.activeServing { await model.stopEngine() } else { await model.startEngine() }
-                    presentAlertIfNeeded()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(model.activeServing ? Theme.local : Theme.slate.opacity(0.6))
-                        .frame(width: 7, height: 7)
-                    Text("\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(model.activeServing ? String(localized: "Stop \(engineName)")
-                                             : String(localized: "Start \(engineName)"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(model.activeServing ? Theme.red : Theme.local)
-                }
-                .frame(minHeight: 28)
-            }
-            .buttonStyle(.plain)
-
+                       iconColor: Theme.blue, value: model.installed.isEmpty ? nil : String(model.installed.count),
+                       expanded: $modelsOpen) {
             if model.installed.isEmpty {
                 emptyLine(String(localized: "No local model"))
             } else {
-                ForEach(model.installed) { row in
-                    Divider().opacity(0.4)
+                ForEach(Array(model.installed.enumerated()), id: \.element.id) { i, row in
+                    if i > 0 { Divider().opacity(0.4) }
                     HStack(spacing: 8) {
                         Circle().fill(row.loaded ? Theme.local : Color.clear)
                             .frame(width: 6, height: 6)
@@ -257,7 +242,7 @@ struct MenuBarPanel: View {
     private var appsCard: some View {
         DisclosureCard(title: String(localized: "Apps using a lot of memory"), icon: "gauge.with.dots.needle.67percent",
                        iconColor: .primary, value: model.heavyApps.isEmpty ? nil : String(model.heavyApps.count),
-                       valueColor: Theme.orange, expanded: $open.apps) {
+                       valueColor: Theme.orange, expanded: $appsOpen) {
             if model.heavyApps.isEmpty {
                 emptyLine(String(localized: "None right now."))
             } else {
@@ -278,28 +263,66 @@ struct MenuBarPanel: View {
     }
 
     private var sessionsCard: some View {
-        let sessions = model.runningSessions.sorted { $0.key.model < $1.key.model }
-        let total = sessions.reduce(0) { $0 + $1.value }
+        let sessions = model.runningSessions
         return DisclosureCard(title: String(localized: "Running sessions"), icon: "terminal",
-                              iconColor: .primary, value: total == 0 ? nil : String(total),
-                              valueColor: Theme.local, expanded: $open.sessions) {
+                              iconColor: .primary, value: sessions.isEmpty ? nil : String(sessions.count),
+                              valueColor: Theme.local, expanded: $sessionsOpen) {
             if sessions.isEmpty {
                 emptyLine(String(localized: "No session launched by Localia is running."))
             } else {
-                ForEach(sessions, id: \.key) { key, count in
+                ForEach(Array(sessions.enumerated()), id: \.element.id) { i, s in
+                    if i > 0 { Divider().opacity(0.4) }
                     HStack(spacing: 8) {
-                        Circle().fill(Theme.local).frame(width: 6, height: 6)
+                        Image(systemName: "folder.fill").font(.system(size: 11)).foregroundStyle(Theme.local)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(model.displayName(for: key.model)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(AppModel.engineName(key.engine)).font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text(s.folder?.lastPathComponent ?? String(localized: "Unknown folder"))
+                                .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            Text("\(AppModel.engineName(s.engine)) · \(model.displayName(for: s.model))")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
                         }
-                        Spacer()
-                        Text(String(localized: "×\(String(count))"))
-                            .font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 5)
+                    .help(s.folder?.path ?? "")
                 }
             }
+        }
+    }
+
+    private var engineCard: some View {
+        DisclosureCard(title: String(localized: "Engine"), icon: "server.rack", iconColor: Theme.teal,
+                       value: "\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))",
+                       expanded: $engineOpen) {
+            Picker(String(localized: "Active Engine"), selection: Binding(
+                get: { model.settings.activeEngine },
+                set: { id in Task { await model.setActiveEngine(id) } })) {
+                ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+
+            Button {
+                Task {
+                    if model.activeServing { await model.stopEngine() } else { await model.startEngine() }
+                    presentAlertIfNeeded()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: model.activeServing ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(model.activeServing ? Theme.red : Theme.local)
+                    Text(model.activeServing ? String(localized: "Stop \(engineName)")
+                                             : String(localized: "Start \(engineName)"))
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                }
+                .frame(minHeight: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -336,14 +359,14 @@ struct MenuBarPanel: View {
     private var listCard: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { open.launch.toggle() }
+                withAnimation(.easeInOut(duration: 0.18)) { launchOpen.toggle() }
             } label: {
                 ListRow(icon: "terminal.fill", title: String(localized: "Launch Claude Code"), subtitle: launchSubtitle) {
-                    RowChevron(expanded: open.launch)
+                    RowChevron(expanded: launchOpen)
                 }
             }
             .buttonStyle(PanelRowButtonStyle())
-            if open.launch { launchList }
+            if launchOpen { launchList }
 
             RowDivider()
             Button {
@@ -356,23 +379,23 @@ struct MenuBarPanel: View {
 
             RowDivider()
             Button { show(.models) } label: {
-                ListRow(icon: "square.stack.3d.up", title: String(localized: "Models…"), subtitle: modelsSubtitle) {
+                ListRow(icon: "square.stack.3d.up.fill", title: String(localized: "Models…"), subtitle: modelsSubtitle) {
                     RowChevron()
                 }
             }
             .buttonStyle(PanelRowButtonStyle())
 
             RowDivider()
-            ListRow(icon: "airplane", iconColor: Theme.local, title: String(localized: "Local mode"),
-                    subtitle: model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
-                                                  : String(localized: "Claude Code uses Anthropic's cloud")) {
+            ListRow(icon: "airplane", iconColor: Theme.accentInk, title: String(localized: "Local mode")) {
                 HStack(spacing: 8) {
                     if model.switchingLocalMode { ProgressView().controlSize(.small) }
                     Toggle(String(localized: "Local mode"), isOn: localModeBinding)
-                        .toggleStyle(PillToggleStyle())
+                        .toggleStyle(PillToggleStyle(onColor: Theme.accent))
                         .disabled(model.switchingLocalMode)
                 }
             }
+            .help(model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
+                                      : String(localized: "Claude Code uses Anthropic's cloud"))
 
             RowDivider()
             Button {
@@ -380,7 +403,8 @@ struct MenuBarPanel: View {
                 freeing = true
                 Task { await model.freeMemory(); freeing = false }
             } label: {
-                ListRow(icon: "memorychip", title: String(localized: "Free Memory")) {
+                ListRow(icon: "memorychip.fill", title: String(localized: "Free Memory"),
+                        subtitle: String(localized: "Unload the models Localia loaded")) {
                     if freeing { ProgressView().controlSize(.small) }
                 }
             }
@@ -396,15 +420,15 @@ struct MenuBarPanel: View {
 
             RowDivider()
             Button { dismiss(); updater.checkForUpdates() } label: {
-                ListRow(icon: "arrow.triangle.2.circlepath", title: String(localized: "Check for Updates…"),
-                        subtitle: updater.isAvailable ? nil : String(localized: "Updates Unavailable in This Build"))
+                ListRow(icon: "arrow.triangle.2.circlepath", title: String(localized: "Check for Updates…"))
             }
             .buttonStyle(PanelRowButtonStyle())
             .disabled(!updater.isAvailable)
+            .help(updater.isAvailable ? "" : String(localized: "Updates Unavailable in This Build"))
 
             RowDivider()
             Button { show(.about) } label: {
-                ListRow(icon: "info.circle", title: String(localized: "About Localia"))
+                ListRow(icon: "info.circle.fill", title: String(localized: "About Localia")) { RowChevron() }
             }
             .buttonStyle(PanelRowButtonStyle())
 
@@ -413,7 +437,7 @@ struct MenuBarPanel: View {
                 ListRow(icon: "power", iconColor: Theme.red, title: String(localized: "Quit Localia")) {
                     if let v = Self.version {
                         Text(String(localized: "v\(v)"))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -457,7 +481,7 @@ struct MenuBarPanel: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 50)
+        .padding(.leading, 54)
         .padding(.trailing, 14)
         .frame(minHeight: 30)
     }
@@ -514,8 +538,8 @@ struct MenuBarPanel: View {
     }
 }
 
-/// A row of the list card, Juicy style: a primary-coloured SF Symbol (or a coloured one), title, optional
-/// grey subtitle, trailing accessory.
+/// A row of the list card, Juicy style: a large SF Symbol (primary, or a colour), title, optional grey
+/// subtitle, trailing accessory.
 struct ListRow<Trailing: View>: View {
     let icon: String
     var iconColor: Color = .primary
@@ -526,9 +550,9 @@ struct ListRow<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(iconColor)
-                .frame(width: 24)
+                .frame(width: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 14, weight: .medium))
                 if let subtitle {

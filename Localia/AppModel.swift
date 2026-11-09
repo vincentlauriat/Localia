@@ -68,8 +68,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var heavyApps: [String] = []
     /// Served name of the model a launch would use now; nil when local mode is off.
     @Published private(set) var launchModel: String?
-    /// Localia sessions still running, per (engine, model).
-    @Published private(set) var runningSessions: [ModelKey: Int] = [:]
+    /// Localia sessions still running, oldest first.
+    @Published private(set) var runningSessions: [RunningSession] = []
     /// True while local mode is being switched on or off.
     @Published private(set) var switchingLocalMode = false
     /// Selected tab of the Models window (0 Recommended, 1 Installed, 2 Downloads).
@@ -206,7 +206,7 @@ final class AppModel: ObservableObject {
     func refreshStatus() async {
         freeGB = deps.freeMemoryGB()
         heavyApps = deps.memoryGuard.check(requiredGB: 0, profile: profile)?.heavyApps ?? []
-        runningSessions = await tracker.sessionCounts()
+        runningSessions = await tracker.runningSessions()
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
@@ -422,7 +422,7 @@ final class AppModel: ObservableObject {
                 await undoLoad(loadedNow)   // no session will ever end to unload it
                 throw error
             }
-            if let session { await tracker.begin(id: sessionID, engine: session.engine, model: session.model) }
+            if let session { await tracker.begin(id: sessionID, engine: session.engine, model: session.model, folder: folder) }
             do { try await deps.terminal.open(scriptURL: url, in: settings.terminalApp) } catch {
                 // No window opened: end the session record so its model can be unloaded.
                 try? "1\n".write(to: url.deletingPathExtension().appendingPathExtension("done"),

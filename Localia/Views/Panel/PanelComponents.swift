@@ -37,7 +37,7 @@ struct PanelRowButtonStyle: ButtonStyle {
 
 /// Hairline between rows of a card, inset past the icon column.
 struct RowDivider: View {
-    var body: some View { Divider().opacity(0.4).padding(.leading, 50) }
+    var body: some View { Divider().opacity(0.4).padding(.leading, 54) }
 }
 
 /// Collapsible card with a chevron header (ported from ClaudeCockpit), with an optional value on the right.
