@@ -15,6 +15,44 @@ final class StallingProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+final class ChunkedProtocol: URLProtocol, @unchecked Sendable {
+    static let body = Data((0..<400_000).map { UInt8($0 % 241) })
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.scheme == "chunk" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                   headerFields: ["Content-Length": "\(Self.body.count)"])!
+        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+        let n = 8, size = Self.body.count / n
+        for i in 0..<n {
+            client?.urlProtocol(self, didLoad: Self.body.subdata(in: i * size..<(i + 1) * size))
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class NotFoundProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.scheme == "notfound" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil,
+                                   headerFields: ["Content-Type": "text/html"])!
+        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("<html>Not Found</html>".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class ProgressBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [(Int64, Int64?)] = []
+    func add(_ w: Int64, _ t: Int64?) { lock.lock(); calls.append((w, t)); lock.unlock() }
+    var all: [(Int64, Int64?)] { lock.lock(); defer { lock.unlock() }; return calls }
+}
+
 final class RecordingRunner: ProcessRunning, @unchecked Sendable {
     var calls: [(URL, [String])] = []
     var result = ProcessResult(status: 0, stdout: Data(), stderr: "")
@@ -40,7 +78,7 @@ final class DownloaderTests: XCTestCase {
     func hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
     func makeDownloader() -> Downloader {
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.protocolClasses = [StallingProtocol.self]
+        cfg.protocolClasses = [StallingProtocol.self, ChunkedProtocol.self, NotFoundProtocol.self]
         return Downloader(session: URLSession(configuration: cfg))
     }
 
@@ -88,7 +126,34 @@ final class DownloaderTests: XCTestCase {
         let task = Task { try await d.download(URL(string: "stall://x/y")!, to: dest, sha256: nil) { _, _ in } }
         try await Task.sleep(nanoseconds: 300_000_000)
         task.cancel()
-        do { _ = try await task.value; XCTFail("expected cancellation") } catch {}
+        do { _ = try await task.value; XCTFail("expected cancellation") } catch {
+            XCTAssertTrue(error is CancellationError || (error as? URLError)?.code == .cancelled,
+                          "expected cancellation, got \(error)")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dest.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dest.path + ".partial"))
+    }
+
+    func test_progress_reportsChunksAndCompletes() async throws {
+        let dest = dir.appendingPathComponent("p.bin")
+        let box = ProgressBox()
+        _ = try await makeDownloader().download(URL(string: "chunk://x/y")!, to: dest, sha256: nil) { w, t in box.add(w, t) }
+        let calls = box.all
+        let size = Int64(ChunkedProtocol.body.count)
+        XCTAssertGreaterThanOrEqual(calls.count, 1)
+        XCTAssertEqual(calls.last?.0, size)
+        XCTAssertEqual(calls.last?.1, size)
+        XCTAssertEqual(try Data(contentsOf: dest), ChunkedProtocol.body)
+    }
+
+    func test_badStatus_throwsAndLeavesNothing() async throws {
+        let dest = dir.appendingPathComponent("nf.bin")
+        do {
+            _ = try await makeDownloader().download(URL(string: "notfound://x/y")!, to: dest, sha256: nil) { _, _ in }
+            XCTFail("expected badStatus")
+        } catch let e as DownloadError {
+            XCTAssertEqual(e, .badStatus(404))
+        }
         XCTAssertFalse(FileManager.default.fileExists(atPath: dest.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: dest.path + ".partial"))
     }

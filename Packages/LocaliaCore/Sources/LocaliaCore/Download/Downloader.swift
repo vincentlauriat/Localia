@@ -18,21 +18,14 @@ public actor Downloader {
     }
 
     public func download(_ url: URL, to dest: URL, sha256: String?,
-                         progress: @Sendable (Int64, Int64?) -> Void) async throws -> URL {
+                         progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> URL {
         let partial = URL(fileURLWithPath: dest.path + ".partial")
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: partial)
         do {
-            try await withoutActuallyEscaping(progress) { esc in
-                let delegate = ProgressDelegate(esc)
-                let (tmp, response) = try await session.download(from: url, delegate: delegate)
-                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    try? FileManager.default.removeItem(at: tmp)
-                    throw DownloadError.badStatus(http.statusCode)
-                }
-                try Task.checkCancellation()
-                try FileManager.default.moveItem(at: tmp, to: partial)
-            }
+            let delegate = ProgressDelegate(progress, partial: partial)
+            defer { delegate.invalidate() }
+            try await delegate.run(session: session, url: url)
             try Task.checkCancellation()
             if let expected = sha256.map(Checksum.normalize) {
                 let actual = try Checksum.sha256Hex(of: partial)
@@ -69,24 +62,84 @@ public actor Downloader {
     }
 }
 
-/// Throttled progress forwarding (max ~10 Hz, always reports completion).
+/// Drives a classic download task with a per-task delegate so that cancellation,
+/// status checking and progress all live in one place. The progress closure is held
+/// optionally under a lock and dropped by `invalidate()`, since URLSession may retain
+/// the delegate after `run` returns.
 private final class ProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let report: @Sendable (Int64, Int64?) -> Void
     private let lock = NSLock()
+    private var report: (@Sendable (Int64, Int64?) -> Void)?
     private var last = Date.distantPast
+    private let partial: URL
+    private var task: URLSessionDownloadTask?
+    private var cancelled = false
+    private var failure: Error?
+    private var continuation: CheckedContinuation<Void, Error>?
 
-    init(_ report: @escaping @Sendable (Int64, Int64?) -> Void) { self.report = report }
+    init(_ report: @escaping @Sendable (Int64, Int64?) -> Void, partial: URL) {
+        self.report = report
+        self.partial = partial
+    }
+
+    func invalidate() {
+        lock.lock(); report = nil; lock.unlock()
+    }
+
+    func run(session: URLSession, url: URL) async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                let t = session.downloadTask(with: url)
+                t.delegate = self
+                lock.lock()
+                if cancelled { lock.unlock(); cont.resume(throwing: CancellationError()); return }
+                continuation = cont
+                task = t
+                lock.unlock()
+                t.resume()
+            }
+        } onCancel: {
+            lock.lock()
+            cancelled = true
+            let t = task
+            lock.unlock()
+            t?.cancel()
+        }
+    }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64,
                     totalBytesWritten written: Int64, totalBytesExpectedToWrite expected: Int64) {
         let total: Int64? = expected > 0 ? expected : nil
         let now = Date()
         lock.lock()
-        let due = now.timeIntervalSince(last) >= 0.1 || written == total
+        let cb = report
+        let due = cb != nil && (now.timeIntervalSince(last) >= 0.1 || written == total)
         if due { last = now }
         lock.unlock()
-        if due { report(written, total) }
+        if due { cb?(written, total) }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo _: URL) {}
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        if let http = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            setFailure(DownloadError.badStatus(http.statusCode))
+            return
+        }
+        do { try FileManager.default.moveItem(at: location, to: partial) }
+        catch { setFailure(error) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let cont = continuation
+        continuation = nil
+        let wasCancelled = cancelled
+        let err = error ?? failure
+        lock.unlock()
+        if wasCancelled { cont?.resume(throwing: CancellationError()) }
+        else if let err { cont?.resume(throwing: err) }
+        else { cont?.resume() }
+    }
+
+    private func setFailure(_ e: Error) {
+        lock.lock(); failure = e; lock.unlock()
+    }
 }
