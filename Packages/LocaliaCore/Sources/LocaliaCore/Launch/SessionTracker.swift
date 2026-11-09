@@ -1,31 +1,61 @@
 import Foundation
 
-/// Watches `<statusDir>/<id>.done` files written by launch scripts. The caller unloads a model
-/// once `modelsStillInUse()` no longer contains it after a `pollFinished()`.
-public actor SessionTracker {
-    private struct Session { let engine: EngineID; let model: String }
-    private let statusDir: URL
-    private var sessions: [UUID: Session] = [:]
+public struct ModelKey: Hashable, Sendable {
+    public let engine: EngineID
+    public let model: String
+    public init(engine: EngineID, model: String) { self.engine = engine; self.model = model }
+}
 
-    public init(statusDir: URL) { self.statusDir = statusDir }
+public struct FinishedSession: Equatable, Sendable {
+    public let id: UUID
+    public let engine: EngineID
+    public let model: String
+}
+
+/// Watches `<statusDir>/<id>.done` files written by launch scripts. The caller unloads a model
+/// when a finished session's (engine, model) is no longer in `modelsStillInUse()`.
+public actor SessionTracker {
+    private let statusDir: URL
+    private var sessions: [UUID: ModelKey] = [:]
+
+    /// Removes launch scripts and status files older than `maxAge` (leftovers of earlier runs).
+    public init(statusDir: URL, maxAge: TimeInterval = 24 * 3600, now: Date = Date()) {
+        self.statusDir = statusDir
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(at: statusDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for f in files where Self.isSessionFile(f) {
+            let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let date, now.timeIntervalSince(date) > maxAge { try? fm.removeItem(at: f) }
+        }
+    }
+
+    private static func isSessionFile(_ u: URL) -> Bool {
+        let n = u.lastPathComponent
+        return n.hasSuffix(".command") || n.hasSuffix(".done") || n.hasSuffix(".done.tmp")
+    }
 
     public func begin(id: UUID, engine: EngineID, model: String) {
         // A stale file from a previous run must not end the new session.
-        try? FileManager.default.removeItem(at: doneURL(id))
-        sessions[id] = Session(engine: engine, model: model)
+        try? FileManager.default.removeItem(at: file(id, "done"))
+        sessions[id] = ModelKey(engine: engine, model: model)
     }
 
-    /// Sessions whose `.done` file appeared since the last call; they are forgotten and their file removed.
-    public func pollFinished() async -> [UUID] {
-        let finished = sessions.keys.filter { FileManager.default.fileExists(atPath: doneURL($0).path) }
-        for id in finished {
-            sessions[id] = nil
-            try? FileManager.default.removeItem(at: doneURL(id))
+    /// Sessions whose `.done` file appeared since the last call. They are forgotten and their
+    /// `.command`, `.done` and `.done.tmp` files removed.
+    public func pollFinished() async -> [FinishedSession] {
+        let ids = sessions.keys.filter { FileManager.default.fileExists(atPath: file($0, "done").path) }
+        var out: [FinishedSession] = []
+        for id in ids {
+            guard let key = sessions.removeValue(forKey: id) else { continue }
+            for ext in ["done", "done.tmp", "command"] { try? FileManager.default.removeItem(at: file(id, ext)) }
+            out.append(FinishedSession(id: id, engine: key.engine, model: key.model))
         }
-        return finished
+        return out
     }
 
-    public func modelsStillInUse() -> Set<String> { Set(sessions.values.map(\.model)) }
+    public func modelsStillInUse() -> Set<ModelKey> { Set(sessions.values) }
 
-    private func doneURL(_ id: UUID) -> URL { statusDir.appendingPathComponent("\(id.uuidString).done") }
+    private func file(_ id: UUID, _ ext: String) -> URL {
+        statusDir.appendingPathComponent("\(id.uuidString).\(ext)")
+    }
 }

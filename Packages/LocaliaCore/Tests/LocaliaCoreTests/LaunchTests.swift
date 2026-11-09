@@ -29,7 +29,7 @@ final class LaunchScriptTests: XCTestCase {
         let folder = dir.appendingPathComponent("Dossier d'été $HOME \"q\"")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let cmd = ToolCommand(executable: URL(fileURLWithPath: "/bin/pwd"), arguments: [], environment: [:], unsetEnvironment: [])
-        let s = LaunchScriptBuilder().script(folder: folder, command: cmd, sessionID: UUID(), statusDir: dir)
+        let s = try LaunchScriptBuilder().script(folder: folder, command: cmd, sessionID: UUID(), statusDir: dir)
         let (status, out) = try run(s)
         XCTAssertEqual(status, 0)
         XCTAssertEqual(out.trimmingCharacters(in: .newlines), folder.path)
@@ -39,7 +39,7 @@ final class LaunchScriptTests: XCTestCase {
         let cmd = ToolCommand(executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: [],
                               environment: ["ANTHROPIC_MODEL": "it's $x", "FOO": "bar"],
                               unsetEnvironment: ["ANTHROPIC_AUTH_TOKEN"])
-        let s = LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: UUID(), statusDir: dir)
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: UUID(), statusDir: dir)
         let (_, out) = try run(s)
         XCTAssertFalse(out.contains("ANTHROPIC_AUTH_TOKEN"))
         XCTAssertTrue(out.contains("FOO=bar"))
@@ -49,20 +49,59 @@ final class LaunchScriptTests: XCTestCase {
     func test_scriptWritesDoneFileWithStatus() throws {
         let id = UUID()
         let cmd = ToolCommand(executable: URL(fileURLWithPath: "/usr/bin/false"), arguments: [], environment: [:], unsetEnvironment: [])
-        let s = LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: id, statusDir: dir)
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: id, statusDir: dir)
         let (status, _) = try run(s)
         XCTAssertEqual(status, 1)
         let done = dir.appendingPathComponent("\(id.uuidString).done")
         XCTAssertEqual(try String(contentsOf: done).trimmingCharacters(in: .whitespacesAndNewlines), "1")
     }
 
+    func test_doneFileWithHostileStatusDir() throws {
+        let hostile = dir.appendingPathComponent("Dossier d'été $HOME \"q\"")
+        try FileManager.default.createDirectory(at: hostile, withIntermediateDirectories: true)
+        let id = UUID()
+        let cmd = ToolCommand(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [], environment: [:], unsetEnvironment: [])
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: id, statusDir: hostile)
+        let (status, _) = try run(s)
+        XCTAssertEqual(status, 0)
+        let done = hostile.appendingPathComponent("\(id.uuidString).done")
+        XCTAssertEqual(try String(contentsOf: done).trimmingCharacters(in: .whitespacesAndNewlines), "0")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: done.path + ".tmp"))
+    }
+
+    func test_doneFileRecordsExitCode3() throws {
+        let id = UUID()
+        let cmd = ToolCommand(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 3"], environment: [:], unsetEnvironment: [])
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: id, statusDir: dir)
+        let (status, _) = try run(s)
+        XCTAssertEqual(status, 3)
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("\(id.uuidString).done")).trimmingCharacters(in: .whitespacesAndNewlines), "3")
+    }
+
+    func test_doneFileRecords143OnTerm() throws {
+        let id = UUID()
+        let cmd = ToolCommand(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "kill -TERM $PPID; sleep 1"], environment: [:], unsetEnvironment: [])
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: id, statusDir: dir)
+        _ = try run(s)
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("\(id.uuidString).done")).trimmingCharacters(in: .whitespacesAndNewlines), "143")
+    }
+
+    func test_invalidEnvironmentNameThrows() {
+        let cmd = ToolCommand(executable: URL(fileURLWithPath: "/bin/pwd"), arguments: [], environment: ["BAD-NAME": "x"], unsetEnvironment: [])
+        XCTAssertThrowsError(try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: UUID(), statusDir: dir)) {
+            XCTAssertEqual($0 as? LaunchScriptBuilder.BuildError, .invalidEnvironmentName("BAD-NAME"))
+        }
+        let cmd2 = ToolCommand(executable: URL(fileURLWithPath: "/bin/pwd"), arguments: [], environment: [:], unsetEnvironment: ["a b"])
+        XCTAssertThrowsError(try LaunchScriptBuilder().script(folder: dir, command: cmd2, sessionID: UUID(), statusDir: dir))
+    }
+
     func test_shellQuote() {
         XCTAssertEqual(LaunchScriptBuilder.shellQuote("a'b"), "'a'\\''b'")
     }
 
-    func test_scriptStartsWithNoRcShebang() {
+    func test_scriptStartsWithNoRcShebang() throws {
         let cmd = ToolCommand(executable: URL(fileURLWithPath: "/bin/pwd"), arguments: [], environment: [:], unsetEnvironment: [])
-        let s = LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: UUID(), statusDir: dir)
+        let s = try LaunchScriptBuilder().script(folder: dir, command: cmd, sessionID: UUID(), statusDir: dir)
         XCTAssertTrue(s.hasPrefix("#!/bin/zsh -f\n"))
     }
 }
@@ -113,6 +152,10 @@ final class SessionTrackerTests: XCTestCase {
     }
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
 
+    private func touchDone(_ id: UUID) throws {
+        try "0".write(to: dir.appendingPathComponent("\(id.uuidString).done"), atomically: true, encoding: .utf8)
+    }
+
     func test_sessionTracker_unloadsOnlyWhenLastSessionEnds() async throws {
         let t = SessionTracker(statusDir: dir)
         let a = UUID(), b = UUID(), c = UUID()
@@ -120,19 +163,60 @@ final class SessionTrackerTests: XCTestCase {
         await t.begin(id: b, engine: .ollama, model: "m1")
         await t.begin(id: c, engine: .llamaCpp, model: "m2")
         var inUse = await t.modelsStillInUse()
-        XCTAssertEqual(inUse, ["m1", "m2"])
-        try "0".write(to: dir.appendingPathComponent("\(a.uuidString).done"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1"), ModelKey(engine: .llamaCpp, model: "m2")])
+        try touchDone(a)
         var finished = await t.pollFinished()
-        XCTAssertEqual(finished, [a])
+        XCTAssertEqual(finished, [FinishedSession(id: a, engine: .ollama, model: "m1")])
         inUse = await t.modelsStillInUse()
-        XCTAssertEqual(inUse, ["m1", "m2"], "m1 still has session b")
-        try "0".write(to: dir.appendingPathComponent("\(b.uuidString).done"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(inUse.contains(ModelKey(engine: .ollama, model: "m1")), "m1 still has session b")
+        try touchDone(b)
         finished = await t.pollFinished()
-        XCTAssertEqual(finished, [b])
+        XCTAssertEqual(finished.map(\.id), [b])
         inUse = await t.modelsStillInUse()
-        XCTAssertEqual(inUse, ["m2"])
+        XCTAssertEqual(inUse, [ModelKey(engine: .llamaCpp, model: "m2")])
         let again = await t.pollFinished()
         XCTAssertEqual(again, [])
+    }
+
+    func test_sessionTracker_sameModelNameOnTwoEngines() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let a = UUID(), b = UUID()
+        await t.begin(id: a, engine: .ollama, model: "same")
+        await t.begin(id: b, engine: .llamaCpp, model: "same")
+        try touchDone(a)
+        let finished = await t.pollFinished()
+        XCTAssertEqual(finished, [FinishedSession(id: a, engine: .ollama, model: "same")])
+        let inUse = await t.modelsStillInUse()
+        XCTAssertFalse(inUse.contains(ModelKey(engine: .ollama, model: "same")), "ollama copy must be unloadable")
+        XCTAssertTrue(inUse.contains(ModelKey(engine: .llamaCpp, model: "same")))
+    }
+
+    func test_sessionTracker_removesFilesOfFinishedSession() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let a = UUID()
+        await t.begin(id: a, engine: .ollama, model: "m")
+        for ext in ["command", "done.tmp"] {
+            try "x".write(to: dir.appendingPathComponent("\(a.uuidString).\(ext)"), atomically: true, encoding: .utf8)
+        }
+        try touchDone(a)
+        _ = await t.pollFinished()
+        for ext in ["command", "done", "done.tmp"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(a.uuidString).\(ext)").path), ext)
+        }
+    }
+
+    func test_sessionTracker_initPrunesOldFilesOnly() throws {
+        let old = dir.appendingPathComponent("\(UUID().uuidString).command")
+        let fresh = dir.appendingPathComponent("\(UUID().uuidString).done")
+        let other = dir.appendingPathComponent("keep.txt")
+        for f in [old, fresh, other] { try "x".write(to: f, atomically: true, encoding: .utf8) }
+        let twoDaysAgo = Date().addingTimeInterval(-48 * 3600)
+        try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: old.path)
+        try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: other.path)
+        _ = SessionTracker(statusDir: dir)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
     }
 }
 

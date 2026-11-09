@@ -5,6 +5,8 @@ import Foundation
 public struct LaunchScriptBuilder: Sendable {
     public init() {}
 
+    public enum BuildError: Error, Equatable { case invalidEnvironmentName(String) }
+
     /// Single quotes, with `'` written as `'\''`. Nothing inside single quotes is expanded by zsh.
     public static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -15,22 +17,28 @@ public struct LaunchScriptBuilder: Sendable {
         return s.unicodeScalars.allSatisfy { $0 == "_" || ($0.isASCII && CharacterSet.alphanumerics.contains($0)) }
     }
 
-    public func script(folder: URL, command: ToolCommand, sessionID: UUID, statusDir: URL) -> String {
+    public func script(folder: URL, command: ToolCommand, sessionID: UUID, statusDir: URL) throws -> String {
         let q = Self.shellQuote
+        for name in command.unsetEnvironment + Array(command.environment.keys) where !Self.isValidName(name) {
+            throw BuildError.invalidEnvironmentName(name)
+        }
         let done = statusDir.appendingPathComponent("\(sessionID.uuidString).done").path
         var lines = [
             "#!/bin/zsh -f",
             "# Localia session \(sessionID.uuidString)",
             "_localia_status=1",
+            "_localia_done=\(q(done))",
             // The status file is written whatever happens (command end, failed cd, closed window).
-            "trap 'print -r -- \"$_localia_status\" > \(q(done + ".tmp")) && mv -f \(q(done + ".tmp")) \(q(done))' EXIT",
-            "trap 'exit 129' HUP TERM",
+            // The path lives in a variable so no quoting nests inside the trap body.
+            "trap 'print -r -- \"$_localia_status\" > \"$_localia_done.tmp\" && mv -f -- \"$_localia_done.tmp\" \"$_localia_done\"' EXIT",
+            "trap '_localia_status=129; exit 129' HUP",
+            "trap '_localia_status=143; exit 143' TERM",
             "cd -- \(q(folder.path)) || exit 1",
         ]
-        for name in command.unsetEnvironment.sorted() where Self.isValidName(name) {
+        for name in command.unsetEnvironment.sorted() {
             lines.append("unset \(name)")
         }
-        for (name, value) in command.environment.sorted(by: { $0.key < $1.key }) where Self.isValidName(name) {
+        for (name, value) in command.environment.sorted(by: { $0.key < $1.key }) {
             lines.append("export \(name)=\(q(value))")
         }
         lines.append(([q(command.executable.path)] + command.arguments.map(q)).joined(separator: " "))
