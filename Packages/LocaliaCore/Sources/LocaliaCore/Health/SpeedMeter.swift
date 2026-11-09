@@ -22,20 +22,21 @@ public struct SpeedMeter: Sendable {
         self.rssProvider = rssBytes
     }
 
-    /// Memory is reported in GiB, like `MachineProfile`.
-    public func measure(engine: any Engine, model: String) async throws -> (tps: Double, memoryGB: Double) {
+    /// Memory is reported in GiB, like `MachineProfile`. `loadedByLocalia`: only a model Localia loaded
+    /// gets Localia's keep_alive; for anyone else's the probe sends none, so it does not override theirs.
+    public func measure(engine: any Engine, model: String, loadedByLocalia: Bool) async throws -> (tps: Double, memoryGB: Double) {
         switch engine.id {
-        case .ollama: return try await measureOllama(engine, model)
+        case .ollama: return try await measureOllama(engine, model, keepAlive: loadedByLocalia)
         case .llamaCpp: return try await measureLlama(engine, model)
         }
     }
 
     private static let gib = 1024.0 * 1024.0 * 1024.0
 
-    private func measureOllama(_ engine: any Engine, _ model: String) async throws -> (Double, Double) {
-        let body: [String: Any] = ["model": model, "prompt": Self.probePrompt, "stream": false,
-                                   "keep_alive": OllamaEngine.keepAlive,
+    private func measureOllama(_ engine: any Engine, _ model: String, keepAlive: Bool) async throws -> (Double, Double) {
+        var body: [String: Any] = ["model": model, "prompt": Self.probePrompt, "stream": false,
                                    "options": ["num_predict": Self.probeTokens]]
+        if keepAlive { body["keep_alive"] = OllamaEngine.keepAlive }
         let obj = try await postJSON(engine.baseURL.appendingPathComponent("api/generate"), body)
         if let err = obj["error"] as? String { throw EngineError.server(err) }
         guard let count = (obj["eval_count"] as? NSNumber)?.doubleValue,

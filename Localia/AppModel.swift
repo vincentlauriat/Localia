@@ -6,9 +6,16 @@ import Network
 import os
 
 struct AppAlert: Identifiable {
+    /// A second button next to OK.
+    struct Action {
+        let title: String
+        let run: @MainActor () async -> Void
+    }
+
     let id = UUID()
     let title: String
     let message: String
+    var action: Action? = nil
 }
 
 /// A model download in progress (bytes).
@@ -78,7 +85,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var availableTerminals: [TerminalApp] = []
 
     private var rows: [LlmfitRow]?
+    /// Models Localia loaded for its own sessions: unloaded when the last session using them ends.
     private var loadedByLocalia: Set<ModelKey> = []
+    /// Models loaded for the shell shim (`localia://start`): no session owns them, so a session end never
+    /// unloads them; Free Memory and quitting do.
+    private var loadedForShim: Set<ModelKey> = []
     private var downloadTasks: [String: Task<Void, Never>] = [:]
     private var pollTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
@@ -133,15 +144,18 @@ final class AppModel: ObservableObject {
 
     func finishOnboarding() { deps.appDefaults.set(true, forKey: "onboardingDone") }
 
-    /// Unloads what Localia loaded and stops the servers it started (never the user's own).
+    /// Unloads what Localia loaded and stops the servers it started (never the user's own). A model or an
+    /// engine that a Localia session still uses is left running, so quitting never cuts a live session.
     func shutdown() async {
         pollTask?.cancel(); statusTask?.cancel(); pathMonitor?.cancel()
         for t in downloadTasks.values { t.cancel() }
-        for key in loadedByLocalia {
+        let inUse = await tracker.modelsStillInUse()
+        for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
             if let e = await registry.engine(key.engine) { try? await e.unload(key.model) }
         }
         loadedByLocalia.removeAll()
-        for e in await registry.all { try? await e.stopServing() }
+        loadedForShim.removeAll()
+        for e in await registry.all where !inUse.contains(where: { $0.engine == e.id }) { try? await e.stopServing() }
     }
 
     // MARK: - Refresh
@@ -350,6 +364,10 @@ final class AppModel: ObservableObject {
                                  message: String(localized: "Download a model in the Models window first."))
                 return
             }
+            if let other = await llamaConflict(engine: engineID, model: model) {
+                alert = llamaBusyAlert(other)
+                return
+            }
             let key = ModelKey(engine: engineID, model: model)
             do {
                 let outcome = try await prepareLocal(engine: engine, model: model)
@@ -389,6 +407,7 @@ final class AppModel: ObservableObject {
             }
             recent.add(folder)
             if session != nil { startPolling() }
+            if case .cloud = target, !deps.hasCloudLogin() { alert = noCloudLoginAlert() }
         } catch {
             show(error, title: String(localized: "Could not open the terminal"))
         }
@@ -398,32 +417,68 @@ final class AppModel: ObservableObject {
 
     enum LoadOutcome: Equatable { case cancelled, loadedByLocalia, alreadyLoaded }
 
+    /// llama.cpp serves one model at a time: loading another one would stop the server a session uses.
+    /// Returns that session's model when `model` would replace it.
+    private func llamaConflict(engine: EngineID, model: String) async -> ModelKey? {
+        guard engine == .llamaCpp else { return nil }
+        return await tracker.modelsStillInUse().first { $0.engine == .llamaCpp && $0.model != model }
+    }
+
+    private func llamaBusyAlert(_ other: ModelKey) -> AppAlert {
+        AppAlert(title: String(localized: "llama.cpp is busy"),
+                 message: String(localized: "llama.cpp runs one model at a time, and a Claude Code session is using \(displayName(for: other.model)). Wait for that session to end, or end it, then try again."))
+    }
+
+    /// Spec 6.4. Detection is best effort (a GUI app does not see keys exported in the shell rc), so this
+    /// is a note after the launch, never a reason to stop it.
+    private func noCloudLoginAlert() -> AppAlert {
+        AppAlert(title: String(localized: "Cloud mode needs a Claude login"),
+                 message: String(localized: "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode."),
+                 action: .init(title: String(localized: "Switch to Local Mode")) { [weak self] in
+                     await self?.setLocalMode(true)
+                 })
+    }
+
+    private func engineInUse(_ id: EngineID) async -> Bool {
+        await tracker.modelsStillInUse().contains { $0.engine == id }
+    }
+
+    /// After a load, Localia's models of this engine that are no longer resident (llama.cpp replaced them)
+    /// are forgotten, so nothing later "unloads" them and stops the model that replaced them.
+    private func forgetReplaced(on engine: any Engine) async {
+        guard let resident = try? await engine.loadedModels() else { return }
+        let names = Set(resident.map(\.name))
+        loadedByLocalia = loadedByLocalia.filter { $0.engine != engine.id || names.contains($0.model) }
+        loadedForShim = loadedForShim.filter { $0.engine != engine.id || names.contains($0.model) }
+    }
+
     /// Starts the engine, warns about memory, loads the model and measures it the first time.
     private func prepareLocal(engine: any Engine, model: String) async throws -> LoadOutcome {
         busyMessage = String(localized: "Starting \(Self.engineName(engine.id))…")
         let outcome = try await loadWithMemoryCheck(engine: engine, model: model)
         guard outcome != .cancelled else { return outcome }
-        if settings.measurements.tps[candidateID(for: model)] == nil {
+        // Not while another session uses the engine: the figure would be wrong and the probe would slow it down.
+        if settings.measurements.tps[candidateID(for: model)] == nil, !(await engineInUse(engine.id)) {
             await measure(engine: engine, model: model)
         }
         busyMessage = nil
         return outcome
     }
 
-    /// Starts serving, shows the memory warning (unless already loaded), loads the model. A model that
-    /// was already resident (e.g. loaded by the user) is never recorded as Localia's, so it is never unloaded.
+    /// Starts serving, then shows the memory warning and loads the model, unless it is already resident.
+    /// A resident model (e.g. loaded by the user) is neither reloaded (that would override its keep_alive)
+    /// nor recorded as Localia's, so it is never unloaded.
     private func loadWithMemoryCheck(engine: any Engine, model: String) async throws -> LoadOutcome {
         try await engine.startServing()
-        let alreadyLoaded = ((try? await engine.loadedModels()) ?? []).contains { $0.name == model }
-        if !alreadyLoaded,
-           let warning = deps.memoryGuard.check(requiredGB: requiredGB(for: model, engine: engine.id), profile: profile) {
+        if ((try? await engine.loadedModels()) ?? []).contains(where: { $0.name == model }) { return .alreadyLoaded }
+        if let warning = deps.memoryGuard.check(requiredGB: requiredGB(for: model, engine: engine.id), profile: profile) {
             busyMessage = nil
             guard await confirmMemory(warning) else { return .cancelled }
         }
         busyMessage = String(localized: "Loading \(displayName(for: model))…")
         try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
         busyMessage = nil
-        if alreadyLoaded { return .alreadyLoaded }
+        await forgetReplaced(on: engine)
         loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
         return .loadedByLocalia
     }
@@ -454,7 +509,9 @@ final class AppModel: ObservableObject {
     private func measure(engine: any Engine, model: String) async {
         busyMessage = String(localized: "Measuring speed…")
         defer { busyMessage = nil }
-        guard let r = try? await deps.speedMeter.measure(engine: engine, model: model) else { return }
+        let key = ModelKey(engine: engine.id, model: model)
+        let owned = loadedByLocalia.contains(key) || loadedForShim.contains(key)
+        guard let r = try? await deps.speedMeter.measure(engine: engine, model: model, loadedByLocalia: owned) else { return }
         settings.record(model: candidateID(for: model), tps: r.tps, memoryGB: r.memoryGB,
                         unscaledEstimates: unscaledEstimates())
         recompute()
@@ -494,9 +551,8 @@ final class AppModel: ObservableObject {
     /// `ollama run <model>` or `llama-cli -m <file> -cnv`, in the user's terminal.
     func chat() async {
         guard let engine = await registry.active else { return }
-        let model = loaded.first?.name ?? settings.defaultModel ?? settings.lastModel
-            ?? installed.first { $0.engine == engine.id }?.name
-        guard let model else {
+        await refreshInstalled()
+        guard let model = chatModel(for: engine.id) else {
             alert = AppAlert(title: String(localized: "No local model"),
                              message: String(localized: "Download a model in the Models window first."))
             return
@@ -528,12 +584,36 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Unloads every model Localia loaded that no session still uses.
+    /// The loaded, default or last model when it is installed on `engine`, else its first installed model.
+    func chatModel(for engine: EngineID) -> String? {
+        let names = installed.filter { $0.engine == engine }.map(\.name)
+        let loadedHere = engine == settings.activeEngine ? loaded.first?.name : nil
+        return [loadedHere, settings.defaultModel, settings.lastModel].compactMap { $0 }.first(where: names.contains)
+            ?? names.first
+    }
+
+    /// Takes Localia out of the user's shell before the app is deleted: local mode off (state written off,
+    /// so open shells go back to the cloud) and the rc blocks removed. Safe to run more than once.
+    func removeFromShell() async {
+        do {
+            if controller.isOn { try await controller.setOn(false) }
+            try await controller.setScope(.localiaOnly)
+        } catch {
+            show(error, title: String(localized: "Could not remove Localia from your shell"))
+        }
+    }
+
+    /// Unloads every model Localia loaded that no session still uses, and stops Localia's own llama-server
+    /// (also one recorded before an app restart) when no session uses it: it holds its model while it runs.
     func freeMemory() async {
         let inUse = await tracker.modelsStillInUse()
-        for key in loadedByLocalia where !inUse.contains(key) {
+        for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
             if let e = await registry.engine(key.engine) { try? await e.unload(key.model) }
             loadedByLocalia.remove(key)
+            loadedForShim.remove(key)
+        }
+        for e in await registry.all where e.id == .llamaCpp && !inUse.contains(where: { $0.engine == e.id }) {
+            try? await e.stopServing()
         }
         await refreshStatus()
     }
@@ -551,9 +631,10 @@ final class AppModel: ObservableObject {
                              message: String(localized: "A Claude Code session still uses this engine."))
             return
         }
-        for key in loadedByLocalia where key.engine == e.id {
+        for key in loadedByLocalia.union(loadedForShim) where key.engine == e.id {
             try? await e.unload(key.model)
             loadedByLocalia.remove(key)
+            loadedForShim.remove(key)
         }
         try? await e.stopServing()
         await refreshStatus()
@@ -588,13 +669,22 @@ final class AppModel: ObservableObject {
                 return
             }
             if try await engine.loadedModels().contains(where: { $0.name == model }) { return }
-            let needed = requiredGB(for: model, engine: engine.id, fileSizeGB: entry.sizeGB)
-            if let w = deps.memoryGuard.check(requiredGB: needed, profile: profile) {
-                log.notice("localia://start: not loading, memory warning (needs \(w.requiredGB) GB, free \(w.availableGB) GB)")
+            if let other = await llamaConflict(engine: engine.id, model: model) {
+                log.notice("localia://start: not loading, a session uses \(other.model, privacy: .public) on llama.cpp")
                 return
             }
+            let needed = requiredGB(for: model, engine: engine.id, fileSizeGB: entry.sizeGB)
+            // Headless: only a real shortfall stops the load. Heavy apps alone are worth a log line, not a block.
+            if let w = deps.memoryGuard.check(requiredGB: needed, profile: profile) {
+                if w.notEnoughMemory {
+                    log.notice("localia://start: not loading, memory short (needs \(w.requiredGB) GB, free \(w.availableGB) GB)")
+                    return
+                }
+                log.notice("localia://start: heavy apps open (\(w.heavyApps.joined(separator: ", "), privacy: .public))")
+            }
             try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
-            loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
+            await forgetReplaced(on: engine)
+            loadedForShim.insert(ModelKey(engine: engine.id, model: model))
         } catch {
             log.error("localia://start failed: \(String(describing: error), privacy: .public)")
         }
@@ -649,6 +739,7 @@ final class AppModel: ObservableObject {
         do {
             try await e.delete(row.name)
             loadedByLocalia.remove(ModelKey(engine: row.engine, model: row.name))
+            loadedForShim.remove(ModelKey(engine: row.engine, model: row.name))
             settings.modelIDs[row.name] = nil
             if settings.defaultModel == row.name { settings.defaultModel = nil }
             if settings.lastModel == row.name { settings.lastModel = nil }
@@ -668,6 +759,11 @@ final class AppModel: ObservableObject {
     /// Loads the model and measures it (again).
     func measureSpeed(_ row: InstalledRow) async {
         guard let e = await registry.engine(row.engine) else { return }
+        if await engineInUse(row.engine) {
+            alert = AppAlert(title: String(localized: "Engine in use"),
+                             message: String(localized: "A Claude Code session is using this engine. Measure the speed once it has ended."))
+            return
+        }
         do {
             busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
@@ -719,7 +815,8 @@ final class AppModel: ObservableObject {
                              message: String(localized: "\(Self.engineName(id)) \(current) is the latest version."))
             return
         }
-        for key in loadedByLocalia where key.engine == id { loadedByLocalia.remove(key) }
+        loadedByLocalia = loadedByLocalia.filter { $0.engine != id }
+        loadedForShim = loadedForShim.filter { $0.engine != id }
         try? await e.stopServing()
         await installEngine(id)
     }
@@ -731,7 +828,8 @@ final class AppModel: ObservableObject {
                              message: String(localized: "A Claude Code session still uses this engine."))
             return
         }
-        for key in loadedByLocalia where key.engine == id { loadedByLocalia.remove(key) }
+        loadedByLocalia = loadedByLocalia.filter { $0.engine != id }
+        loadedForShim = loadedForShim.filter { $0.engine != id }
         do { try await e.uninstall() } catch {
             show(error, title: String(localized: "Could not uninstall \(Self.engineName(id))"))
         }

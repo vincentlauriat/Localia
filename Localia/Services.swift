@@ -14,7 +14,7 @@ extension TerminalLauncher: TerminalOpening {}
 
 /// Measures generation speed and resident memory of a loaded model. `SpeedMeter` conforms.
 protocol SpeedMeasuring: Sendable {
-    func measure(engine: any Engine, model: String) async throws -> (tps: Double, memoryGB: Double)
+    func measure(engine: any Engine, model: String, loadedByLocalia: Bool) async throws -> (tps: Double, memoryGB: Double)
 }
 
 extension SpeedMeter: SpeedMeasuring {}
@@ -64,6 +64,8 @@ struct AppDependencies {
     /// Isolated Claude Code config for light local sessions.
     var claudeConfigDir: URL
     var llmfit: LlmfitManager
+    /// Best-effort: is there a Claude login for cloud sessions (spec 6.4)? Only ever a hint.
+    var hasCloudLogin: @Sendable () -> Bool
     /// Shows an alert raised by background work (no window to attach it to).
     var notify: @MainActor (AppAlert) -> Void
 
@@ -91,6 +93,12 @@ struct AppDependencies {
             appSupportBase: nil,
             claudeConfigDir: Paths.claudeConfig(),
             llmfit: llmfit,
+            hasCloudLogin: {
+                let env = ProcessInfo.processInfo.environment
+                let dir = env["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser
+                return ClaudeCodeTool.hasCloudLogin(claudeJSON: dir.appendingPathComponent(".claude.json"), environment: env)
+            },
             notify: { a in
                 let alert = NSAlert()
                 alert.messageText = a.title

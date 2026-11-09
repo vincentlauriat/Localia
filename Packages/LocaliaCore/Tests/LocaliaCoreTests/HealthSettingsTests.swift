@@ -16,7 +16,7 @@ final class SpeedMeterTests: XCTestCase {
         }
         let session = EngineStubProtocol.session()
         let engine = OllamaEngine(session: session)
-        let r = try await SpeedMeter(session: session).measure(engine: engine, model: "m1")
+        let r = try await SpeedMeter(session: session).measure(engine: engine, model: "m1", loadedByLocalia: true)
         XCTAssertEqual(r.tps, 32, accuracy: 0.001)
         XCTAssertEqual(r.memoryGB, 5, accuracy: 0.001)
         let gen = EngineStubProtocol.recorded.first { $0.path == "/api/generate" }?.json
@@ -24,6 +24,24 @@ final class SpeedMeterTests: XCTestCase {
         XCTAssertEqual(gen?["stream"] as? Bool, false)
         XCTAssertEqual(gen?["keep_alive"] as? String, OllamaEngine.keepAlive)
         XCTAssertEqual(OllamaEngine.keepAlive, "30m")
+    }
+
+    /// A model someone else loaded keeps its own keep_alive: the probe does not send one.
+    func test_speedMeter_ollamaOmitsKeepAliveForAModelLocaliaDidNotLoad() async throws {
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/api/generate":
+                return StubResponse(text: #"{"response":"x","eval_count":64,"eval_duration":2000000000}"#)
+            case "/api/ps": return StubResponse(text: #"{"models":[{"name":"m1","size":1073741824}]}"#)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let session = EngineStubProtocol.session()
+        _ = try await SpeedMeter(session: session).measure(engine: OllamaEngine(session: session), model: "m1",
+                                                           loadedByLocalia: false)
+        let gen = try XCTUnwrap(EngineStubProtocol.recorded.first { $0.path == "/api/generate" }?.json)
+        XCTAssertNil(gen["keep_alive"])
+        XCTAssertEqual(gen["model"] as? String, "m1")
     }
 
     func test_speedMeter_parsesLlamaTimings() async throws {
@@ -35,7 +53,7 @@ final class SpeedMeterTests: XCTestCase {
         let session = EngineStubProtocol.session()
         let engine = LlamaCppEngine(session: session, launcher: FakeLauncher(), appSupportBase: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         // No own server running -> no pid -> memory unavailable.
-        do { _ = try await SpeedMeter(session: session, rssBytes: { _ in 1 }).measure(engine: engine, model: "m"); XCTFail() }
+        do { _ = try await SpeedMeter(session: session, rssBytes: { _ in 1 }).measure(engine: engine, model: "m", loadedByLocalia: true); XCTFail() }
         catch { XCTAssertEqual(error as? SpeedMeterError, .badResponse("llama-server pid / RSS unavailable")) }
     }
 
@@ -51,7 +69,7 @@ final class SpeedMeterTests: XCTestCase {
         try FileManager.default.createDirectory(at: Paths.engines(base: base), withIntermediateDirectories: true)
         rec.write(pid: me, binary: URL(fileURLWithPath: SystemProcessInspector().executablePath(me)!))
         let r = try await SpeedMeter(session: session, rssBytes: { pid in pid == me ? 2.0 * 1073741824 : nil })
-            .measure(engine: engine, model: "m")
+            .measure(engine: engine, model: "m", loadedByLocalia: true)
         XCTAssertEqual(r.tps, 41.5, accuracy: 0.001)
         XCTAssertEqual(r.memoryGB, 2, accuracy: 0.001)
     }

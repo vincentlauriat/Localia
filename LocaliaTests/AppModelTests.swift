@@ -20,17 +20,19 @@ final class AppModelTests: XCTestCase {
 
     private var notified: [AppAlert] = []
 
-    private func makeModel(engine: FakeEngine, tool: FakeTool = FakeTool(), terminal: FakeTerminal = FakeTerminal(),
+    private func makeModel(engine: FakeEngine, others: [FakeEngine] = [], tool: FakeTool = FakeTool(),
+                           terminal: FakeTerminal = FakeTerminal(),
                            meter: FakeSpeedMeter = FakeSpeedMeter(), shim: FakeShim = FakeShim(),
                            rows: [LlmfitRow] = [], sizes: FakeSizes = FakeSizes(),
-                           availableGB: Double = 100, claudeConfigDir: URL? = nil,
+                           availableGB: Double = 100, heavyApps: [String] = [], claudeConfigDir: URL? = nil,
+                           cloudLogin: Bool = true,
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         configure(settings)
         let deps = AppDependencies(
             settings: settings,
-            engines: [engine],
+            engines: [engine] + others,
             registryDefaults: defaults,
             appDefaults: defaults,
             tool: tool,
@@ -38,7 +40,7 @@ final class AppModelTests: XCTestCase {
             terminal: terminal,
             availableTerminals: { [.terminal] },
             speedMeter: meter,
-            memoryGuard: MemoryGuard(availableGB: { availableGB }, runningHeavyApps: { [] }),
+            memoryGuard: MemoryGuard(availableGB: { availableGB }, runningHeavyApps: { heavyApps }),
             freeMemoryGB: { 10 },
             rows: FakeRows(rows: rows),
             sizes: sizes,
@@ -46,6 +48,7 @@ final class AppModelTests: XCTestCase {
             appSupportBase: base,
             claudeConfigDir: claudeConfigDir ?? base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
+            hasCloudLogin: { cloudLogin },
             notify: { [weak self] in self?.notified.append($0) })
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
@@ -191,10 +194,14 @@ final class AppModelTests: XCTestCase {
     func test_alreadyLoadedModel_isNotUnloadedAtSessionEnd_orByFreeMemory() async throws {
         let engine = FakeEngine(installed: ["m1"], loaded: ["m1"])
         let terminal = FakeTerminal()
-        let model = makeModel(engine: engine, terminal: terminal)
+        let meter = FakeSpeedMeter()
+        let model = makeModel(engine: engine, terminal: terminal, meter: meter)
         await model.setLocalMode(true)
         await model.launch(folder: try folder())
         XCTAssertNil(model.alert)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [], "a model someone else loaded is never (re)loaded by Localia")
+        XCTAssertEqual(meter.owned, [false], "nor given Localia's keep_alive by the speed probe")
         guard let scriptURL = terminal.opened.first?.url else { return XCTFail("no terminal opened") }
         try "0\n".write(to: scriptURL.deletingPathExtension().appendingPathExtension("done"), atomically: true, encoding: .utf8)
         await model.pollSessions()
@@ -272,22 +279,188 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(loads, ["m1"])
         XCTAssertEqual(unloads, ["m1"])
     }
+
+    // MARK: Final review
+
+    /// I1: llama.cpp serves one model. A launch on another model while a session runs is refused, so the
+    /// running session's server is never killed, and its end never unloads anything but its own model.
+    func test_llama_secondModelWhileSessionRuns_isRefused() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())   // session A on X
+        XCTAssertNil(model.alert)
+        await model.setDefault(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
+        await model.launch(folder: try folder())   // B on Y: refused
+        XCTAssertNotNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+        var loads = await llama.loads, unloads = await llama.unloads
+        XCTAssertEqual(loads, ["X"])
+        XCTAssertEqual(unloads, [])
+        let inUse = await model.modelsInUse()
+        XCTAssertEqual(inUse, [ModelKey(engine: .llamaCpp, model: "X")])
+
+        // A ends: only X is unloaded; Y was never touched.
+        try "0\n".write(to: terminal.opened[0].url.deletingPathExtension().appendingPathExtension("done"),
+                        atomically: true, encoding: .utf8)
+        await model.pollSessions()
+        loads = await llama.loads; unloads = await llama.unloads
+        XCTAssertEqual(loads, ["X"])
+        XCTAssertEqual(unloads, ["X"])
+    }
+
+    /// I1: a load that replaces Localia's model drops the replaced key, so nothing later "unloads" it
+    /// (on llama.cpp that would stop the server now serving the new model).
+    func test_llama_replacedModel_isForgotten() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.defaultModel = "Y"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.measureSpeed(try XCTUnwrap(model.installed.first { $0.name == "X" }))   // Localia loads X
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())   // Y replaces X
+        XCTAssertNil(model.alert)
+        try "0\n".write(to: terminal.opened[0].url.deletingPathExtension().appendingPathExtension("done"),
+                        atomically: true, encoding: .utf8)
+        await model.pollSessions()
+        await model.freeMemory()
+        let loads = await llama.loads, unloads = await llama.unloads
+        XCTAssertEqual(loads, ["X", "Y"])
+        XCTAssertEqual(unloads, ["Y"], "X was replaced: it must not be unloaded again")
+    }
+
+    /// I1: no speed measurement while a session uses the engine.
+    func test_measureSpeed_refusedWhileASessionUsesTheEngine() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let meter = FakeSpeedMeter()
+        let model = makeModel(engine: llama, meter: meter) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        XCTAssertEqual(meter.calls, 1)
+        await model.measureSpeed(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
+        XCTAssertNotNil(model.alert)
+        XCTAssertEqual(meter.calls, 1)
+        let loads = await llama.loads
+        XCTAssertEqual(loads, ["X"])
+    }
+
+    /// I2: heavy apps alone do not block the shim's headless start; only a real memory shortfall does.
+    func test_startURL_heavyAppsAlone_stillLoads() async throws {
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, heavyApps: ["Microsoft Teams"]) { $0.lastModel = "m1" }
+        await model.handleStart(model: "m1")
+        let loads = await engine.loads
+        XCTAssertEqual(loads, ["m1"])
+    }
+
+    /// M2: a model loaded for the shell shim is not a session's: a Localia session on it does not unload
+    /// it at its end. Free Memory still does.
+    func test_startURLModel_isNotUnloadedBySessionEnd() async throws {
+        let engine = FakeEngine(installed: ["m1"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: engine, terminal: terminal) { $0.lastModel = "m1" }
+        await model.handleStart(model: "m1")
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        try "0\n".write(to: terminal.opened[0].url.deletingPathExtension().appendingPathExtension("done"),
+                        atomically: true, encoding: .utf8)
+        await model.pollSessions()
+        var unloads = await engine.unloads
+        XCTAssertEqual(unloads, [])
+        await model.freeMemory()
+        unloads = await engine.unloads
+        XCTAssertEqual(unloads, ["m1"])
+    }
+
+    /// M2: quitting while a Localia session runs neither unloads its model nor stops its engine.
+    func test_shutdown_leavesLiveSessionsAlone() async throws {
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine)
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        await model.shutdown()
+        let unloads = await engine.unloads, stops = await engine.stopCount
+        XCTAssertEqual(unloads, [])
+        XCTAssertEqual(stops, 0)
+    }
+
+    /// M3: chat picks a model installed on the active engine, not the other engine's default.
+    func test_chatModel_isInstalledOnTheActiveEngine() async throws {
+        let ollama = FakeEngine(installed: ["m1"])
+        let llama = FakeEngine(id: .llamaCpp, installed: ["g1"])
+        let model = makeModel(engine: ollama, others: [llama]) { $0.defaultModel = "m1"; $0.lastModel = "m1" }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        XCTAssertEqual(model.chatModel(for: .llamaCpp), "g1")
+        XCTAssertEqual(model.chatModel(for: .ollama), "m1")
+    }
+
+    /// M9: Free Memory stops Localia's llama-server (even one recorded before a restart) unless a session uses it.
+    func test_freeMemory_stopsOwnLlamaServerWhenIdle() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.freeMemory()
+        var stops = await llama.stopCount
+        XCTAssertEqual(stops, 1)
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        await model.freeMemory()
+        stops = await llama.stopCount
+        XCTAssertEqual(stops, 1, "a live session keeps its server")
+    }
+
+    /// I3: one action takes Localia out of the shell: local mode off, state off, rc blocks removed.
+    func test_removeFromShell_turnsOffAndUninstalls() async throws {
+        let shim = FakeShim()
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), shim: shim) { $0.localModeScope = .everyClaude }
+        await model.setLocalMode(true)
+        await model.removeFromShell()
+        XCTAssertNil(model.alert)
+        XCTAssertFalse(model.isLocalModeOn)
+        XCTAssertEqual(model.controller.scope, .localiaOnly)
+        XCTAssertEqual(shim.uninstalls, 1)
+        XCTAssertEqual(shim.states.last, false)
+    }
+
+    /// Spec 6.4: no cloud login and local mode off: the cloud launch still runs, with a note that offers local mode.
+    func test_cloudLaunchWithoutLogin_offersLocalMode() async throws {
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), terminal: terminal, cloudLogin: false)
+        await model.launch(folder: try folder())
+        XCTAssertEqual(terminal.opened.count, 1, "non-blocking: the cloud session still opens")
+        let alert = try XCTUnwrap(model.alert)
+        let action = try XCTUnwrap(alert.action)
+        await action.run()
+        XCTAssertTrue(model.isLocalModeOn)
+    }
 }
 
 // MARK: - Fakes
 
 actor FakeEngine: Engine {
-    nonisolated let id = EngineID.ollama
+    nonisolated let id: EngineID
     nonisolated let baseURL = URL(string: "http://127.0.0.1:59999")!
     private var installed: [String]
     private(set) var loads: [String] = []
     private(set) var unloads: [String] = []
     private(set) var startCount = 0
+    private(set) var stopCount = 0
     private var loaded: Set<String>
     private let failInstalled: Bool
+    /// llama.cpp semantics: one model at a time, a load replaces it.
+    private let singleModel: Bool
 
-    init(installed: [String], loaded: Set<String> = [], failInstalled: Bool = false) {
-        self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
+    init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false) {
+        self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
+        self.singleModel = id == .llamaCpp
     }
 
     func installState() async -> InstallState { .installed("1.0", managedByLocalia: false) }
@@ -295,7 +468,7 @@ actor FakeEngine: Engine {
     func uninstall() async throws {}
     func isServing() async -> Bool { startCount > 0 }
     func startServing() async throws { startCount += 1 }
-    func stopServing() async throws {}
+    func stopServing() async throws { stopCount += 1 }
     func installedModels() async throws -> [InstalledModel] {
         if failInstalled { throw EngineError.http(0) }
         return installed.map { InstalledModel(name: $0, sizeGB: 4) }
@@ -305,7 +478,10 @@ actor FakeEngine: Engine {
         installed.append(c.id); return c.id
     }
     func delete(_ modelName: String) async throws {}
-    func load(_ modelName: String, contextTokens: Int) async throws { loads.append(modelName); loaded.insert(modelName) }
+    func load(_ modelName: String, contextTokens: Int) async throws {
+        loads.append(modelName)
+        if singleModel { loaded = [modelName] } else { loaded.insert(modelName) }
+    }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }
 }
 
@@ -339,23 +515,34 @@ final class FakeSpeedMeter: SpeedMeasuring, @unchecked Sendable {
     private let result: (tps: Double, memoryGB: Double)
     private let perModel: [String: (tps: Double, memoryGB: Double)]
     private var _calls = 0
+    private var _owned: [Bool] = []
     var calls: Int { lock.lock(); defer { lock.unlock() }; return _calls }
+    /// `loadedByLocalia` of each call.
+    var owned: [Bool] { lock.lock(); defer { lock.unlock() }; return _owned }
     init(result: (tps: Double, memoryGB: Double) = (30, 4), perModel: [String: (tps: Double, memoryGB: Double)] = [:]) {
         self.result = result; self.perModel = perModel
     }
-    func measure(engine: any Engine, model: String) async throws -> (tps: Double, memoryGB: Double) {
-        lock.withLock { _calls += 1 }
+    func measure(engine: any Engine, model: String, loadedByLocalia: Bool) async throws -> (tps: Double, memoryGB: Double) {
+        lock.withLock { _calls += 1; _owned.append(loadedByLocalia) }
         return perModel[model] ?? result
     }
 }
 
-struct FakeShim: ShellShimming {
-    var failWrites = false
+final class FakeShim: ShellShimming, @unchecked Sendable {
+    private let failWrites: Bool
+    private let lock = NSLock()
+    private var _uninstalls = 0
+    private var _states: [Bool] = []
+    var uninstalls: Int { lock.lock(); defer { lock.unlock() }; return _uninstalls }
+    /// `on` of each state write.
+    var states: [Bool] { lock.lock(); defer { lock.unlock() }; return _states }
+    init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
-    func uninstall() throws {}
+    func uninstall() throws { lock.withLock { _uninstalls += 1 } }
     func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
+        lock.withLock { _states.append(on) }
     }
 }
 
