@@ -108,7 +108,23 @@ struct MenuContent: View {
         let alert = NSAlert()
         alert.messageText = a.title
         alert.informativeText = a.message
+        alert.addButton(withTitle: String(localized: "OK"))
+        if let action = a.action { alert.addButton(withTitle: action.title) }
         NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        if alert.runModal() == .alertSecondButtonReturn, let action = a.action {
+            Task { await action.run(); presentAlertIfNeeded() }
+        }
+    }
+}
+
+extension AppAlert {
+    /// The SwiftUI alert for windows: OK, plus the action's button when there is one.
+    var swiftUIAlert: Alert {
+        guard let action else {
+            return Alert(title: Text(title), message: Text(message), dismissButton: .default(Text(String(localized: "OK"))))
+        }
+        return Alert(title: Text(title), message: Text(message),
+                     primaryButton: .default(Text(action.title)) { Task { await action.run() } },
+                     secondaryButton: .cancel(Text(String(localized: "OK"))))
     }
 }

@@ -50,9 +50,7 @@ struct OnboardingView: View {
         }
         .padding(24)
         .frame(minWidth: 520, minHeight: 440)
-        .alert(item: $model.alert) { a in
-            Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text(String(localized: "OK"))))
-        }
+        .alert(item: $model.alert) { $0.swiftUIAlert }
     }
 
     private var engineInstalled: Bool {
@@ -65,7 +63,7 @@ struct OnboardingView: View {
     }
 
     private var modelInstalled: Bool {
-        guard let c = model.recommendation?.onboardingDefault else { return false }
+        guard let c = pick else { return false }
         return model.installedName(for: c) != nil
     }
 
@@ -79,9 +77,18 @@ struct OnboardingView: View {
         }
     }
 
+    /// The default pick, or on a Mac where every model is slow, the fastest one (with the warning).
+    private var pick: ModelCandidate? {
+        guard let r = model.recommendation else { return nil }
+        return r.onboardingDefault ?? (r.allSlow ? r.candidates.first : nil)
+    }
+
     @ViewBuilder private var modelStep: some View {
-        if let c = model.recommendation?.onboardingDefault {
+        if let c = pick {
             VStack(alignment: .leading, spacing: 6) {
+                if model.recommendation?.allSlow == true {
+                    Text(RecommendedTab.slowMacMessage).foregroundStyle(.orange)
+                }
                 Text(String(localized: "\(c.displayName): about \(Fmt.gb(c.memoryGB)) of memory, \(Fmt.tps(c.estimatedTPS)) on this Mac."))
                 if let d = model.downloads[c.id] {
                     HStack {
@@ -96,9 +103,7 @@ struct OnboardingView: View {
                 }
             }
         } else if let reason = model.recommendation?.emptyReason {
-            Text(reason == .nothingFits
-                 ? String(localized: "No coding model runs well on this Mac. The fastest option is shown, but it will be slow. Chat may work better.")
-                 : String(localized: "No compatible model found. Update llmfit or try another engine."))
+            Text(RecommendedTab.message(reason))
                 .foregroundStyle(.orange)
         } else if let error = model.recommendationError {
             Text(String(localized: "Could not read recommendations: \(error)")).foregroundStyle(.red)

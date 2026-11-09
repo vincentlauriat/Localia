@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var confirmEveryClaude = false
+    @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
 
@@ -61,6 +62,16 @@ struct SettingsView: View {
                 ForEach(EngineID.allCases, id: \.self) { EngineRow(model: model, id: $0) }
             }
 
+            Section(String(localized: "Before deleting Localia")) {
+                HStack {
+                    Text(String(localized: "Turns local mode off and removes the block Localia added to your shell startup files."))
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button(String(localized: "Remove Localia from My Shell")) { confirmRemoveFromShell = true }
+                }
+            }
+
             Section(String(localized: "Claude Code")) {
                 if let path = model.claudePath {
                     LabeledContent(String(localized: "Installed"), value: path.path)
@@ -78,15 +89,18 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(minWidth: 520, minHeight: 560)
         .task { await model.refreshAll() }
+        .confirmationDialog(String(localized: "Remove Localia from your shell?"), isPresented: $confirmRemoveFromShell) {
+            Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
+        } message: {
+            Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
+        }
         .sheet(isPresented: $confirmEveryClaude) {
             EveryClaudeConfirmation(block: model.rcBlockPreview(), onCancel: { confirmEveryClaude = false }) {
                 confirmEveryClaude = false
                 Task { await model.setScope(.everyClaude) }
             }
         }
-        .alert(item: $model.alert) { a in
-            Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text(String(localized: "OK"))))
-        }
+        .alert(item: $model.alert) { $0.swiftUIAlert }
     }
 
     private var terminals: [TerminalApp] {
@@ -155,7 +169,7 @@ private struct EveryClaudeConfirmation: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "Apply local mode to every claude?")).font(.headline)
-            Text(String(localized: "Localia will add this block to your shell startup files. A backup is made first, and the block is removed when you switch back or uninstall."))
+            Text(String(localized: "Localia will add this block to your shell startup files. A backup is made first. The block is removed when you switch back to Localia sessions only, or with Remove Localia from My Shell in Settings. Deleting the app does not remove it."))
                 .fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 Text(block).font(.system(.callout, design: .monospaced)).textSelection(.enabled)

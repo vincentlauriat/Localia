@@ -145,6 +145,22 @@
         }
       }
     },
+    "A Claude Code session is using this engine. Measure the speed once it has ended.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A Claude Code session is using this engine. Measure the speed once it has ended."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une session Claude Code utilise ce moteur. Mesurez la vitesse une fois qu'elle est terminée."
+          }
+        }
+      }
+    },
     "A Claude Code session still uses this engine.": {
       "localizations": {
         "en": {
@@ -269,6 +285,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "llmfit cherche les modèles adaptés à ce Mac…"
+          }
+        }
+      }
+    },
+    "Before deleting Localia": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Before deleting Localia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avant de supprimer Localia"
           }
         }
       }
@@ -413,6 +445,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Claude Code n'est pas installé"
+          }
+        }
+      }
+    },
+    "Cloud mode needs a Claude login": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud mode needs a Claude login"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode cloud nécessite une connexion Claude"
           }
         }
       }
@@ -589,6 +637,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Impossible de lire les recommandations : %@"
+          }
+        }
+      }
+    },
+    "Could not remove Localia from your shell": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not remove Localia from your shell"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de retirer Localia de votre shell"
           }
         }
       }
@@ -1345,6 +1409,22 @@
         }
       }
     },
+    "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode local est désactivé et chaque claude repasse par le cloud. Vos autres réglages et vos modèles sont conservés."
+          }
+        }
+      }
+    },
     "Localia Settings": {
       "localizations": {
         "en": {
@@ -1377,18 +1457,18 @@
         }
       }
     },
-    "Localia will add this block to your shell startup files. A backup is made first, and the block is removed when you switch back or uninstall.": {
+    "Localia will add this block to your shell startup files. A backup is made first. The block is removed when you switch back to Localia sessions only, or with Remove Localia from My Shell in Settings. Deleting the app does not remove it.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Localia will add this block to your shell startup files. A backup is made first, and the block is removed when you switch back or uninstall."
+            "value": "Localia will add this block to your shell startup files. A backup is made first. The block is removed when you switch back to Localia sessions only, or with Remove Localia from My Shell in Settings. Deleting the app does not remove it."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Localia va ajouter ce bloc à vos fichiers de démarrage du shell. Une sauvegarde est faite d'abord, et le bloc est retiré si vous revenez en arrière ou désinstallez."
+            "value": "Localia va ajouter ce bloc à vos fichiers de démarrage du shell. Une sauvegarde est faite d'abord. Le bloc est retiré si vous revenez à Sessions Localia uniquement, ou avec Retirer Localia de mon shell dans les Réglages. Supprimer l'app ne le retire pas."
           }
         }
       }
@@ -1569,6 +1649,22 @@
         }
       }
     },
+    "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune connexion Claude n'a été trouvée sur ce Mac : Claude Code peut vous demander de vous connecter. Pour travailler sans compte, passez en mode local."
+          }
+        }
+      }
+    },
     "No checksum published for %@.": {
       "localizations": {
         "en": {
@@ -1585,18 +1681,18 @@
         }
       }
     },
-    "No coding model runs well on this Mac. The fastest option is shown, but it will be slow. Chat may work better.": {
+    "No coding model fits in this Mac's memory. Chat may be a better fit.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No coding model runs well on this Mac. The fastest option is shown, but it will be slow. Chat may work better."
+            "value": "No coding model fits in this Mac's memory. Chat may be a better fit."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aucun modèle de code ne tourne bien sur ce Mac. L'option la plus rapide est affichée, mais elle sera lente. La discussion simple peut mieux convenir."
+            "value": "Aucun modèle de code ne tient dans la mémoire de ce Mac. La discussion simple peut mieux convenir."
           }
         }
       }
@@ -1873,6 +1969,38 @@
         }
       }
     },
+    "Remove Localia from My Shell": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Localia from My Shell"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer Localia de mon shell"
+          }
+        }
+      }
+    },
+    "Remove Localia from your shell?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Localia from your shell?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer Localia de votre shell ?"
+          }
+        }
+      }
+    },
     "Set as Default": {
       "localizations": {
         "en": {
@@ -2017,6 +2145,22 @@
         }
       }
     },
+    "Switch to Local Mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to Local Mode"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passer en mode local"
+          }
+        }
+      }
+    },
     "Switch to local mode when offline": {
       "localizations": {
         "en": {
@@ -2145,6 +2289,22 @@
         }
       }
     },
+    "This Mac is slow for local Claude Code: no model reaches a comfortable speed here. The fastest is listed first, but it will be slow. Chat may be a better fit.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Mac is slow for local Claude Code: no model reaches a comfortable speed here. The fastest is listed first, but it will be slow. Chat may be a better fit."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce Mac est lent pour Claude Code en local : aucun modèle n'y atteint une vitesse confortable. Le plus rapide est en tête de liste, mais il sera lent. La discussion simple peut mieux convenir."
+          }
+        }
+      }
+    },
     "This frees %@ on disk.": {
       "localizations": {
         "en": {
@@ -2205,6 +2365,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce serveur n'a pas été démarré par Localia, il a donc été laissé en marche."
+          }
+        }
+      }
+    },
+    "Turns local mode off and removes the block Localia added to your shell startup files.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turns local mode off and removes the block Localia added to your shell startup files."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactive le mode local et retire le bloc que Localia a ajouté à vos fichiers de démarrage du shell."
           }
         }
       }
@@ -2445,6 +2621,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "bon"
+          }
+        }
+      }
+    },
+    "llama.cpp is busy": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp is busy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp est occupé"
+          }
+        }
+      }
+    },
+    "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session Claude Code utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
           }
         }
       }

@@ -16,15 +16,13 @@ struct ModelsWindow: View {
         .padding()
         .frame(minWidth: 760, minHeight: 480)
         .task { await model.refreshInstalled() }
-        .alert(item: $model.alert) { a in
-            Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text(String(localized: "OK"))))
-        }
+        .alert(item: $model.alert) { $0.swiftUIAlert }
     }
 }
 
 // MARK: - Recommended
 
-private struct RecommendedTab: View {
+struct RecommendedTab: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -49,6 +47,8 @@ private struct RecommendedTab: View {
             List {
                 if let reason = r.emptyReason {
                     Section { Text(Self.message(reason)).foregroundStyle(.orange) }
+                } else if r.allSlow {
+                    Section { Text(Self.slowMacMessage).foregroundStyle(.orange) }
                 }
                 Section {
                     ForEach(r.candidates) { CandidateRow(model: model, candidate: $0) }
@@ -67,10 +67,15 @@ private struct RecommendedTab: View {
         }
     }
 
+    /// Spec 6.6: every model that fits is below the speed floor.
+    static var slowMacMessage: String {
+        String(localized: "This Mac is slow for local Claude Code: no model reaches a comfortable speed here. The fastest is listed first, but it will be slow. Chat may be a better fit.")
+    }
+
     static func message(_ reason: EmptyReason) -> String {
         switch reason {
         case .nothingFits:
-            String(localized: "No coding model runs well on this Mac. The fastest option is shown, but it will be slow. Chat may work better.")
+            String(localized: "No coding model fits in this Mac's memory. Chat may be a better fit.")
         case .allFiltered:
             String(localized: "No compatible model found. Update llmfit or try another engine.")
         }

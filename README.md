@@ -37,9 +37,15 @@ The menu toggle switches local mode on and off. Its scope is a setting:
   # <<< localia <<<
   ```
 
-  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching the scope back to "Localia sessions only" removes exactly this block and nothing else. Deleting the app does not: switch the scope back first, or delete the block by hand. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message.
+  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching the scope back to "Localia sessions only" removes exactly this block and nothing else. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message (llama.cpp gets up to 90 s to start, Ollama 20 s).
 
 With local mode off, `claude` runs exactly as before.
+
+llama.cpp serves one model at a time. While a Claude Code session uses a llama.cpp model, Localia refuses to launch another session on a different llama.cpp model instead of stopping the first one: wait for that session to end, or end it.
+
+## Uninstall
+
+Deleting the app does not remove the block from your shell files. Before you delete Localia, open **Settings** and click **Remove Localia from My Shell**: it turns local mode off and removes the block (your backups stay where they are). Then quit Localia and move it to the Trash. If the app is already gone, delete the `# >>> localia >>>` block from `~/.zshrc` and `~/.bashrc` by hand. Models and engines Localia downloaded live in `~/Library/Application Support/Localia/`.
 
 ## Build from source
 
