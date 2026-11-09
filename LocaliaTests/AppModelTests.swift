@@ -350,6 +350,32 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(loads, ["X"])
     }
 
+    /// I1: a launch whose llama.cpp load is still in flight is not yet a tracked session, but it already
+    /// owns the server: a measurement on another model must wait for it.
+    func test_llama_measureWhileALaunchIsLoading_isRefused() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let model = makeModel(engine: llama) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        let rowY = try XCTUnwrap(model.installed.first { $0.name == "Y" })
+        await llama.holdLoads()
+        let f = try folder()
+        let launch = Task { await model.launch(folder: f) }
+        for _ in 0..<300 where await llama.loads.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        var loads = await llama.loads
+        XCTAssertEqual(loads, ["X"])
+        // Run it beside the launch: unfixed, its own load(Y) would be held by the gate too.
+        let measure = Task { await model.measureSpeed(rowY) }
+        for _ in 0..<50 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertNotNil(model.alert)
+        await llama.releaseLoads()
+        await launch.value
+        await measure.value
+        loads = await llama.loads
+        XCTAssertEqual(loads, ["X"], "Y never replaced the server of the launch in flight")
+    }
+
     /// I2: heavy apps alone do not block the shim's headless start; only a real memory shortfall does.
     func test_startURL_heavyAppsAlone_stillLoads() async throws {
         let engine = FakeEngine(installed: ["m1"])
@@ -457,6 +483,8 @@ actor FakeEngine: Engine {
     private let failInstalled: Bool
     /// llama.cpp semantics: one model at a time, a load replaces it.
     private let singleModel: Bool
+    private var holding = false
+    private var held: [CheckedContinuation<Void, Never>] = []
 
     init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
@@ -478,8 +506,12 @@ actor FakeEngine: Engine {
         installed.append(c.id); return c.id
     }
     func delete(_ modelName: String) async throws {}
+    /// Until `releaseLoads()`, loads are recorded and then suspended (a slow llama-server start).
+    func holdLoads() { holding = true }
+    func releaseLoads() { holding = false; held.forEach { $0.resume() }; held = [] }
     func load(_ modelName: String, contextTokens: Int) async throws {
         loads.append(modelName)
+        if holding { await withCheckedContinuation { held.append($0) } }
         if singleModel { loaded = [modelName] } else { loaded.insert(modelName) }
     }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }

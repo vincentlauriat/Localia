@@ -90,6 +90,9 @@ final class AppModel: ObservableObject {
     /// Models loaded for the shell shim (`localia://start`): no session owns them, so a session end never
     /// unloads them; Free Memory and quitting do.
     private var loadedForShim: Set<ModelKey> = []
+    /// llama.cpp launches and measurements still loading: not tracked sessions yet, but they already own
+    /// the server. One entry per operation (two launches may reserve the same model).
+    private var llamaPending: [ModelKey] = []
     private var downloadTasks: [String: Task<Void, Never>] = [:]
     private var pollTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
@@ -354,6 +357,9 @@ final class AppModel: ObservableObject {
         }
         let target = await controller.launchTarget()
         let sessionID = UUID()
+        // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
+        var reserved: ModelKey?
+        defer { if let reserved { release(reserved) } }
         var configDir: URL?
         var session: ModelKey?
         /// Set when this launch made Localia load the model, so a later failure can unload it again.
@@ -369,6 +375,7 @@ final class AppModel: ObservableObject {
                 return
             }
             let key = ModelKey(engine: engineID, model: model)
+            if engineID == .llamaCpp { reserved = key; llamaPending.append(key) }
             do {
                 let outcome = try await prepareLocal(engine: engine, model: model)
                 guard outcome != .cancelled else { return }
@@ -421,7 +428,18 @@ final class AppModel: ObservableObject {
     /// Returns that session's model when `model` would replace it.
     private func llamaConflict(engine: EngineID, model: String) async -> ModelKey? {
         guard engine == .llamaCpp else { return nil }
-        return await tracker.modelsStillInUse().first { $0.engine == .llamaCpp && $0.model != model }
+        return await busyKeys().first { $0.engine == .llamaCpp && $0.model != model }
+    }
+
+    /// Models of tracked sessions plus llama.cpp loads in flight, minus one reservation of `own`.
+    private func busyKeys(excluding own: ModelKey? = nil) async -> [ModelKey] {
+        var pending = llamaPending
+        if let own, let i = pending.firstIndex(of: own) { pending.remove(at: i) }
+        return Array(await tracker.modelsStillInUse()) + pending
+    }
+
+    private func release(_ key: ModelKey) {
+        if let i = llamaPending.firstIndex(of: key) { llamaPending.remove(at: i) }
     }
 
     private func llamaBusyAlert(_ other: ModelKey) -> AppAlert {
@@ -439,8 +457,8 @@ final class AppModel: ObservableObject {
                  })
     }
 
-    private func engineInUse(_ id: EngineID) async -> Bool {
-        await tracker.modelsStillInUse().contains { $0.engine == id }
+    private func engineInUse(_ id: EngineID, excluding own: ModelKey? = nil) async -> Bool {
+        await busyKeys(excluding: own).contains { $0.engine == id }
     }
 
     /// After a load, Localia's models of this engine that are no longer resident (llama.cpp replaced them)
@@ -458,7 +476,8 @@ final class AppModel: ObservableObject {
         let outcome = try await loadWithMemoryCheck(engine: engine, model: model)
         guard outcome != .cancelled else { return outcome }
         // Not while another session uses the engine: the figure would be wrong and the probe would slow it down.
-        if settings.measurements.tps[candidateID(for: model)] == nil, !(await engineInUse(engine.id)) {
+        if settings.measurements.tps[candidateID(for: model)] == nil,
+           !(await engineInUse(engine.id, excluding: ModelKey(engine: engine.id, model: model))) {
             await measure(engine: engine, model: model)
         }
         busyMessage = nil
@@ -764,6 +783,9 @@ final class AppModel: ObservableObject {
                              message: String(localized: "A Claude Code session is using this engine. Measure the speed once it has ended."))
             return
         }
+        let key = ModelKey(engine: row.engine, model: row.name)
+        if row.engine == .llamaCpp { llamaPending.append(key) }
+        defer { if row.engine == .llamaCpp { release(key) } }
         do {
             busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
