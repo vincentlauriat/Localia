@@ -1,5 +1,7 @@
 name: Localia
 options:
+  # llmfit must exist before generation: the copy phase is planned from files present at build start.
+  preGenCommand: Scripts/fetch-llmfit.sh
   bundleIdPrefix: fr.vincentlauriat
   developmentLanguage: en
   deploymentTarget:
