@@ -1,0 +1,100 @@
+import Foundation
+
+public enum CodingToolError: Error, Equatable {
+    case installFailed(Int32, String)
+}
+
+public struct ClaudeCodeTool: CodingTool {
+    public static let apiKey = "localia-local"
+    public static let installCommand = "curl -fsSL https://claude.ai/install.sh | bash"
+
+    public let id = "claude-code"
+    public let displayName = "Claude Code"
+
+    private let searchPaths: [URL]
+    private let runner: ProcessRunning
+    private let located = LocatedBinary()
+
+    public static func defaultSearchPaths(home: URL) -> [URL] {
+        [home.appendingPathComponent(".local/bin/claude"),
+         home.appendingPathComponent(".claude/local/claude"),
+         URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
+         URL(fileURLWithPath: "/usr/local/bin/claude")]
+    }
+
+    public init(searchPaths: [URL]? = nil,
+                home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                runner: ProcessRunning = Shell()) {
+        self.searchPaths = searchPaths ?? Self.defaultSearchPaths(home: home)
+        self.runner = runner
+    }
+
+    private func firstExecutable() -> URL? {
+        searchPaths.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    public func locate() async -> URL? {
+        var found = firstExecutable()
+        if found == nil,
+           let r = try? await runner.run(URL(fileURLWithPath: "/bin/zsh"), ["-lc", "command -v claude"],
+                                         env: nil, timeout: 10),
+           r.status == 0 {
+            // Take the last non-empty line: a login shell may print banner noise first.
+            let line = String(decoding: r.stdout, as: UTF8.self)
+                .split(whereSeparator: \.isNewline).last.map(String.init)?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            if line.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: line) {
+                found = URL(fileURLWithPath: line)
+            }
+        }
+        located.set(found)
+        return found
+    }
+
+    public func install(progress: @escaping @Sendable (Double) -> Void) async throws {
+        progress(0)
+        let r = try await runner.run(URL(fileURLWithPath: "/bin/bash"), ["-c", Self.installCommand],
+                                     env: nil, timeout: 600)
+        guard r.status == 0 else { throw CodingToolError.installFailed(r.status, r.stderr) }
+        progress(1)
+    }
+
+    /// Executable resolution: the binary found by the last `locate()`, else a synchronous scan of the
+    /// search paths. If Claude Code is not installed, the command degrades to `/usr/bin/env claude ...`
+    /// (which fails with a clear "No such file" at launch) instead of crashing; callers should call
+    /// `locate()` first and offer `install()` when it returns nil.
+    public func command(target: LaunchTarget, profile: LaunchProfile, configDir: URL?) -> ToolCommand {
+        var command: ToolCommand
+        if let exe = located.get() ?? firstExecutable() {
+            command = ToolCommand(executable: exe, arguments: [], environment: [:], unsetEnvironment: [])
+        } else {
+            command = ToolCommand(executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: ["claude"],
+                                  environment: [:], unsetEnvironment: [])
+        }
+        guard case let .local(_, baseURL, model) = target else { return command }
+
+        command.environment = [
+            "ANTHROPIC_BASE_URL": baseURL.absoluteString,
+            "ANTHROPIC_API_KEY": Self.apiKey,
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+            "CLAUDE_CODE_SUBAGENT_MODEL": model,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        ]
+        command.unsetEnvironment = ["ANTHROPIC_AUTH_TOKEN"]
+        if profile == .light {
+            if let configDir { command.environment["CLAUDE_CONFIG_DIR"] = configDir.path }
+            command.arguments += ["--bare", "--strict-mcp-config", "--permission-mode", "default"]
+        }
+        return command
+    }
+}
+
+private final class LocatedBinary: @unchecked Sendable {
+    private let lock = NSLock()
+    private var url: URL?
+    func get() -> URL? { lock.lock(); defer { lock.unlock() }; return url }
+    func set(_ v: URL?) { lock.lock(); url = v; lock.unlock() }
+}
