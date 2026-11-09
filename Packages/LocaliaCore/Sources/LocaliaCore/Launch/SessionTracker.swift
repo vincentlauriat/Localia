@@ -55,6 +55,11 @@ public actor SessionTracker {
 
     public func modelsStillInUse() -> Set<ModelKey> { Set(sessions.values) }
 
+    /// Number of running sessions per (engine, model).
+    public func sessionCounts() -> [ModelKey: Int] {
+        sessions.values.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+    }
+
     private func file(_ id: UUID, _ ext: String) -> URL {
         statusDir.appendingPathComponent("\(id.uuidString).\(ext)")
     }

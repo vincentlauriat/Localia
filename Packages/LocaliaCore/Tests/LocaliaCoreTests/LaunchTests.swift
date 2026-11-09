@@ -178,6 +178,20 @@ final class SessionTrackerTests: XCTestCase {
         XCTAssertEqual(again, [])
     }
 
+    func test_sessionTracker_countsRunningSessionsPerModel() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let a = UUID(), b = UUID(), c = UUID()
+        await t.begin(id: a, engine: .ollama, model: "m1")
+        await t.begin(id: b, engine: .ollama, model: "m1")
+        await t.begin(id: c, engine: .llamaCpp, model: "m2")
+        var counts = await t.sessionCounts()
+        XCTAssertEqual(counts, [ModelKey(engine: .ollama, model: "m1"): 2, ModelKey(engine: .llamaCpp, model: "m2"): 1])
+        try touchDone(a)
+        _ = await t.pollFinished()
+        counts = await t.sessionCounts()
+        XCTAssertEqual(counts[ModelKey(engine: .ollama, model: "m1")], 1)
+    }
+
     func test_sessionTracker_sameModelNameOnTwoEngines() async throws {
         let t = SessionTracker(statusDir: dir)
         let a = UUID(), b = UUID()
