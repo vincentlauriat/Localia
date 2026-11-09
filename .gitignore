@@ -13,3 +13,6 @@ vendor/
 Localia.xcodeproj/
 .build/
 Localia/Resources/llmfit
+build/
+.dmgbuild-venv/
+.sparkle-tools/
