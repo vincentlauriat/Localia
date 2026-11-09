@@ -29,7 +29,7 @@ struct MenuContent: View {
     let windows: WindowManager
 
     var body: some View {
-        Text(statusLine)
+        Text(model.statusLine)
         if let busy = model.busyMessage { Text(busy) }
 
         Divider()
@@ -76,23 +76,6 @@ struct MenuContent: View {
         Button(String(localized: "About Localia")) { windows.show(.about) }
         Button(String(localized: "Quit Localia")) { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
-    }
-
-    /// `Local mode ON/OFF · <engine> · <loaded model> (<GB>, <tok/s>) · free <x>%`
-    private var statusLine: String {
-        var parts = [model.isLocalModeOn ? String(localized: "Local mode ON") : String(localized: "Local mode OFF"),
-                     AppModel.engineName(model.settings.activeEngine)]
-        if let m = model.loaded.first {
-            let id = model.candidateID(for: m.name)
-            let tps = model.settings.measurements.tps[id].map(Fmt.tps) ?? String(localized: "speed not measured")
-            parts.append("\(model.displayName(for: m.name)) (\(Fmt.gb(m.memoryGB)), \(tps))")
-        } else if !model.activeServing {
-            parts.append(String(localized: "stopped"))
-        } else {
-            parts.append(String(localized: "no model loaded"))
-        }
-        parts.append(String(localized: "free \(String(model.freePercent))%"))
-        return parts.joined(separator: " · ")
     }
 
     private func launch(_ folder: URL) {

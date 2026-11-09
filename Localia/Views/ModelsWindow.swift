@@ -3,10 +3,9 @@ import SwiftUI
 
 struct ModelsWindow: View {
     @ObservedObject var model: AppModel
-    @State private var tab = 0
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $model.modelsTab) {
             RecommendedTab(model: model)
                 .tabItem { Text(String(localized: "Recommended")) }.tag(0)
             InstalledTab(model: model)
@@ -53,6 +52,8 @@ private struct RecommendedTab: View {
                 }
                 Section {
                     ForEach(r.candidates) { CandidateRow(model: model, candidate: $0) }
+                } header: {
+                    CandidateHeader()
                 }
                 if !r.uncertain.isEmpty {
                     Section(String(localized: "Estimate uncertain, try it")) {
@@ -76,6 +77,27 @@ private struct RecommendedTab: View {
     }
 }
 
+/// Column widths shared by the header and the rows.
+private enum Col {
+    static let size: CGFloat = 70, memory: CGFloat = 105, speed: CGFloat = 105, fit: CGFloat = 64, action: CGFloat = 140
+}
+
+private struct CandidateHeader: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(String(localized: "Model"))
+            Spacer()
+            Text(String(localized: "Download size")).frame(width: Col.size, alignment: .trailing)
+            Text(String(localized: "Memory")).frame(width: Col.memory, alignment: .trailing)
+            Text(String(localized: "Speed")).frame(width: Col.speed, alignment: .trailing)
+            Text(String(localized: "Fit")).frame(width: Col.fit, alignment: .leading)
+            Color.clear.frame(width: Col.action, height: 1)
+        }
+        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        .lineLimit(1).minimumScaleFactor(0.8)
+    }
+}
+
 private struct CandidateRow: View {
     @ObservedObject var model: AppModel
     let candidate: ModelCandidate
@@ -93,21 +115,22 @@ private struct CandidateRow: View {
             Spacer()
             Group {
                 Text(model.downloadSizes[candidate.id].map(Fmt.bytes) ?? "…")
-                    .help(String(localized: "Download size"))
+                    .frame(width: Col.size, alignment: .trailing)
                 HStack(spacing: 4) {
-                    Text(Fmt.gb(candidate.memoryGB))
                     if candidate.memoryIsMeasured { Badge(text: String(localized: "measured"), color: .green) }
+                    Text(Fmt.gb(candidate.memoryGB))
                 }
-                .help(String(localized: "Memory"))
+                .frame(width: Col.memory, alignment: .trailing)
                 HStack(spacing: 4) {
-                    Text(Fmt.tps(candidate.estimatedTPS))
                     if candidate.speedIsMeasured { Badge(text: String(localized: "measured"), color: .green) }
+                    Text(Fmt.tps(candidate.estimatedTPS))
                 }
-                .help(String(localized: "Speed"))
+                .frame(width: Col.speed, alignment: .trailing)
                 Text(Self.fitName(candidate.fit)).foregroundStyle(Self.fitColor(candidate.fit))
+                    .frame(width: Col.fit, alignment: .leading)
             }
             .font(.callout.monospacedDigit())
-            action.frame(width: 150, alignment: .trailing)
+            action.frame(width: Col.action, alignment: .trailing)
         }
         .onAppear { model.requestSize(for: candidate) }
     }

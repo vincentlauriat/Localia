@@ -1,7 +1,6 @@
 # Third-party notices
 
-Localia builds on the following open-source projects. Each is used under its own licence; the
-full licence texts are at the linked URLs.
+Localia builds on the following open-source projects. Each is used under its own licence; the full licence texts are at the linked URLs.
 
 ## llmfit
 
@@ -24,12 +23,10 @@ full licence texts are at the linked URLs.
 ## Sparkle
 
 - Linked framework, used for app updates.
-- Licence: MIT-style (see the Sparkle LICENSE file for all copyright holders).
-  Copyright (c) 2006-2013 Andy Matuschak and the Sparkle contributors.
+- Licence: MIT-style (see the Sparkle LICENSE file for all copyright holders). Copyright (c) 2006-2013 Andy Matuschak and the Sparkle contributors.
 - https://github.com/sparkle-project/Sparkle
 
 ## Claude Code
 
-- Not bundled. When missing, Localia can run Anthropic's official installer
-  (`curl -fsSL https://claude.ai/install.sh | bash`) after asking.
+- Not bundled. When missing, Localia can run Anthropic's official installer (`curl -fsSL https://claude.ai/install.sh | bash`) after asking.
 - https://claude.com/claude-code

@@ -53,6 +53,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var freePercent: Int = 0
     @Published private(set) var busyMessage: String?
     @Published var alert: AppAlert?
+    /// Selected tab of the Models window (0 Recommended, 1 Installed, 2 Downloads).
+    @Published var modelsTab = 0
 
     // Models
     @Published private(set) var recommendation: Recommendation?
@@ -162,7 +164,10 @@ final class AppModel: ObservableObject {
         var usage: [EngineID: Double] = [:]
         for e in await registry.all {
             guard case .installed = engineStates[e.id] ?? .notInstalled else { continue }
-            let models = (try? await e.installedModels()) ?? []
+            let all = (try? await e.installedModels()) ?? []
+            // An Ollama base tag that Localia pulled for a `-localia` variant shares its blobs: show the variant only.
+            let names = Set(all.map(\.name))
+            let models = all.filter { !names.contains($0.name + "-localia") }
             let loadedNames = Set(((try? await e.loadedModels()) ?? []).map(\.name))
             for m in models {
                 out.append(InstalledRow(engine: e.id, name: m.name, displayName: displayName(for: m.name),
@@ -188,6 +193,23 @@ final class AppModel: ObservableObject {
             bytes += (try? u.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize) ?? 0
         }
         return Double(bytes) / 1_073_741_824
+    }
+
+    /// `Local mode ON/OFF · <engine> · <loaded model> (<GB>, <tok/s>) · free <x>%`
+    var statusLine: String {
+        var parts = [isLocalModeOn ? String(localized: "Local mode ON") : String(localized: "Local mode OFF"),
+                     AppModel.engineName(settings.activeEngine)]
+        if let m = loaded.first {
+            let id = candidateID(for: m.name)
+            let tps = settings.measurements.tps[id].map(Fmt.tps) ?? String(localized: "speed not measured")
+            parts.append("\(displayName(for: m.name)) (\(Fmt.gb(m.memoryGB)), \(tps))")
+        } else if !activeServing {
+            parts.append(String(localized: "stopped"))
+        } else {
+            parts.append(String(localized: "no model loaded"))
+        }
+        parts.append(String(localized: "free \(String(freePercent))%"))
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Recommendations

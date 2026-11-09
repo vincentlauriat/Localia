@@ -28,7 +28,7 @@ final class WindowManager {
         case .models:
             root = AnyView(ModelsWindow(model: model))
             title = String(localized: "Models")
-            size = NSSize(width: 820, height: 560)
+            size = NSSize(width: 920, height: 600)
         case .settings:
             root = AnyView(SettingsView(model: model))
             title = String(localized: "Localia Settings")

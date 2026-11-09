@@ -14,8 +14,21 @@ struct AboutView: View {
               let text = try? String(contentsOf: url, encoding: .utf8) else {
             return AttributedString(String(localized: "Third-party notices are missing from this build."))
         }
-        return (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
+        // Headings become bold lines; the rest keeps inline Markdown (links, code).
+        var out = AttributedString()
+        for line in text.components(separatedBy: "\n") {
+            if line.hasPrefix("# ") { continue }   // the window already has a title
+            var piece: AttributedString
+            if line.hasPrefix("## ") {
+                piece = AttributedString(String(line.dropFirst(3)))
+                piece.font = .headline
+            } else {
+                piece = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                    ?? AttributedString(line)
+            }
+            out += piece + AttributedString("\n")
+        }
+        return out
     }
 
     var body: some View {

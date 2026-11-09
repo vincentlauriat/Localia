@@ -913,6 +913,22 @@
         }
       }
     },
+    "Fit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adéquation"
+          }
+        }
+      }
+    },
     "Free Memory": {
       "localizations": {
         "en": {
@@ -1421,6 +1437,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Des apps gourmandes en mémoire sont ouvertes : %@. Les quitter rend le modèle plus rapide."
+          }
+        }
+      }
+    },
+    "Model": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèle"
           }
         }
       }
