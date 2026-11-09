@@ -11,12 +11,16 @@ enum Theme {
     // MARK: Colours
     /// Green: speed, memory bar, loaded and running dots.
     static let local = adaptive(light: 0x22A34A, dark: 0x34C759)
-    /// Local-mode accent, Juicy's "Low Power Mode" yellow: `accent` fills (switch, badge tint), `accentInk`
-    /// is the same hue dark enough to read as text on a light card.
-    static let accent = adaptive(light: 0xF2C200, dark: 0xF4D23C)
-    static let accentInk = adaptive(light: 0x8A6A00, dark: 0xF4D23C)
+    /// Local-mode accent: the logo teal, lightened in dark mode to stay legible. Used for the badge text, the
+    /// airplane, the switch and the speed while local mode is on. Contrast on the card: 6.0:1 light, 7.5:1 dark.
+    static let accent = adaptive(light: 0x045A54, dark: 0x4FD1C5)
+    /// The badge fill: the accent at 12 % (light) or 18 % (dark), so its text keeps at least 4.5:1.
+    static let accentSoft = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(hex: 0x4FD1C5).withAlphaComponent(0.18)
+            : NSColor(hex: 0x045A54).withAlphaComponent(0.12)
+    })
     static let blue = adaptive(light: 0x2A78D6, dark: 0x4D8CE0)
-    static let teal = adaptive(light: 0x0F9BA8, dark: 0x3CC4CF)
     static let orange = adaptive(light: 0xD9822B, dark: 0xF0A04B)
     static let red = adaptive(light: 0xD93F3F, dark: 0xFF6961)
     static let slate = adaptive(light: 0x5B6470, dark: 0x9AA3AE)

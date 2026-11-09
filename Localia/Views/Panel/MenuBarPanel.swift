@@ -134,7 +134,7 @@ struct MenuBarPanel: View {
                                 .font(.display(18, weight: .semibold))
                         }
                     }
-                    .foregroundStyle(speed == nil ? Color.secondary : Theme.local)
+                    .foregroundStyle(speed == nil ? Color.secondary : (model.isLocalModeOn ? Theme.accent : Theme.blue))
                     .lineLimit(1)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(Text(speed?.measured == false
@@ -143,7 +143,7 @@ struct MenuBarPanel: View {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "cpu.fill")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.accentInk)
+                            .foregroundStyle(Theme.accent)
                             .frame(width: 18)
                         Text(heroLine(served))
                             .font(.system(size: 13, weight: .semibold))
@@ -197,9 +197,9 @@ struct MenuBarPanel: View {
                 Image(systemName: "airplane").font(.system(size: 11, weight: .bold))
                 Text(String(localized: "Local mode")).font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(Theme.accentInk)
+            .foregroundStyle(Theme.accent)
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Theme.accent.opacity(0.22), in: Capsule())
+            .background(Theme.accentSoft, in: Capsule())
         }
     }
 
@@ -291,7 +291,7 @@ struct MenuBarPanel: View {
     }
 
     private var engineCard: some View {
-        DisclosureCard(title: String(localized: "Engine"), icon: "server.rack", iconColor: Theme.teal,
+        DisclosureCard(title: String(localized: "Engine"), icon: "server.rack", iconColor: .primary,
                        value: "\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))",
                        expanded: $engineOpen) {
             Picker(String(localized: "Active Engine"), selection: Binding(
@@ -369,7 +369,7 @@ struct MenuBarPanel: View {
             if launchOpen { launchList }
 
             RowDivider()
-            ListRow(icon: "airplane", iconColor: Theme.accentInk, title: String(localized: "Local mode")) {
+            ListRow(icon: "airplane", iconColor: Theme.accent, title: String(localized: "Local mode")) {
                 HStack(spacing: 8) {
                     if model.switchingLocalMode { ProgressView().controlSize(.small) }
                     Toggle(String(localized: "Local mode"), isOn: localModeBinding)

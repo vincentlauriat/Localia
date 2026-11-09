@@ -117,7 +117,7 @@ struct SegmentedBar: View {
 /// A switch drawn in SwiftUI (no NSSwitch, so the tint is honoured and it renders in snapshots), sized
 /// like the native one by default, in the spirit of a "Low Power Mode" toggle.
 struct PillToggleStyle: ToggleStyle {
-    var onColor: Color = Theme.local
+    var onColor: Color = Theme.accent
     var width: CGFloat = 40
     var height: CGFloat = 24
 
