@@ -185,3 +185,22 @@ curl -sN 127.0.0.1:11434/api/pull -d '{"model":"hf.co/unsloth/Qwen2.5-Coder-1.5B
   `~/.cache/huggingface/hub`, not `~/Library/Caches/llama.cpp`; effective context is capped by the
   model's training context; tiny models may not emit parseable tool calls.
 - Ollama: `hf.co/` pulls work; variant name `<tag>-localia` accepted; stream shape above.
+
+## Spike 2 rerun with gemma4 from the Ollama store (BLOCKED, no GGUF available)
+
+Fix round 1 asked to rerun the llama-server tool-call test on the user's `gemma4` blob, read-only.
+It cannot be done, because Ollama's gemma4 is not stored as GGUF:
+
+- `ollama show gemma4:12b --modelfile` prints `FROM gemma4:12b` (a model reference, not a blob path),
+  with `RENDERER gemma4` / `PARSER gemma4` (Ollama's own Go renderer/parser, not a Jinja template).
+- The manifest `~/.ollama/models/manifests/registry.ollama.ai/library/gemma4/12b` has 725 layers of
+  type `application/vnd.ollama.image.tensor` (one per tensor), 10 `...image.json`, no
+  `application/vnd.ollama.image.model` layer. `/api/ps` earlier reported `format: safetensors`.
+- Every blob over 100 MB in `~/.ollama/models/blobs` starts with a non-GGUF header (for example
+  `78000000`, `38010000`; GGUF files start with `GGUF`, `47475546`). No `GGUF` magic found.
+
+So `llama-server -m <blob>` has nothing to load. Nothing was started, downloaded or modified, and no
+Ollama model was unloaded. Spike 2 stays: tool call unproven (FAIL with the 1.5B model).
+To close it, a tool-capable GGUF must be downloaded (for example a Qwen2.5-Coder-7B or gemma GGUF
+from unsloth, several GB) with Vincent's approval, or Ollama's `ollama create` could export one
+(not possible for safetensors models without conversion). Generation speed was not measured.
