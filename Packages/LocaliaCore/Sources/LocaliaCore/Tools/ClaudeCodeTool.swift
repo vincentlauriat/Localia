@@ -72,10 +72,28 @@ public struct ClaudeCodeTool: CodingTool {
                                   environment: [:], unsetEnvironment: [])
         }
         guard case let .local(_, baseURL, model) = target else { return command }
+        let overlay = Self.localOverlay(baseURL: baseURL, model: model, profile: profile, configDir: configDir)
+        command.environment = overlay.environment
+        command.unsetEnvironment = overlay.unsetEnvironment
+        command.arguments += overlay.arguments
+        return command
+    }
+}
 
-        command.environment = [
+public struct LocalOverlay: Equatable, Sendable {
+    public var environment: [String: String]
+    public var unsetEnvironment: [String]
+    /// Placed before the user's own arguments.
+    public var arguments: [String]
+}
+
+extension ClaudeCodeTool {
+    /// What a local session adds on top of the plain `claude` invocation. Single source of truth for
+    /// both `command(...)` and the shell shim's `state.env`.
+    public static func localOverlay(baseURL: URL, model: String, profile: LaunchProfile, configDir: URL?) -> LocalOverlay {
+        var environment = [
             "ANTHROPIC_BASE_URL": baseURL.absoluteString,
-            "ANTHROPIC_API_KEY": Self.apiKey,
+            "ANTHROPIC_API_KEY": apiKey,
             "ANTHROPIC_MODEL": model,
             "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
             "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
@@ -86,12 +104,12 @@ public struct ClaudeCodeTool: CodingTool {
             // Auto-compact must fire inside the real window (it never raises above the model window).
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW": String(LocaliaConstants.localContextTokens),
         ]
-        command.unsetEnvironment = ["ANTHROPIC_AUTH_TOKEN"]
+        var arguments: [String] = []
         if profile == .light {
-            if let configDir { command.environment["CLAUDE_CONFIG_DIR"] = configDir.path }
-            command.arguments += ["--bare", "--strict-mcp-config", "--permission-mode", "default"]
+            if let configDir { environment["CLAUDE_CONFIG_DIR"] = configDir.path }
+            arguments = ["--bare", "--strict-mcp-config", "--permission-mode", "default"]
         }
-        return command
+        return LocalOverlay(environment: environment, unsetEnvironment: ["ANTHROPIC_AUTH_TOKEN"], arguments: arguments)
     }
 }
 

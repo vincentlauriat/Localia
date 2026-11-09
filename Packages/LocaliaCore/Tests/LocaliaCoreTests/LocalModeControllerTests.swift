@@ -1,0 +1,153 @@
+import XCTest
+@testable import LocaliaCore
+
+private struct ModelEngine: Engine {
+    let id: EngineID
+    let baseURL: URL
+    let models: [String]
+    func installState() async -> InstallState { .installed("1", managedByLocalia: false) }
+    func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
+    func uninstall() async throws {}
+    func isServing() async -> Bool { true }
+    func startServing() async throws {}
+    func stopServing() async throws {}
+    func installedModels() async throws -> [InstalledModel] { models.map { InstalledModel(name: $0, sizeGB: 1) } }
+    func loadedModels() async throws -> [LoadedModel] { [] }
+    func pull(_ c: ModelCandidate, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> String { c.id }
+    func delete(_ modelName: String) async throws {}
+    func load(_ modelName: String, contextTokens: Int) async throws {}
+    func unload(_ modelName: String) async throws {}
+}
+
+private struct FakeSource: LocalModelSource {
+    var engine: (any Engine)?
+    var preferred: [String] = []
+    func activeEngine() async -> (any Engine)? { engine }
+    func preferredModels() async -> [String] { preferred }
+}
+
+private final class FakeShim: ShellShimming, @unchecked Sendable {
+    struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID }
+    var installs = 0, uninstalls = 0
+    var states: [State] = []
+    var failInstall = false
+    func install() throws {
+        if failInstall { throw CocoaError(.fileWriteNoPermission) }
+        installs += 1
+    }
+    func uninstall() throws { uninstalls += 1 }
+    func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy, profile: LaunchProfile, engine: EngineID) throws {
+        states.append(State(on: on, baseURL: baseURL, model: model, policy: policy, profile: profile, engine: engine))
+    }
+}
+
+@MainActor
+final class LocalModeControllerTests: XCTestCase {
+    let url = URL(string: "http://127.0.0.1:11434")!
+
+    private func make(models: [String] = ["a", "b", "c"], preferred: [String] = [], engine: Bool = true,
+                      settings: InMemoryLocalModeSettings = InMemoryLocalModeSettings())
+        -> (LocalModeController, FakeShim, InMemoryLocalModeSettings) {
+        let shim = FakeShim()
+        let e: (any Engine)? = engine ? ModelEngine(id: .ollama, baseURL: url, models: models) : nil
+        let c = LocalModeController(settings: settings, shim: shim, source: FakeSource(engine: e, preferred: preferred))
+        return (c, shim, settings)
+    }
+
+    func test_defaults() {
+        let s = InMemoryLocalModeSettings()
+        XCTAssertFalse(s.localModeOn)
+        XCTAssertEqual(s.localModeScope, .localiaOnly)
+        XCTAssertEqual(s.engineDownPolicy, .autoStart)
+    }
+
+    func test_offIsCloud() async {
+        let (c, _, _) = make()
+        XCTAssertFalse(c.isOn)
+        guard case .cloud = await c.launchTarget() else { return XCTFail() }
+    }
+
+    func test_onUsesLastModel_thenTopInstalledCandidate() async throws {
+        let (c, _, s) = make(preferred: ["zzz-not-installed", "c", "b"])
+        try await c.setOn(true)
+        XCTAssertTrue(c.isOn); XCTAssertTrue(s.localModeOn)
+        guard case let .local(engine, baseURL, model) = await c.launchTarget() else { return XCTFail() }
+        XCTAssertEqual(engine, .ollama); XCTAssertEqual(baseURL, url); XCTAssertEqual(model, "c")
+
+        s.lastModel = "b"
+        guard case let .local(_, _, m2) = await c.launchTarget() else { return XCTFail() }
+        XCTAssertEqual(m2, "b")
+
+        s.lastModel = "deleted-since"
+        guard case let .local(_, _, m3) = await c.launchTarget() else { return XCTFail() }
+        XCTAssertEqual(m3, "c")
+    }
+
+    func test_onWithoutRanking_usesFirstInstalled() async throws {
+        let (c, _, _) = make(models: ["x", "y"])
+        try await c.setOn(true)
+        guard case let .local(_, _, m) = await c.launchTarget() else { return XCTFail() }
+        XCTAssertEqual(m, "x")
+    }
+
+    func test_setOn_withoutModelOrEngine_throwsAndStaysOff() async {
+        for (c, _, s) in [make(models: []), make(engine: false)] {
+            do { try await c.setOn(true); XCTFail("expected throw") } catch {}
+            XCTAssertFalse(c.isOn); XCTAssertFalse(s.localModeOn)
+        }
+    }
+
+    func test_localiaOnlyScope_neverInstallsShim() async throws {
+        let (c, shim, _) = make()
+        XCTAssertEqual(c.scope, .localiaOnly)
+        try await c.setOn(true)
+        try await c.setOn(false)
+        try await c.setOn(true)
+        XCTAssertEqual(shim.installs, 0)
+        // A shell that still has the function from an earlier install keeps passing through.
+        XCTAssertTrue(shim.states.allSatisfy { !$0.on })
+    }
+
+    func test_everyClaudeScope_installsAndWritesState_andLocaliaOnlyUninstalls() async throws {
+        let (c, shim, s) = make(preferred: ["b"])
+        s.launchProfile = .full
+        s.engineDownPolicy = .fail
+        try await c.setOn(true)
+        try await c.setScope(.everyClaude)
+        XCTAssertEqual(shim.installs, 1)
+        XCTAssertEqual(s.localModeScope, .everyClaude)
+        XCTAssertEqual(shim.states.last, .init(on: true, baseURL: url, model: "b", policy: .fail, profile: .full, engine: .ollama))
+
+        try await c.setOn(false)
+        XCTAssertEqual(shim.states.last?.on, false)
+        XCTAssertEqual(shim.installs, 1)
+
+        try await c.setScope(.localiaOnly)
+        XCTAssertEqual(shim.uninstalls, 1)
+        XCTAssertEqual(shim.states.last?.on, false)
+        XCTAssertEqual(s.localModeScope, .localiaOnly)
+    }
+
+    func test_failedInstall_keepsScope() async throws {
+        let (c, shim, s) = make()
+        shim.failInstall = true
+        do { try await c.setScope(.everyClaude); XCTFail() } catch {}
+        XCTAssertEqual(c.scope, .localiaOnly); XCTAssertEqual(s.localModeScope, .localiaOnly)
+    }
+
+    func test_restoresPersistedState() async {
+        let s = InMemoryLocalModeSettings()
+        s.localModeOn = true; s.localModeScope = .everyClaude
+        let (c, _, _) = make(settings: s)
+        XCTAssertTrue(c.isOn); XCTAssertEqual(c.scope, .everyClaude)
+    }
+
+    func test_noteModelUsed_updatesStateWhenOn() async throws {
+        let (c, shim, s) = make()
+        try await c.setScope(.everyClaude)
+        try await c.setOn(true)
+        try await c.noteModelUsed("b")
+        XCTAssertEqual(s.lastModel, "b")
+        XCTAssertEqual(shim.states.last?.model, "b")
+    }
+}

@@ -38,6 +38,11 @@ targets:
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "14.0"
         LSUIElement: true
+        CFBundleURLTypes:
+          - CFBundleURLName: fr.vincentlauriat.localia
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - localia
     entitlements:
       path: Localia/Localia.entitlements
       properties: {}
