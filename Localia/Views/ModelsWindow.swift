@@ -114,7 +114,8 @@ private struct CandidateRow: View {
             }
             Spacer()
             Group {
-                Text(model.downloadSizes[candidate.id].map(Fmt.bytes) ?? "…")
+                Text(verbatim: "≈ " + Fmt.gb(candidate.weightsGB))
+                    .help(String(localized: "Estimated from the model size. The exact size is read when you click Download."))
                     .frame(width: Col.size, alignment: .trailing)
                 HStack(spacing: 4) {
                     if candidate.memoryIsMeasured { Badge(text: String(localized: "measured"), color: .green) }
@@ -132,7 +133,6 @@ private struct CandidateRow: View {
             .font(.callout.monospacedDigit())
             action.frame(width: Col.action, alignment: .trailing)
         }
-        .onAppear { model.requestSize(for: candidate) }
     }
 
     @ViewBuilder private var action: some View {
@@ -276,7 +276,12 @@ private struct DownloadsTab: View {
 
     private func progressText(_ d: DownloadState) -> String {
         let engine = AppModel.engineName(d.engine)
-        guard let total = d.total else { return String(localized: "\(engine) · starting…") }
+        guard let total = d.total else {
+            if let expected = d.expectedBytes {
+                return String(localized: "\(engine) · starting, \(Fmt.bytes(expected)) to download…")
+            }
+            return String(localized: "\(engine) · starting…")
+        }
         return String(localized: "\(engine) · \(Fmt.bytes(d.done)) of \(Fmt.bytes(total))")
     }
 }

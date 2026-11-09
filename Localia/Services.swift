@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LocaliaCore
 
@@ -63,6 +64,8 @@ struct AppDependencies {
     /// Isolated Claude Code config for light local sessions.
     var claudeConfigDir: URL
     var llmfit: LlmfitManager
+    /// Shows an alert raised by background work (no window to attach it to).
+    var notify: @MainActor (AppAlert) -> Void
 
     @MainActor
     static func live() -> AppDependencies {
@@ -87,7 +90,14 @@ struct AppDependencies {
             profile: .current(),
             appSupportBase: nil,
             claudeConfigDir: Paths.claudeConfig(),
-            llmfit: llmfit)
+            llmfit: llmfit,
+            notify: { a in
+                let alert = NSAlert()
+                alert.messageText = a.title
+                alert.informativeText = a.message
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            })
     }
 }
 

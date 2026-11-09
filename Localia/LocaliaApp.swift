@@ -48,12 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls {
-            #if DEBUG
-            if DebugDriver.handle(url, model: model, windows: windows) { continue }
-            #endif
-            model.handle(url: url)
-        }
+        for url in urls { model.handle(url: url) }
     }
 
     /// Quit: unload what Localia loaded and stop the servers it started, then exit.
@@ -72,14 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum MemoryAlert {
     static func confirm(_ w: MemoryWarning) -> Bool {
-        #if DEBUG
-        // E2E aid for runs where no one can click (e.g. a locked screen): `-LocaliaE2EAutoConfirm YES`.
-        if UserDefaults.standard.bool(forKey: "LocaliaE2EAutoConfirm") {
-            NSLog("Localia E2E: memory warning auto-confirmed (required %.1f GB, available %.1f GB, apps %@)",
-                  w.requiredGB, w.availableGB, w.heavyApps.joined(separator: ", "))
-            return true
-        }
-        #endif
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Memory is short")

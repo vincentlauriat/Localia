@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import LocaliaCore
 import Network
+import os
 
 struct AppAlert: Identifiable {
     let id = UUID()
@@ -17,6 +18,8 @@ struct DownloadState: Equatable {
     let engine: EngineID
     var done: Int64 = 0
     var total: Int64?
+    /// Size announced by the Hugging Face manifest, fetched when the user clicked Download.
+    var expectedBytes: Int64?
     var fraction: Double? { total.flatMap { $0 > 0 ? Double(done) / Double($0) : nil } }
 }
 
@@ -63,7 +66,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var installed: [InstalledRow] = []
     @Published private(set) var diskUsageGB: [EngineID: Double] = [:]
     @Published private(set) var downloads: [String: DownloadState] = [:]
-    @Published private(set) var downloadSizes: [String: Int64] = [:]
 
     // Installs
     @Published private(set) var engineStates: [EngineID: InstallState] = [:]
@@ -82,7 +84,10 @@ final class AppModel: ObservableObject {
     private var statusTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
-    private var sizeRequests: Set<String> = []
+    /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
+    private var unreachableEngines: Set<EngineID> = []
+    private var offlineAlertShown = false
+    private let log = Logger(subsystem: "fr.vincentlauriat.localia", category: "app")
 
     init(deps: AppDependencies, confirmMemory: @escaping @MainActor (MemoryWarning) async -> Bool) {
         self.deps = deps
@@ -121,9 +126,9 @@ final class AppModel: ObservableObject {
         Task { await refreshRecommendations() }
     }
 
-    /// First run, or nothing installed in any engine.
+    /// First run, or no model at all. An engine that is merely stopped is not "nothing installed".
     var needsOnboarding: Bool {
-        !deps.appDefaults.bool(forKey: "onboardingDone") || installed.isEmpty
+        !deps.appDefaults.bool(forKey: "onboardingDone") || (unreachableEngines.isEmpty && installed.isEmpty)
     }
 
     func finishOnboarding() { deps.appDefaults.set(true, forKey: "onboardingDone") }
@@ -164,7 +169,17 @@ final class AppModel: ObservableObject {
         var usage: [EngineID: Double] = [:]
         for e in await registry.all {
             guard case .installed = engineStates[e.id] ?? .notInstalled else { continue }
-            let all = (try? await e.installedModels()) ?? []
+            let all: [InstalledModel]
+            do {
+                all = try await e.installedModels()
+                unreachableEngines.remove(e.id)
+            } catch {
+                // Engine down: keep what was last seen instead of showing "nothing installed" and 0 on disk.
+                unreachableEngines.insert(e.id)
+                out += installed.filter { $0.engine == e.id }
+                if let u = diskUsageGB[e.id] { usage[e.id] = u }
+                continue
+            }
             // An Ollama base tag that Localia pulled for a `-localia` variant shares its blobs: show the variant only.
             let names = Set(all.map(\.name))
             let models = all.filter { !names.contains($0.name + "-localia") }
@@ -234,17 +249,10 @@ final class AppModel: ObservableObject {
     /// llmfit estimates without any measurement scaling (the speed ratio must be computed against these).
     private func unscaledEstimates() -> [String: Double] {
         guard let rows else { return [:] }
-        let r = Recommender().recommend(rows: rows, profile: profile, measurements: Measurements())
+        // Uncapped: a measured model ranked past the display cap must still contribute to the ratio.
+        let r = Recommender(maxCandidates: .max, maxUncertain: .max)
+            .recommend(rows: rows, profile: profile, measurements: Measurements())
         return Dictionary((r.candidates + r.uncertain).map { ($0.id, $0.estimatedTPS) }, uniquingKeysWith: { a, _ in a })
-    }
-
-    func requestSize(for c: ModelCandidate) {
-        guard downloadSizes[c.id] == nil, !sizeRequests.contains(c.id) else { return }
-        sizeRequests.insert(c.id)
-        let sizes = deps.sizes
-        Task {
-            if let s = try? await sizes.size(repo: c.ggufRepo, quant: c.quant) { downloadSizes[c.id] = s }
-        }
     }
 
     /// Served name of an installed model for this candidate on the active engine, if any.
@@ -295,13 +303,26 @@ final class AppModel: ObservableObject {
     func setActiveEngine(_ id: EngineID) async {
         settings.activeEngine = id
         await registry.setActive(id)
-        try? await controller.refreshShimState()
+        await refreshShim()
         await refreshStatus()
     }
 
     /// Policy, profile and similar settings feed the shim state.
     func settingsChanged() {
-        Task { try? await controller.refreshShimState() }
+        Task { await refreshShim() }
+    }
+
+    /// In `everyClaude` scope a failed write would leave `claude` pointing at the old state: say so.
+    private func refreshShim() async {
+        do { try await controller.refreshShimState() } catch {
+            show(error, title: String(localized: "Could not update local mode for every claude"))
+        }
+    }
+
+    private func noteModelUsed(_ model: String) async {
+        do { try await controller.noteModelUsed(model) } catch {
+            show(error, title: String(localized: "Could not update local mode for every claude"))
+        }
     }
 
     // MARK: - Launch
@@ -321,31 +342,43 @@ final class AppModel: ObservableObject {
         let sessionID = UUID()
         var configDir: URL?
         var session: ModelKey?
+        /// Set when this launch made Localia load the model, so a later failure can unload it again.
+        var loadedNow: ModelKey?
         if case let .local(engineID, _, model) = target {
             guard !model.isEmpty, let engine = await registry.engine(engineID) else {
                 alert = AppAlert(title: String(localized: "No local model"),
                                  message: String(localized: "Download a model in the Models window first."))
                 return
             }
+            let key = ModelKey(engine: engineID, model: model)
             do {
-                guard try await prepareLocal(engine: engine, model: model) else { return }
+                let outcome = try await prepareLocal(engine: engine, model: model)
+                guard outcome != .cancelled else { return }
+                if outcome == .loadedByLocalia { loadedNow = key }
                 if settings.launchProfile == .light {
                     configDir = try ClaudeConfigIsolation(dir: deps.claudeConfigDir)
                         .prepare(apiKey: ClaudeCodeTool.apiKey, trustedFolder: folder)
                 }
-                try? await controller.noteModelUsed(model)
             } catch {
                 busyMessage = nil
+                await undoLoad(loadedNow)
                 show(error, title: String(localized: "Could not start the local model"))
                 return
             }
-            session = ModelKey(engine: engineID, model: model)
+            await noteModelUsed(model)
+            session = key
         }
         let command = deps.tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
         do {
-            let script = try LaunchScriptBuilder().script(folder: folder, command: command, sessionID: sessionID,
-                                                          statusDir: Paths.sessions(base: deps.appSupportBase))
-            let url = try TerminalLauncher.writeScript(script, sessionID: sessionID, base: deps.appSupportBase)
+            let url: URL
+            do {
+                let script = try LaunchScriptBuilder().script(folder: folder, command: command, sessionID: sessionID,
+                                                              statusDir: Paths.sessions(base: deps.appSupportBase))
+                url = try TerminalLauncher.writeScript(script, sessionID: sessionID, base: deps.appSupportBase)
+            } catch {
+                await undoLoad(loadedNow)   // no session will ever end to unload it
+                throw error
+            }
             if let session { await tracker.begin(id: sessionID, engine: session.engine, model: session.model) }
             do { try await deps.terminal.open(scriptURL: url, in: settings.terminalApp) } catch {
                 // No window opened: end the session record so its model can be unloaded.
@@ -363,42 +396,57 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
+    enum LoadOutcome: Equatable { case cancelled, loadedByLocalia, alreadyLoaded }
+
     /// Starts the engine, warns about memory, loads the model and measures it the first time.
-    /// Returns false when the user cancelled at the memory warning.
-    private func prepareLocal(engine: any Engine, model: String) async throws -> Bool {
+    private func prepareLocal(engine: any Engine, model: String) async throws -> LoadOutcome {
         busyMessage = String(localized: "Starting \(Self.engineName(engine.id))…")
-        guard try await loadWithMemoryCheck(engine: engine, model: model) else { return false }
+        let outcome = try await loadWithMemoryCheck(engine: engine, model: model)
+        guard outcome != .cancelled else { return outcome }
         if settings.measurements.tps[candidateID(for: model)] == nil {
             await measure(engine: engine, model: model)
         }
         busyMessage = nil
-        return true
+        return outcome
     }
 
-    /// Starts serving, shows the memory warning (unless already loaded), loads the model.
-    private func loadWithMemoryCheck(engine: any Engine, model: String) async throws -> Bool {
+    /// Starts serving, shows the memory warning (unless already loaded), loads the model. A model that
+    /// was already resident (e.g. loaded by the user) is never recorded as Localia's, so it is never unloaded.
+    private func loadWithMemoryCheck(engine: any Engine, model: String) async throws -> LoadOutcome {
         try await engine.startServing()
         let alreadyLoaded = ((try? await engine.loadedModels()) ?? []).contains { $0.name == model }
         if !alreadyLoaded,
            let warning = deps.memoryGuard.check(requiredGB: requiredGB(for: model, engine: engine.id), profile: profile) {
             busyMessage = nil
-            guard await confirmMemory(warning) else { return false }
+            guard await confirmMemory(warning) else { return .cancelled }
         }
         busyMessage = String(localized: "Loading \(displayName(for: model))…")
         try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
-        loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
         busyMessage = nil
-        return true
+        if alreadyLoaded { return .alreadyLoaded }
+        loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
+        return .loadedByLocalia
+    }
+
+    /// Unloads a model this launch loaded when the launch failed before any session could own it.
+    private func undoLoad(_ key: ModelKey?) async {
+        guard let key, loadedByLocalia.contains(key),
+              !(await tracker.modelsStillInUse().contains(key)),
+              let e = await registry.engine(key.engine) else { return }
+        do { try await e.unload(key.model) } catch {
+            log.error("unload after failed launch: \(String(describing: error), privacy: .public)")
+        }
+        loadedByLocalia.remove(key)
     }
 
     /// Measured memory, else the recommendation's estimate, else the file size plus a margin.
-    private func requiredGB(for model: String, engine: EngineID) -> Double {
+    private func requiredGB(for model: String, engine: EngineID, fileSizeGB: Double? = nil) -> Double {
         let id = candidateID(for: model)
         if let m = settings.measurements.memoryGB[id] { return m }
         if let c = ((recommendation?.candidates ?? []) + (recommendation?.uncertain ?? [])).first(where: { $0.id == id }) {
             return c.memoryGB
         }
-        let size = installed.first { $0.engine == engine && $0.name == model }?.sizeGB ?? 0
+        let size = fileSizeGB ?? installed.first { $0.engine == engine && $0.name == model }?.sizeGB ?? 0
         return size * 1.15
     }
 
@@ -515,20 +563,42 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// `localia://start?model=<name>`: start the active engine and load the model, without UI.
+    /// `localia://start?model=<name>` (sent by the shell shim): no UI. Any app or web page can open this URL,
+    /// so only the current local model is accepted, and only if it is installed on the active engine.
     func handle(url: URL) {
         guard url.scheme == "localia", url.host == "start" else { return }
         let model = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first { $0.name == "model" }?.value
-        Task {
-            guard let engine = await registry.active else { return }
-            try? await engine.startServing()
-            if let model, !model.isEmpty,
-               (try? await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)) != nil {
-                loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
-            }
-            await refreshStatus()
+            .queryItems?.first { $0.name == "model" }?.value ?? ""
+        Task { await handleStart(model: model) }
+    }
+
+    func handleStart(model: String) async {
+        let log = self.log
+        var allowed = Set([settings.lastModel].compactMap { $0 })
+        if case let .local(_, _, current) = await controller.launchTarget() { allowed.insert(current) }
+        guard !model.isEmpty, allowed.contains(model) else {
+            log.notice("localia://start ignored: model is not the current local model")
+            return
         }
+        guard let engine = await registry.active else { log.error("localia://start: no active engine"); return }
+        do {
+            try await engine.startServing()
+            guard let entry = try await engine.installedModels().first(where: { $0.name == model }) else {
+                log.notice("localia://start ignored: model not installed on the active engine")
+                return
+            }
+            if try await engine.loadedModels().contains(where: { $0.name == model }) { return }
+            let needed = requiredGB(for: model, engine: engine.id, fileSizeGB: entry.sizeGB)
+            if let w = deps.memoryGuard.check(requiredGB: needed, profile: profile) {
+                log.notice("localia://start: not loading, memory warning (needs \(w.requiredGB) GB, free \(w.availableGB) GB)")
+                return
+            }
+            try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
+            loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
+        } catch {
+            log.error("localia://start failed: \(String(describing: error), privacy: .public)")
+        }
+        await refreshStatus()
     }
 
     // MARK: - Models window actions
@@ -541,6 +611,10 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             do {
                 guard let engine = await self.registry.engine(engineID) else { throw EngineError.notInstalled }
+                // The size is fetched only now, on the user's click (no network while browsing the list).
+                if let bytes = try? await self.deps.sizes.size(repo: c.ggufRepo, quant: c.quant) {
+                    self.downloads[c.id]?.expectedBytes = bytes
+                }
                 if engineID == .ollama { try await engine.startServing() }
                 let name = try await engine.pull(c) { done, total in
                     Task { @MainActor [weak self] in
@@ -587,7 +661,7 @@ final class AppModel: ObservableObject {
     func setDefault(_ row: InstalledRow) async {
         settings.defaultModel = row.name
         if row.engine != settings.activeEngine { await setActiveEngine(row.engine) }
-        try? await controller.noteModelUsed(row.name)
+        await noteModelUsed(row.name)
         await refreshInstalled()
     }
 
@@ -596,7 +670,7 @@ final class AppModel: ObservableObject {
         guard let e = await registry.engine(row.engine) else { return }
         do {
             busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
-            if try await loadWithMemoryCheck(engine: e, model: row.name) {
+            if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
                 await measure(engine: e, model: row.name)
             }
         } catch {
@@ -716,7 +790,13 @@ final class AppModel: ObservableObject {
             let offline = path.status != .satisfied
             Task { @MainActor [weak self] in
                 guard let self, offline, self.settings.autoLocalWhenOffline, !self.controller.isOn else { return }
-                try? await self.controller.setOn(true)
+                do { try await self.controller.setOn(true) } catch {
+                    // Background change: there may be no window, so notify once per app run.
+                    guard !self.offlineAlertShown else { return }
+                    self.offlineAlertShown = true
+                    self.deps.notify(AppAlert(title: String(localized: "Offline, but local mode could not start"),
+                                              message: self.describe(error)))
+                }
             }
         }
         monitor.start(queue: DispatchQueue(label: "fr.vincentlauriat.localia.path"))

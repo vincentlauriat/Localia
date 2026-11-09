@@ -81,6 +81,22 @@
         }
       }
     },
+    "%@ · starting, %@ to download…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · starting, %@ to download…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · démarrage, %@ à télécharger…"
+          }
+        }
+      }
+    },
     "%@ · starting…": {
       "localizations": {
         "en": {
@@ -625,6 +641,22 @@
         }
       }
     },
+    "Could not update local mode for every claude": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not update local mode for every claude"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de mettre à jour le mode local pour chaque claude"
+          }
+        }
+      }
+    },
     "Credits": {
       "localizations": {
         "en": {
@@ -877,6 +909,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Estimation incertaine, à essayer"
+          }
+        }
+      }
+    },
+    "Estimated from the model size. The exact size is read when you click Download.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated from the model size. The exact size is read when you click Download."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimée à partir de la taille du modèle. La taille exacte est lue quand vous cliquez sur Télécharger."
           }
         }
       }
@@ -1693,6 +1741,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "OK"
+          }
+        }
+      }
+    },
+    "Offline, but local mode could not start": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline, but local mode could not start"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hors connexion, mais le mode local n'a pas pu démarrer"
           }
         }
       }

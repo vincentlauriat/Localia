@@ -95,7 +95,6 @@ struct OnboardingView: View {
                         .disabled(!engineInstalled)
                 }
             }
-            .onAppear { model.requestSize(for: c) }
         } else if let reason = model.recommendation?.emptyReason {
             Text(reason == .nothingFits
                  ? String(localized: "No coding model runs well on this Mac. The fastest option is shown, but it will be slow. Chat may work better.")
