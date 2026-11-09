@@ -16,6 +16,9 @@ public actor OllamaEngine: Engine {
     private let startupTimeout: TimeInterval
     private let pollInterval: TimeInterval
     private let releasesURL: URL
+    private let inspector: ProcessInspecting
+    private let exitTimeout: TimeInterval = 5
+    private let killAfter: TimeInterval = 3
     /// Set only for a server Localia itself spawned; `stopServing` never touches anything else.
     private var ownServer: (any ServerHandle)?
 
@@ -31,8 +34,10 @@ public actor OllamaEngine: Engine {
                                  URL(fileURLWithPath: "/opt/homebrew/bin/ollama")],
         startupTimeout: TimeInterval = 30,
         pollInterval: TimeInterval = 0.25,
-        releasesURL: URL = URL(string: "https://api.github.com/repos/ollama/ollama/releases/latest")!
+        releasesURL: URL = URL(string: "https://api.github.com/repos/ollama/ollama/releases/latest")!,
+        inspector: ProcessInspecting = SystemProcessInspector()
     ) {
+        self.inspector = inspector
         self.baseURL = baseURL
         self.session = session
         self.runner = runner
@@ -56,9 +61,9 @@ public actor OllamaEngine: Engine {
 
     private func isExecutable(_ url: URL) -> Bool { FileManager.default.isExecutableFile(atPath: url.path) }
 
-    /// Binary used for `ollama serve`: app bundle, then Localia's own install, then system locations.
+    /// Binary used for `ollama serve`: Localia's own install, then the app bundle, then system locations.
     private func serveBinary() -> URL? {
-        ([appBinary, managedBinary] + systemBinaries).first(where: isExecutable)
+        ([managedBinary, appBinary] + systemBinaries).first(where: isExecutable)
     }
 
     // MARK: - Install state
@@ -177,18 +182,45 @@ public actor OllamaEngine: Engine {
 
     public func isServing() async -> Bool { await serverVersion() != nil }
 
+    private var pidFile: URL { Paths.engines(base: appSupportBase).appendingPathComponent("ollama-serve.pid") }
+    private struct PIDRecord: Codable { let pid: Int32; let path: String }
+
+    /// pid of a still-running server that Localia launched earlier (possibly before an app restart).
+    /// The record is trusted only if the live process runs the very executable Localia launched.
+    private func recordedOwnPID() -> Int32? {
+        guard let data = try? Data(contentsOf: pidFile),
+              let rec = try? JSONDecoder().decode(PIDRecord.self, from: data) else {
+            try? FileManager.default.removeItem(at: pidFile)
+            return nil
+        }
+        if inspector.isAlive(rec.pid), inspector.executablePath(rec.pid) == rec.path { return rec.pid }
+        try? FileManager.default.removeItem(at: pidFile)   // stale: dead pid or pid reused by another program
+        return nil
+    }
+
+    private func writePIDRecord(pid: Int32, binary: URL) {
+        let rec = PIDRecord(pid: pid, path: binary.resolvingSymlinksInPath().path)
+        if let data = try? JSONEncoder().encode(rec) { try? data.write(to: pidFile, options: .atomic) }
+    }
+
     public func startServing() async throws {
-        if await isServing() { return }   // reuse the user's server
+        if await isServing() { return }   // reuse the user's server (or our own, already up)
         if let h = ownServer, h.isRunning {
+            try await waitUntilServing()
+            return
+        }
+        if recordedOwnPID() != nil {      // our server from a previous app run, still starting
             try await waitUntilServing()
             return
         }
         guard let bin = serveBinary() else { throw EngineError.notInstalled }
         var env = ProcessInfo.processInfo.environment
         env["OLLAMA_HOST"] = "127.0.0.1:\(LocaliaConstants.ollamaPort)"
-        ownServer = try launcher.launch(executable: bin, arguments: ["serve"], environment: env)
+        let handle = try launcher.launch(executable: bin, arguments: ["serve"], environment: env)
+        ownServer = handle
+        writePIDRecord(pid: handle.pid, binary: bin)
         do { try await waitUntilServing() } catch {
-            ownServer?.terminate(); ownServer = nil
+            try? await stopServing()
             throw error
         }
     }
@@ -202,10 +234,24 @@ public actor OllamaEngine: Engine {
         throw EngineError.serverDidNotStart
     }
 
+    /// Stops only a server Localia launched (this run or an earlier one, per the PID record) and waits
+    /// for it to exit, so an immediate `startServing` cannot adopt the dying process.
     public func stopServing() async throws {
-        guard let h = ownServer else { return }
+        let handle = ownServer
         ownServer = nil
-        h.terminate()
+        let pid = handle?.pid ?? recordedOwnPID()
+        guard let pid else { return }
+        func running() -> Bool { handle?.isRunning ?? inspector.isAlive(pid) }
+        if let handle { handle.terminate() } else { inspector.signal(pid, SIGTERM) }
+        let start = Date()
+        var killed = false
+        while running(), Date().timeIntervalSince(start) < exitTimeout {
+            if !killed, Date().timeIntervalSince(start) >= killAfter {
+                inspector.signal(pid, SIGKILL); killed = true
+            }
+            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+        }
+        try? FileManager.default.removeItem(at: pidFile)
     }
 
     // MARK: - Models
@@ -232,6 +278,9 @@ public actor OllamaEngine: Engine {
         let tag = "hf.co/\(c.ggufRepo):\(c.quant)"
         let variant = tag + "-localia"
 
+        // Only a base that Localia itself pulled may be deleted with its variant later.
+        let existed = (try? await installedModels())?.contains { $0.name == tag } ?? true
+
         var layers: [String: (total: Int64, done: Int64)] = [:]
         try await stream(try post("api/pull", ["model": tag, "stream": true], timeout: 600)) { obj in
             guard let digest = obj["digest"] as? String else { return }
@@ -243,6 +292,8 @@ public actor OllamaEngine: Engine {
             progress(layers.values.reduce(0) { $0 + $1.done }, total > 0 ? total : nil)
         }
 
+        if !existed { recordPulledBase(tag) }
+
         // Ollama clamps num_ctx to the model's trained context at runtime; we still ask for the full window.
         try await stream(try post("api/create", [
             "model": variant, "from": tag,
@@ -251,8 +302,33 @@ public actor OllamaEngine: Engine {
         return variant
     }
 
+    /// Deleting a `-localia` variant also deletes its base, but only if Localia pulled that base itself.
     public func delete(_ modelName: String) async throws {
         _ = try await send(try post("api/delete", ["model": modelName], method: "DELETE"))
+        guard modelName.hasSuffix(Self.variantSuffix) else { return }
+        let base = String(modelName.dropLast(Self.variantSuffix.count))
+        var pulled = pulledBases()
+        guard pulled.contains(base) else { return }
+        _ = try await send(try post("api/delete", ["model": base], method: "DELETE"))
+        pulled.remove(base)
+        savePulledBases(pulled)
+    }
+
+    private static let variantSuffix = "-localia"
+    private var pulledFile: URL { Paths.engines(base: appSupportBase).appendingPathComponent("ollama-pulled.json") }
+
+    private func pulledBases() -> Set<String> {
+        guard let data = try? Data(contentsOf: pulledFile),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(list)
+    }
+
+    private func savePulledBases(_ set: Set<String>) {
+        if let data = try? JSONEncoder().encode(set.sorted()) { try? data.write(to: pulledFile, options: .atomic) }
+    }
+
+    private func recordPulledBase(_ tag: String) {
+        var set = pulledBases(); set.insert(tag); savePulledBases(set)
     }
 
     /// `contextTokens` is already baked into the `-localia` variant by `pull`, so it is not sent again:

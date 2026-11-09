@@ -12,13 +12,13 @@ final class OllamaEngineTests: XCTestCase {
     override func tearDown() { try? FileManager.default.removeItem(at: tmp) }
 
     private func makeEngine(launcher: FakeLauncher = FakeLauncher(), appBundle: URL? = nil,
-                            systemBinaries: [URL] = []) -> OllamaEngine {
+                            systemBinaries: [URL] = [], inspector: ProcessInspecting = FakeInspector()) -> OllamaEngine {
         let session = EngineStubProtocol.session()
         return OllamaEngine(
             session: session, runner: VersionRunner(), downloader: Downloader(session: session),
             launcher: launcher, appSupportBase: tmp,
             appBundle: appBundle ?? tmp.appendingPathComponent("NoSuch.app"),
-            systemBinaries: systemBinaries, startupTimeout: 2, pollInterval: 0.02)
+            systemBinaries: systemBinaries, startupTimeout: 2, pollInterval: 0.02, inspector: inspector)
     }
 
     private var candidate: ModelCandidate {
@@ -86,6 +86,7 @@ final class OllamaEngineTests: XCTestCase {
         """
         EngineStubProtocol.handler = { r in
             switch r.path {
+            case "/api/tags": return StubResponse(text: #"{"models":[]}"#)
             case "/api/pull": return StubResponse(text: pullStream)
             case "/api/create": return StubResponse(text: "{\"status\":\"using existing layer\"}\n{\"status\":\"success\"}\n")
             default: return StubResponse(status: 404)
@@ -96,9 +97,9 @@ final class OllamaEngineTests: XCTestCase {
         let name = try await engine.pull(candidate) { done, total in box.add(done, total) }
         XCTAssertEqual(name, "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M-localia")
         let reqs = EngineStubProtocol.recorded
-        XCTAssertEqual(reqs.map(\.path), ["/api/pull", "/api/create"])
-        XCTAssertEqual(reqs[0].json, ["model": "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M", "stream": true] as NSDictionary)
-        XCTAssertEqual(reqs[1].json, [
+        XCTAssertEqual(reqs.map(\.path), ["/api/tags", "/api/pull", "/api/create"])
+        XCTAssertEqual(reqs[1].json, ["model": "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M", "stream": true] as NSDictionary)
+        XCTAssertEqual(reqs[2].json, [
             "model": "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M-localia",
             "from": "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M",
             "parameters": ["num_ctx": 65536],
@@ -120,7 +121,7 @@ final class OllamaEngineTests: XCTestCase {
         } catch let EngineError.server(msg) {
             XCTAssertTrue(msg.contains("file does not exist"))
         } catch { XCTFail("wrong error \(error)") }
-        XCTAssertEqual(EngineStubProtocol.recorded.map(\.path), ["/api/pull"])   // no variant created
+        XCTAssertEqual(EngineStubProtocol.recorded.map(\.path), ["/api/tags", "/api/pull"])   // no variant created
     }
 
     func test_installedAndLoadedModels_parseSizes() async throws {
@@ -182,6 +183,132 @@ final class OllamaEngineTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: managed.path)
         state = await makeEngine().installState()
         XCTAssertEqual(state, .installed("0.40.3", managedByLocalia: true))
+    }
+
+    // MARK: delete of variant + base
+
+    private func deleteStub(existingTags: [String]) {
+        let tags = existingTags.map { #"{"name":"\#($0)","size":1}"# }.joined(separator: ",")
+        EngineStubProtocol.handler = { r in
+            r.path == "/api/tags" ? StubResponse(text: "{\"models\":[\(tags)]}") : StubResponse(text: "{\"status\":\"success\"}\n")
+        }
+    }
+    private func deletes() -> [String] {
+        EngineStubProtocol.recorded.filter { $0.method == "DELETE" }.compactMap { $0.json?["model"] as? String }
+    }
+    private let base = "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M"
+
+    func test_delete_variantAlsoDeletesBase_whenLocaliaPulledIt() async throws {
+        deleteStub(existingTags: [])
+        let engine = makeEngine()
+        let name = try await engine.pull(candidate) { _, _ in }
+        try await engine.delete(name)
+        XCTAssertEqual(deletes(), [base + "-localia", base])
+        // a fresh instance (app restart) no longer knows the base: record was cleared, so no repeat
+        try await makeEngine().delete(name)
+        XCTAssertEqual(deletes(), [base + "-localia", base, base + "-localia"])
+    }
+
+    func test_delete_pulledRecordSurvivesRestart() async throws {
+        deleteStub(existingTags: [])
+        _ = try await makeEngine().pull(candidate) { _, _ in }
+        try await makeEngine().delete(base + "-localia")
+        XCTAssertEqual(deletes(), [base + "-localia", base])
+    }
+
+    func test_delete_keepsBaseTheUserAlreadyOwned() async throws {
+        deleteStub(existingTags: [base])
+        let engine = makeEngine()
+        let name = try await engine.pull(candidate) { _, _ in }
+        try await engine.delete(name)
+        XCTAssertEqual(deletes(), [base + "-localia"])
+    }
+
+    func test_delete_plainNameDeletesOnlyThatName() async throws {
+        deleteStub(existingTags: [])
+        try await makeEngine().delete("gemma4:12b")
+        XCTAssertEqual(deletes(), ["gemma4:12b"])
+    }
+
+    // MARK: durable own-server record
+
+    private func pidFile() -> URL { Paths.engines(base: tmp).appendingPathComponent("ollama-serve.pid") }
+
+    func test_spawnWritesPIDRecord_stopWaitsAndRemovesIt() async throws {
+        let launcher = FakeLauncher()
+        let bin = tmp.appendingPathComponent("fake-ollama")
+        try Data("#!/bin/sh\n".utf8).write(to: bin)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        EngineStubProtocol.handler = { _ in
+            launcher.spawnCount > 0 ? StubResponse(text: #"{"version":"0.40.3"}"#) : StubResponse(status: 503)
+        }
+        let engine = makeEngine(launcher: launcher, systemBinaries: [bin])
+        try await engine.startServing()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pidFile().path))
+        try await engine.stopServing()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pidFile().path))
+    }
+
+    func test_reclaimAfterRestart_stopServingKillsRecordedServer() async throws {
+        let path = "/opt/localia/ollama"
+        try Data(#"{"pid":777,"path":"\#(path)"}"#.utf8).write(to: pidFile())
+        let inspector = FakeInspector()
+        inspector.setAlive(777, path: path)
+        EngineStubProtocol.handler = { _ in StubResponse(text: #"{"version":"0.40.3"}"#) }
+        let engine = makeEngine(inspector: inspector)   // new instance: no in-memory handle
+        try await engine.stopServing()
+        XCTAssertTrue(inspector.signals.contains { $0.0 == 777 && $0.1 == SIGTERM })
+        XCTAssertFalse(inspector.isAlive(777))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pidFile().path))
+    }
+
+    func test_stalePIDRecord_deadPid_isIgnoredAndRemoved() async throws {
+        try Data(#"{"pid":778,"path":"/opt/localia/ollama"}"#.utf8).write(to: pidFile())
+        let inspector = FakeInspector()   // 778 not alive
+        try await makeEngine(inspector: inspector).stopServing()
+        XCTAssertTrue(inspector.signals.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pidFile().path))
+    }
+
+    func test_stalePIDRecord_pidReusedByOtherProgram_isNeverSignalled() async throws {
+        try Data(#"{"pid":779,"path":"/opt/localia/ollama"}"#.utf8).write(to: pidFile())
+        let inspector = FakeInspector()
+        inspector.setAlive(779, path: "/usr/bin/other")
+        try await makeEngine(inspector: inspector).stopServing()
+        XCTAssertTrue(inspector.signals.isEmpty)
+        XCTAssertTrue(inspector.isAlive(779))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pidFile().path))
+    }
+
+    func test_uninstall_stopsOwnServerFirst() async throws {
+        let managed = Paths.engines(base: tmp).appendingPathComponent("ollama/ollama")
+        try FileManager.default.createDirectory(at: managed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: managed)
+        try Data(#"{"pid":780,"path":"/p/ollama"}"#.utf8).write(to: pidFile())
+        let inspector = FakeInspector()
+        inspector.setAlive(780, path: "/p/ollama")
+        try await makeEngine(inspector: inspector).uninstall()
+        XCTAssertFalse(inspector.isAlive(780))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: managed.deletingLastPathComponent().path))
+    }
+
+    func test_serveBinary_prefersManagedOverAppBundle() async throws {
+        let launcher = FakeLauncher()
+        let managed = Paths.engines(base: tmp).appendingPathComponent("ollama/ollama")
+        try FileManager.default.createDirectory(at: managed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: managed)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: managed.path)
+        let app = tmp.appendingPathComponent("Ollama.app/Contents/Resources")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let appBin = app.appendingPathComponent("ollama")
+        try Data("x".utf8).write(to: appBin)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: appBin.path)
+        EngineStubProtocol.handler = { _ in
+            launcher.spawnCount > 0 ? StubResponse(text: #"{"version":"0.40.3"}"#) : StubResponse(status: 503)
+        }
+        let engine = makeEngine(launcher: launcher, appBundle: tmp.appendingPathComponent("Ollama.app"))
+        try await engine.startServing()
+        XCTAssertEqual(launcher.spawns[0].exe, managed)
     }
 
     // MARK: install selection (no real install is run)
@@ -265,8 +392,7 @@ final class LiveOllamaTests: XCTestCase {
         let loaded = try await engine.loadedModels().map(\.name)
         XCTAssertTrue(loaded.contains(variant), "\(loaded)")
         try await engine.unload(name)
-        try await engine.delete(variant)
-        try await engine.delete(base)
+        try await engine.delete(variant)   // also deletes the base: Localia pulled it
         let listing = try await Shell.run(URL(fileURLWithPath: "/usr/local/bin/ollama"), ["list"])
         let text = String(decoding: listing.stdout, as: UTF8.self)
         print("LIVE ollama list after:\n\(text)")

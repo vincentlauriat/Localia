@@ -71,6 +71,7 @@ final class FakeServerHandle: ServerHandle, @unchecked Sendable {
     private let lock = NSLock()
     private var running = true
     private var terminated = 0
+    var pid: Int32 { 4242 }
     var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
     var terminateCount: Int { lock.lock(); defer { lock.unlock() }; return terminated }
     func terminate() { lock.lock(); running = false; terminated += 1; lock.unlock() }
@@ -91,5 +92,20 @@ final class FakeLauncher: ServerLauncher, @unchecked Sendable {
 final class VersionRunner: ProcessRunning, @unchecked Sendable {
     func run(_ exe: URL, _ args: [String], env: [String: String]?, timeout: TimeInterval) async throws -> ProcessResult {
         ProcessResult(status: 0, stdout: Data("ollama version is 0.40.3\n".utf8), stderr: "")
+    }
+}
+
+final class FakeInspector: ProcessInspecting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var alive: [Int32: String] = [:]   // pid -> executable path
+    private var _signals: [(Int32, Int32)] = []
+    func setAlive(_ pid: Int32, path: String) { lock.lock(); alive[pid] = path; lock.unlock() }
+    var signals: [(Int32, Int32)] { lock.lock(); defer { lock.unlock() }; return _signals }
+    func isAlive(_ pid: Int32) -> Bool { lock.lock(); defer { lock.unlock() }; return alive[pid] != nil }
+    func executablePath(_ pid: Int32) -> String? { lock.lock(); defer { lock.unlock() }; return alive[pid] }
+    func signal(_ pid: Int32, _ sig: Int32) {
+        lock.lock(); _signals.append((pid, sig))
+        if sig == SIGTERM || sig == SIGKILL { alive[pid] = nil }
+        lock.unlock()
     }
 }

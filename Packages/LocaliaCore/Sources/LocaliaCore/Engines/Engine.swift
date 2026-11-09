@@ -56,6 +56,7 @@ public protocol Engine: Sendable {
 
 /// Handle to a long-running server process that Localia started.
 public protocol ServerHandle: Sendable {
+    var pid: Int32 { get }
     var isRunning: Bool { get }
     func terminate()
 }
@@ -75,21 +76,45 @@ public struct ProcessServerLauncher: ServerLauncher {
         process.arguments = arguments
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
-        var sink: FileHandle = .nullDevice
+        var opened: FileHandle?
         if let logFile {
-            FileManager.default.createFile(atPath: logFile.path, contents: nil)
-            if let h = try? FileHandle(forWritingTo: logFile) { _ = try? h.seekToEnd(); sink = h }
+            let fm = FileManager.default
+            try? fm.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: logFile.path) { fm.createFile(atPath: logFile.path, contents: nil) }
+            // Append deliberately: keep earlier runs' output.
+            if let h = try? FileHandle(forWritingTo: logFile) { _ = try? h.seekToEnd(); opened = h }
         }
-        process.standardOutput = sink
-        process.standardError = sink
-        try process.run()
+        let log = opened
+        process.standardOutput = log ?? FileHandle.nullDevice
+        process.standardError = log ?? FileHandle.nullDevice
+        process.terminationHandler = { _ in try? log?.close() }
+        do { try process.run() } catch { try? log?.close(); throw error }
         return ProcessHandle(process)
     }
+}
+
+/// Seam over pid lookups so the own-server record can be tested without real processes.
+public protocol ProcessInspecting: Sendable {
+    func isAlive(_ pid: Int32) -> Bool
+    func executablePath(_ pid: Int32) -> String?
+    func signal(_ pid: Int32, _ sig: Int32)
+}
+
+public struct SystemProcessInspector: ProcessInspecting {
+    public init() {}
+    public func isAlive(_ pid: Int32) -> Bool { pid > 0 && (kill(pid, 0) == 0 || errno == EPERM) }
+    public func executablePath(_ pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+    public func signal(_ pid: Int32, _ sig: Int32) { if pid > 0 { _ = kill(pid, sig) } }
 }
 
 private final class ProcessHandle: ServerHandle, @unchecked Sendable {
     private let process: Process
     init(_ p: Process) { process = p }
+    var pid: Int32 { process.processIdentifier }
     var isRunning: Bool { process.isRunning }
     func terminate() {
         guard process.isRunning else { return }
