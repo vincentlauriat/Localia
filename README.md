@@ -20,13 +20,13 @@ The app is signed with a Developer ID and notarized by Apple.
 
 ## First run
 
-1. Click the Localia icon in the menu bar.
+1. Click the Localia pin in the menu bar. The panel shows the active model's speed, free memory, installed models, memory-hungry apps, running sessions and the engine.
 2. Open the models window and download one of the recommended models. Localia installs the engine it needs first (Ollama by default), after asking.
 3. Pick a folder and choose "Launch Claude Code". If Claude Code is missing, Localia offers to run Anthropic's official installer; nothing runs without your confirmation.
 
 ## Local mode
 
-The menu toggle switches local mode on and off. Its scope is a setting:
+The **Local mode** switch (second row of the menu-bar panel) turns local mode on and off. When it is on, the menu-bar pin is filled and the panel shows a teal "✈︎ Local mode" badge; when it is off, the pin is an outline and "Launch Claude Code" says *Cloud*. Its scope is a setting:
 
 - **Localia sessions only** (default). Only the Terminal windows Localia opens use the local model. Nothing outside the app changes, and your shell files are never touched.
 - **Every `claude`.** The `claude` you type in any terminal also goes to the local model. Localia installs a small shim in `~/Library/Application Support/Localia/shell/` and adds this block to `~/.zshrc` (and `~/.bashrc` if it exists):
