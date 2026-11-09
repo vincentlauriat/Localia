@@ -18,6 +18,14 @@ targets:
         excludes:
           - Info.plist
           - Localia.entitlements
+          - Resources
+      - path: Localia/Resources/llmfit
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Helpers
+            phaseOrder: postCompile
+        attributes: [CodeSignOnCopy]
     dependencies:
       - package: LocaliaCore
       - package: Sparkle
