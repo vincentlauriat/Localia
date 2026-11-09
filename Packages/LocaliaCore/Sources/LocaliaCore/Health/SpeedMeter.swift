@@ -97,14 +97,15 @@ public struct SpeedMeter: Sendable {
 }
 
 public enum SpeedCalibration {
-    /// median(measured / unscaled estimate) over models present in both maps; nil when none.
+    /// median(measured / unscaled estimate) over models present in both maps; nil when fewer than two.
     /// `estimates` must be the UNSCALED llmfit estimates (recommend with `Measurements()`), or the ratio compounds.
     public static func speedRatio(measured: [String: Double], estimates: [String: Double]) -> Double? {
         let ratios = measured.compactMap { id, tps -> Double? in
             guard let e = estimates[id], e > 0, tps > 0 else { return nil }
             return tps / e
         }.sorted()
-        guard !ratios.isEmpty else { return nil }
+        // One model is not a trend (it may have been measured under memory pressure): need at least two.
+        guard ratios.count >= 2 else { return nil }
         let mid = ratios.count / 2
         return ratios.count % 2 == 1 ? ratios[mid] : (ratios[mid - 1] + ratios[mid]) / 2
     }

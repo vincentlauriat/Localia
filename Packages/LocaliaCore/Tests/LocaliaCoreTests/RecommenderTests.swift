@@ -16,6 +16,19 @@ final class RecommenderTests: XCTestCase {
     }
     private let gemma12 = "google/gemma-4-12B-it"
 
+    func test_measuredCandidatesStayPastTheCap() throws {
+        let p = pool(16.26)
+        let capped = try rec(p, Measurements(tps: [:], memoryGB: [gemma12: 7.4], speedRatio: nil))
+        XCTAssertEqual(capped.candidates.count, 13, "12 + the measured model past the cap")
+        // Measured slow: sorted after every fast model, still listed.
+        let r = try rec(p, Measurements(tps: [gemma12: 6], memoryGB: [gemma12: 7.4], speedRatio: nil))
+        let c = try XCTUnwrap(r.candidates.last)
+        XCTAssertEqual(c.id, gemma12)
+        XCTAssertTrue(c.slow && c.speedIsMeasured && c.memoryIsMeasured)
+        XCTAssertFalse(r.uncertain.contains { $0.id == gemma12 })
+        XCTAssertEqual(try rec(p).candidates.count, 12, "no measurement: the cap holds")
+    }
+
     func test_filtersCommunityFinetunes() throws {
         let r = try rec(pool(40), limit: 5000)
         for c in r.candidates + r.uncertain {

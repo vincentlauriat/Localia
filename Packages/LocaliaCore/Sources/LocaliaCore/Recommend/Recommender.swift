@@ -71,7 +71,10 @@ public struct Recommender: Sendable {
             return $0.estimatedTPS > $1.estimatedTPS
         }
         let slowOnes = fit.filter { $0.estimatedTPS < floor }.sorted { $0.estimatedTPS > $1.estimatedTPS }
-        let candidates = Array((fast + slowOnes).prefix(maxCandidates))
+        // Measured models always stay visible (in sort order), even past the cap: the user ran them here.
+        let ranked = fast + slowOnes
+        let candidates = Array(ranked.prefix(maxCandidates))
+            + ranked.dropFirst(maxCandidates).filter { $0.speedIsMeasured || $0.memoryIsMeasured }
         let unc = Array(uncertain.sorted { $0.quality > $1.quality }.prefix(maxUncertain))
 
         var reason: EmptyReason?

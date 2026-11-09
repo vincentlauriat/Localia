@@ -55,7 +55,8 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         var m = measurements
         m.tps[id] = tps
         m.memoryGB[id] = memoryGB
-        m.speedRatio = SpeedCalibration.speedRatio(measured: m.tps, estimates: unscaledEstimates) ?? m.speedRatio
+        // nil until at least two measured models have an estimate: one measurement does not rescale the list.
+        m.speedRatio = SpeedCalibration.speedRatio(measured: m.tps, estimates: unscaledEstimates)
         measurements = m
     }
 

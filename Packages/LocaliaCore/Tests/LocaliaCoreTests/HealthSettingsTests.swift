@@ -68,6 +68,9 @@ final class SpeedMeterTests: XCTestCase {
         XCTAssertEqual(SpeedCalibration.speedRatio(measured: ["b": 20, "c": 20], estimates: est)!, 0.75, accuracy: 1e-9)
         XCTAssertNil(SpeedCalibration.speedRatio(measured: [:], estimates: est))
         XCTAssertNil(SpeedCalibration.speedRatio(measured: ["zz": 5], estimates: est))
+        // A single measured model never sets a ratio.
+        XCTAssertNil(SpeedCalibration.speedRatio(measured: ["a": 30], estimates: est))
+        XCTAssertNil(SpeedCalibration.speedRatio(measured: ["a": 30, "zz": 5], estimates: est))
     }
 }
 
@@ -145,7 +148,7 @@ final class SettingsStoreTests: XCTestCase {
         let s = SettingsStore(defaults: defaults)
         let est = ["a": 40.0, "b": 20.0]
         s.record(model: "a", tps: 20, memoryGB: 4, unscaledEstimates: est)
-        XCTAssertEqual(s.measurements.speedRatio!, 0.5, accuracy: 1e-9)
+        XCTAssertNil(s.measurements.speedRatio, "one measurement does not rescale the list")
         s.record(model: "b", tps: 20, memoryGB: 6, unscaledEstimates: est)   // ratios 0.5, 1.0 -> 0.75
         XCTAssertEqual(s.measurements.speedRatio!, 0.75, accuracy: 1e-9)
         XCTAssertEqual(s.measurements.memoryGB["b"], 6)
