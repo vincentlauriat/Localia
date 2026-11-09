@@ -369,6 +369,18 @@ struct MenuBarPanel: View {
             if launchOpen { launchList }
 
             RowDivider()
+            ListRow(icon: "airplane", iconColor: Theme.accentInk, title: String(localized: "Local mode")) {
+                HStack(spacing: 8) {
+                    if model.switchingLocalMode { ProgressView().controlSize(.small) }
+                    Toggle(String(localized: "Local mode"), isOn: localModeBinding)
+                        .toggleStyle(PillToggleStyle(onColor: Theme.accent))
+                        .disabled(model.switchingLocalMode)
+                }
+            }
+            .help(model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
+                                      : String(localized: "Claude Code uses Anthropic's cloud"))
+
+            RowDivider()
             Button {
                 Task { await model.chat(); presentAlertIfNeeded() }
             } label: {
@@ -385,17 +397,6 @@ struct MenuBarPanel: View {
             }
             .buttonStyle(PanelRowButtonStyle())
 
-            RowDivider()
-            ListRow(icon: "airplane", iconColor: Theme.accentInk, title: String(localized: "Local mode")) {
-                HStack(spacing: 8) {
-                    if model.switchingLocalMode { ProgressView().controlSize(.small) }
-                    Toggle(String(localized: "Local mode"), isOn: localModeBinding)
-                        .toggleStyle(PillToggleStyle(onColor: Theme.accent))
-                        .disabled(model.switchingLocalMode)
-                }
-            }
-            .help(model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
-                                      : String(localized: "Claude Code uses Anthropic's cloud"))
 
             RowDivider()
             Button {
