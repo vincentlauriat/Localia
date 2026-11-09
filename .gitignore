@@ -1,0 +1,11 @@
+COMMANDS.md
+MEMORY.md
+CHANGES.md
+TODOS.md
+PLAN.md
+*.dmg
+*.zip
+release/
+.DS_Store
+vendor/
+.superpowers/
