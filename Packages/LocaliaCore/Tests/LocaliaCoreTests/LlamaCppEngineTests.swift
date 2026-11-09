@@ -330,6 +330,65 @@ final class LlamaCppEngineTests: XCTestCase {
         XCTAssertEqual(loaded.map(\.name), [launcher.args[1][3]])
     }
 
+    // MARK: - Final review I1
+
+    private func seqEngine(_ launcher: SeqLauncher) -> LlamaCppEngine {
+        EngineStubProtocol.handler = { req in
+            req.path == "/health" ? StubResponse(status: launcher.anyRunning ? 200 : 503) : StubResponse(status: 404)
+        }
+        return LlamaCppEngine(session: EngineStubProtocol.session(), launcher: launcher, appSupportBase: tmp,
+                              startupTimeout: 2, pollInterval: 0.02, inspector: FakeInspector())
+    }
+
+    func test_loadOfServedModel_doesNotRestartServer() async throws {
+        try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf")
+        let launcher = SeqLauncher()
+        let engine = seqEngine(launcher)
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        XCTAssertEqual(launcher.handles.count, 1, "the live server already serves this model")
+        XCTAssertTrue(launcher.handles[0].isRunning)
+    }
+
+    func test_unloadOfAModelNotServed_isANoOp() async throws {
+        try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf")
+        try fakeModel("o/r/b-Q4_K_M.gguf")
+        let launcher = SeqLauncher()
+        let engine = seqEngine(launcher)
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        try await engine.load("o/r/b-Q4_K_M.gguf", contextTokens: 65536)
+        try await engine.unload("o/r/a-Q4_K_M.gguf")   // a was replaced by b: b must survive
+        XCTAssertTrue(launcher.handles[1].isRunning)
+        let loaded = try await engine.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), ["o/r/b-Q4_K_M.gguf"])
+        try await engine.unload("o/r/b-Q4_K_M.gguf")
+        XCTAssertFalse(launcher.handles[1].isRunning)
+    }
+
+    func test_afterRestart_loadOfServedAlias_reusesRecordedServer() async throws {
+        let server = try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf")
+        let inspector = FakeInspector()
+        inspector.setAlive(321, path: server.resolvingSymlinksInPath().path)
+        try Data(#"{"pid":321,"path":"\#(server.resolvingSymlinksInPath().path)"}"#.utf8)
+            .write(to: Paths.engines(base: tmp).appendingPathComponent("llama-server.pid"))
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/health": return StubResponse(status: 200)
+            case "/v1/models": return StubResponse(text: #"{"data":[{"id":"o/r/a-Q4_K_M.gguf"}]}"#)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let launcher = FakeLauncher()
+        let engine = LlamaCppEngine(session: EngineStubProtocol.session(), launcher: launcher, appSupportBase: tmp,
+                                    startupTimeout: 1, pollInterval: 0.02, inspector: inspector)
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        XCTAssertEqual(launcher.spawnCount, 0)
+        XCTAssertTrue(inspector.signals.isEmpty, "the recorded server was not restarted")
+    }
+
     func test_unsafeRepoOrPaths_areRejected() async throws {
         let engine = makeEngine()
         for repo in ["../x", "/abs/x", "a//b", "", "a/./b"] {

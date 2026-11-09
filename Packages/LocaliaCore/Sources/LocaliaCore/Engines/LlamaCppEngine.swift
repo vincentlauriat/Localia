@@ -260,16 +260,18 @@ public actor LlamaCppEngine: Engine {
     }
 
     public func loadedModels() async throws -> [LoadedModel] {
-        guard await healthy() else { return [] }
-        // The server is started with `--alias <installed name>`, so its model id is that name, also after an app restart.
-        var name = loadedName
-        if name == nil {
-            let data = try await send(URLRequest(url: baseURL.appendingPathComponent("v1/models")))
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            name = (obj?["data"] as? [[String: Any]])?.first?["id"] as? String
-        }
-        guard let name, let m = scanModels().first(where: { $0.name == name }) else { return [] }
+        guard let name = try await servedName(), let m = scanModels().first(where: { $0.name == name }) else { return [] }
         return [LoadedModel(name: name, memoryGB: Double(m.sizeBytes) / 1_073_741_824)]
+    }
+
+    /// Model id the server on our port answers with, or nil when nothing healthy listens there.
+    /// The server is started with `--alias <installed name>`, so its id is that name, also after an app restart.
+    private func servedName() async throws -> String? {
+        guard await healthy() else { return nil }
+        if let loadedName { return loadedName }
+        let data = try await send(URLRequest(url: baseURL.appendingPathComponent("v1/models")))
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return (obj?["data"] as? [[String: Any]])?.first?["id"] as? String
     }
 
     struct HFFile: Equatable { let path: String; let size: Int64; let sha256: String }
@@ -370,13 +372,18 @@ public actor LlamaCppEngine: Engine {
         }
     }
 
-    /// (Re)starts `llama-server` on this model and waits for `/health` to answer 200. Calls are serialized.
+    /// (Re)starts `llama-server` on this model and waits for `/health` to answer 200. A server that already
+    /// serves this model is kept as is. Loads and unloads are serialized.
     public func load(_ modelName: String, contextTokens: Int) async throws {
+        try await serialized { try await $0.performLoad(modelName, contextTokens: contextTokens) }
+    }
+
+    /// Runs `op` after every load / unload queued before it.
+    private func serialized(_ op: @escaping @Sendable (LlamaCppEngine) async throws -> Void) async throws {
         let prev = queueTail
         let task = Task { () -> Result<Void, Error> in
             await prev?.value
-            do { try await self.performLoad(modelName, contextTokens: contextTokens); return .success(()) }
-            catch { return .failure(error) }
+            do { try await op(self); return .success(()) } catch { return .failure(error) }
         }
         queueTail = Task { _ = await task.value }
         try await task.value.get()
@@ -385,6 +392,10 @@ public actor LlamaCppEngine: Engine {
     private func performLoad(_ modelName: String, contextTokens: Int) async throws {
         guard let bin = serverBinary() else { throw EngineError.notInstalled }
         let file = try modelFile(modelName)
+        if (try? await servedName()) == modelName {   // e.g. a second session on the same model: never restart it
+            loadedName = modelName
+            return
+        }
         try await stopServing()   // restarts our own server; a foreign one is never touched
         if await healthy() { throw EngineError.server("Port \(baseURL.port ?? LocaliaConstants.llamaServerPort) is already in use by another server.") }
 
@@ -413,10 +424,13 @@ public actor LlamaCppEngine: Engine {
         return nil
     }
 
-    /// Terminates the server, but only one that Localia launched. Waits for a load in flight.
+    /// Terminates the server, but only one that Localia launched and only while it serves `modelName`:
+    /// once another load replaced the model, unloading the old name must not kill the new one.
     public func unload(_ modelName: String) async throws {
-        await queueTail?.value
-        try await stopServing()
+        try await serialized { engine in
+            guard (try? await engine.servedName()) == modelName else { return }
+            try await engine.stopServing()
+        }
     }
 
     // MARK: - HTTP
