@@ -412,4 +412,86 @@ final class ShellShimTests: XCTestCase {
             XCTAssertTrue([["x"], ["--flag", "x"]].contains(claudeLog()?.args ?? []), shell)
         }
     }
+
+    // MARK: fix round 1 — rc safety
+
+    private func perms(_ url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue
+    }
+
+    func test_backup_keepsSourcePermissions() throws {
+        try "export TOKEN=s3cret\n".write(to: zshrc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: zshrc.path)
+        // Symlinked rc: the backup holds the target's content with the target's mode.
+        let dot = home.appendingPathComponent(".dotfiles", isDirectory: true)
+        try FileManager.default.createDirectory(at: dot, withIntermediateDirectories: true)
+        let target = dot.appendingPathComponent("bashrc")
+        try "export K=v\n".write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        try FileManager.default.createSymbolicLink(at: bashrc, withDestinationURL: target)
+
+        try shim().install()
+        let zb = try XCTUnwrap(try backups(of: zshrc).first), bb = try XCTUnwrap(try backups(of: bashrc).first)
+        XCTAssertEqual(perms(zb), 0o600)
+        XCTAssertEqual(perms(bb), 0o600)
+        XCTAssertEqual(try String(contentsOf: zb, encoding: .utf8), "export TOKEN=s3cret\n")
+        XCTAssertEqual(try String(contentsOf: bb, encoding: .utf8), "export K=v\n")
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: bb.path), "backup is a plain file")
+    }
+
+    func test_backup_onlyTheFirstIsKept() throws {
+        try "orig\n".write(to: zshrc, atomically: true, encoding: .utf8)
+        try shim(rcFiles: [zshrc]).install()
+        try shim(rcFiles: [zshrc]).uninstall()
+        try "orig\nchanged\n".write(to: zshrc, atomically: true, encoding: .utf8)
+        try shim(rcFiles: [zshrc]).install()
+        let b = try backups(of: zshrc)
+        XCTAssertEqual(b.count, 1)
+        XCTAssertEqual(try String(contentsOf: b[0], encoding: .utf8), "orig\n")
+    }
+
+    func test_crlfBlock_isFoundByUninstallAndInstall() throws {
+        let crlf = "a\r\n" + shim().blockText(shimFile: "claude.zsh").replacingOccurrences(of: "\n", with: "\r\n")
+        try Data(crlf.utf8).write(to: zshrc)
+        try shim(rcFiles: [zshrc]).install()
+        let once = try String(contentsOf: zshrc, encoding: .utf8)
+        XCTAssertEqual(once.components(separatedBy: ShellShim.beginMarker).count - 1, 1, once)
+        try Data(crlf.utf8).write(to: zshrc)
+        try shim(rcFiles: [zshrc]).uninstall()
+        XCTAssertEqual(try Data(contentsOf: zshrc), Data("a\r\n".utf8))
+    }
+
+    func test_partialInstall_rollsBackEarlierRcFiles() throws {
+        // .zshrc missing (would be created), .bashrc read-only: nothing must remain changed.
+        try "b\n".write(to: bashrc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: bashrc.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: bashrc.path) }
+        XCTAssertThrowsError(try shim().install())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: zshrc.path))
+        XCTAssertEqual(try String(contentsOf: bashrc, encoding: .utf8), "b\n")
+
+        // Existing .zshrc: restored byte for byte, its fresh backup removed.
+        try Data("a".utf8).write(to: zshrc)
+        XCTAssertThrowsError(try shim().install())
+        XCTAssertEqual(try Data(contentsOf: zshrc), Data("a".utf8))
+        XCTAssertEqual(try backups(of: zshrc).count, 0)
+        XCTAssertEqual(try backups(of: bashrc).count, 0)
+    }
+
+    func test_shimToolsAreAliasProof() throws {
+        try installAndState(on: true, policy: .autoStart)
+        for name in ["claude.zsh", "claude.bash"] {
+            let text = try String(contentsOf: shimDir.appendingPathComponent(name), encoding: .utf8)
+            XCTAssertFalse(text.range(of: #"(^|[^d] )(curl|open|sleep) "#, options: .regularExpression) != nil, name)
+            for tool in ["curl", "open", "sleep"] { XCTAssertTrue(text.contains("command \(tool) "), "\(name) \(tool)") }
+        }
+        touch("open_heals")
+        let aliases = "alias curl=false; alias open=false; alias sleep=false"
+        for (shell, prelude) in [("zsh", aliases), ("bash", "shopt -s expand_aliases; " + aliases)] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("healthy"))
+            let r = try run(shell, ["q"], prelude: prelude)
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            XCTAssertEqual(claudeLog()?.env["ANTHROPIC_BASE_URL"], base.absoluteString, shell)
+        }
+    }
 }

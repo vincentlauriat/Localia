@@ -4,6 +4,8 @@ import Combine
 public enum LocalModeError: Error, Equatable {
     case noEngine
     case noModelInstalled
+    /// The engine did not answer and there is no last-used model to fall back on.
+    case engineUnreachable
 }
 
 /// Persisted local-mode settings. `SettingsStore` (Task 12) conforms; tests use `InMemoryLocalModeSettings`.
@@ -69,9 +71,17 @@ public final class LocalModeController: ObservableObject {
     private struct Resolved { let engine: EngineID; let baseURL: URL; let model: String }
 
     /// The last model used if still installed, else the top-ranked installed model, else the first installed.
+    /// A stopped engine (e.g. Ollama not running, so its model list can't be read) is not "no model": the
+    /// last-used model is kept so local mode can still be turned on and the shim's autoStart can take over.
     private func resolve() async throws -> Resolved {
         guard let engine = await source.activeEngine() else { throw LocalModeError.noEngine }
-        let installed = ((try? await engine.installedModels()) ?? []).map(\.name)
+        let installed: [String]
+        do {
+            installed = try await engine.installedModels().map(\.name)
+        } catch {
+            guard let last = settings.lastModel, !last.isEmpty else { throw LocalModeError.engineUnreachable }
+            return Resolved(engine: engine.id, baseURL: engine.baseURL, model: last)
+        }
         let model: String?
         if let last = settings.lastModel, installed.contains(last) {
             model = last
@@ -93,14 +103,14 @@ public final class LocalModeController: ObservableObject {
                       model: settings.lastModel ?? "")
     }
 
-    /// Turning on needs an engine and an installed model. Turning off always succeeds in memory, and the
+    /// Turning on needs an engine and an installed model (or, engine down, a last-used model). Turning off always succeeds in memory, and the
     /// shim state is written off first so open terminals stop going local right away.
     public func setOn(_ on: Bool) async throws {
         if on {
             let r = try await resolve()
-            try writeShimState(on: scope == .everyClaude, r)
+            try await writeShimState(on: scope == .everyClaude, r)
         } else {
-            try writeShimState(on: false, try? await resolve())
+            try await writeShimState(on: false, try? await resolve())
         }
         isOn = on
         settings.localModeOn = on
@@ -113,9 +123,9 @@ public final class LocalModeController: ObservableObject {
         switch newScope {
         case .everyClaude:
             try shim.install()
-            do { try writeShimState(on: isOn, r) } catch { try? shim.uninstall(); throw error }
+            do { try await writeShimState(on: isOn, r) } catch { try? shim.uninstall(); throw error }
         case .localiaOnly:
-            try writeShimState(on: false, r)
+            try await writeShimState(on: false, r)
             try shim.uninstall()
         }
         scope = newScope
@@ -132,15 +142,19 @@ public final class LocalModeController: ObservableObject {
     public func refreshShimState() async throws {
         guard scope == .everyClaude else { return }
         let r = try? await resolve()
-        try writeShimState(on: isOn, r)
+        try await writeShimState(on: isOn, r)
     }
 
-    private func writeShimState(on: Bool, _ r: Resolved?) throws {
+    /// Every write names the active engine (its id picks the probe path, its baseURL the port). Only when
+    /// no engine is registered at all does it fall back to Ollama's default address.
+    private func writeShimState(on: Bool, _ r: Resolved?) async throws {
+        var engine = r?.engine, baseURL = r?.baseURL
+        if engine == nil, let active = await source.activeEngine() { engine = active.id; baseURL = active.baseURL }
         try shim.writeState(on: on,
-                            baseURL: r?.baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
+                            baseURL: baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
                             model: r?.model ?? settings.lastModel ?? "",
                             policy: settings.engineDownPolicy,
                             profile: settings.launchProfile,
-                            engine: r?.engine ?? .ollama)
+                            engine: engine ?? .ollama)
     }
 }

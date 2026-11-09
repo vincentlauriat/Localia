@@ -5,6 +5,8 @@ public enum ShellShimError: Error, Equatable {
     case unterminatedBlock(String)
     /// The rc file is not valid UTF-8; it is left untouched.
     case unreadable(String)
+    /// The rc file (or, when it must be created, its directory) is not writable; nothing is changed.
+    case notWritable(String)
     /// A value would break the line-based `state.env` format (newline, NUL) or an env name is not allowed.
     case invalidStateValue(String)
 }
@@ -20,8 +22,11 @@ public protocol ShellShimming: Sendable {
 /// The reversible "every `claude`" shim.
 ///
 /// - `install()` writes `claude.zsh` / `claude.bash` into `shimDir` and appends one marked block to each
-///   rc file that sources the matching file. Idempotent; each rc is backed up before its first change.
-///   A missing `~/.zshrc` is created (zsh is the macOS default); a missing bash rc is skipped.
+///   rc file that sources the matching file. Idempotent. Before its first change an rc is backed up to
+///   `<rc>.localia-backup-<yyyyMMdd-HHmmss>` with the rc's own permissions, and only if no Localia backup
+///   exists yet: the first (pre-Localia) copy is the one kept. A missing `~/.zshrc` is created (zsh is
+///   the macOS default); a missing bash rc is skipped. If any rc fails, the ones already changed in this
+///   call are restored byte for byte (and their fresh backups removed) before the error is rethrown.
 /// - `uninstall()` removes exactly the marked block(s) and nothing else.
 /// - `writeState(...)` writes `shimDir/state.env`, which the shim *parses* on every call (never sources).
 ///
@@ -61,7 +66,34 @@ public struct ShellShim: ShellShimming {
 
     public func install() throws {
         try writeShimFiles()
-        for rc in rcFiles { try installBlock(in: rc) }
+        let ledgerBefore = readLedger()
+        var done: [Undo] = []
+        do {
+            for rc in rcFiles { if let u = try installBlock(in: rc) { done.append(u) } }
+        } catch {
+            for u in done.reversed() { u.restore() }
+            try? writeLedger(ledgerBefore)
+            throw error
+        }
+    }
+
+    /// How to put one rc back as it was before this `install()` call.
+    private struct Undo {
+        let target: URL
+        let original: Data?          // nil: the file did not exist
+        let permissions: Any?
+        let backup: URL?             // created by this call
+
+        func restore() {
+            let fm = FileManager.default
+            if let original {
+                try? original.write(to: target, options: .atomic)
+                if let permissions { try? fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: target.path) }
+            } else {
+                try? fm.removeItem(at: target)
+            }
+            if let backup { try? fm.removeItem(at: backup) }
+        }
     }
 
     public func uninstall() throws {
@@ -70,6 +102,7 @@ public struct ShellShim: ShellShimming {
         for rc in rcFiles {
             guard let target = editableTarget(rc), let text = try readText(target) else { continue }
             guard let stripped = try Self.removingBlocks(from: text, path: rc.path) else { continue }
+            guard FileManager.default.isWritableFile(atPath: target.path) else { throw ShellShimError.notWritable(target.path) }
             plans.append((target, stripped, text.hasSuffix(Self.endMarker + "\n")))
         }
         var ledger = readLedger()
@@ -82,21 +115,30 @@ public struct ShellShim: ShellShimming {
         try writeLedger(ledger)
     }
 
-    private func installBlock(in rc: URL) throws {
+    /// Returns how to undo the change, or nil when the file was left alone.
+    private func installBlock(in rc: URL) throws -> Undo? {
         let fm = FileManager.default
         let isBash = rc.lastPathComponent.contains("bash")
         let block = blockText(shimFile: isBash ? "claude.bash" : "claude.zsh")
 
-        guard let target = editableTarget(rc) else { return }   // dangling symlink: leave it alone
+        guard let target = editableTarget(rc) else { return nil }   // dangling symlink: leave it alone
         guard fm.fileExists(atPath: target.path) else {
-            if isBash { return }
+            if isBash { return nil }
+            guard fm.isWritableFile(atPath: target.deletingLastPathComponent().path) else {
+                throw ShellShimError.notWritable(target.path)
+            }
             try writePreservingAttributes(block, to: target)
-            return
+            return Undo(target: target, original: nil, permissions: nil, backup: nil)
         }
-        guard var text = try readText(target) else { return }
-        if text.contains(block) { return }                       // already installed
+        guard var text = try readText(target) else { return nil }
+        if text.contains(block) { return nil }                       // already installed
+        // A read-only rc is a user decision: refuse rather than replace it through the directory.
+        guard fm.isWritableFile(atPath: target.path) else { throw ShellShimError.notWritable(target.path) }
 
-        try backup(rc: rc, contents: Data(text.utf8))
+        let original = Data(text.utf8)
+        let permissions = (try? fm.attributesOfItem(atPath: target.path))?[.posixPermissions]
+        let backupURL = hasBackup(rc) ? nil : try backup(rc: rc, contents: original, permissions: permissions)
+        let undo = Undo(target: target, original: original, permissions: permissions, backup: backupURL)
         if let stripped = try Self.removingBlocks(from: text, path: rc.path) { text = stripped }  // stale block
         var ledger = readLedger()
         if !text.isEmpty, !text.hasSuffix("\n") {
@@ -104,7 +146,8 @@ public struct ShellShim: ShellShimming {
             ledger.insert(target.path)
             try writeLedger(ledger)
         }
-        try writePreservingAttributes(text + block, to: target)
+        do { try writePreservingAttributes(text + block, to: target) } catch { undo.restore(); throw error }
+        return undo
     }
 
     func blockText(shimFile: String) -> String {
@@ -127,7 +170,8 @@ public struct ShellShim: ShellShimming {
     /// Returns the text without any marked block, or nil when there is none.
     static func removingBlocks(from text: String, path: String) throws -> String? {
         var parts = text.components(separatedBy: "\n")
-        func isLine(_ s: String, _ marker: String) -> Bool { s.trimmingCharacters(in: .whitespaces) == marker }
+        // .whitespacesAndNewlines so a block whose file was converted to CRLF is still recognised.
+        func isLine(_ s: String, _ marker: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines) == marker }
         var changed = false
         var i = 0
         while i < parts.count {
@@ -241,7 +285,7 @@ public struct ShellShim: ShellShimming {
             return
           fi
           case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
-          if [ -n "$_l_probe" ] && curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+          if [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
             _l_ready=1
           else
             case $_l_policy in
@@ -252,7 +296,7 @@ public struct ShellShim: ShellShimming {
                 ;;
               autoStart)
                 case $_l_start in localia://*) ;; *) _l_start= ;; esac
-                if [ -z "$_l_start" ] || ! open -g "$_l_start" >/dev/null 2>&1; then
+                if [ -z "$_l_start" ] || ! command open -g "$_l_start" >/dev/null 2>&1; then
                   printf '%s\\n' 'Localia: the local engine is not running and could not start Localia (was the app removed?).' \\
                     "Run 'command claude' to use the cloud version." >&2
                   return 1
@@ -260,8 +304,8 @@ public struct ShellShim: ShellShimming {
                 printf '%s\\n' 'Localia: starting the local engine...' >&2
                 _l_end=$((SECONDS + \(t)))
                 while [ "$SECONDS" -lt "$_l_end" ]; do
-                  sleep 0.5
-                  if [ -n "$_l_probe" ] && curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+                  command sleep 0.5
+                  if [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi
@@ -330,14 +374,35 @@ public struct ShellShim: ShellShimming {
         return s
     }
 
-    private func backup(rc: URL, contents: Data) throws {
+    private func hasBackup(_ rc: URL) -> Bool {
+        let prefix = rc.lastPathComponent + ".localia-backup-"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: rc.deletingLastPathComponent().path)) ?? []
+        return names.contains { $0.hasPrefix(prefix) }
+    }
+
+    /// Writes `contents` (the rc target's bytes) next to `rc`. The file is created 0600 with O_EXCL, so it
+    /// is never readable by others even briefly, then given the source's own permissions.
+    private func backup(rc: URL, contents: Data, permissions: Any?) throws -> URL {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd-HHmmss"
         let stem = rc.path + ".localia-backup-" + f.string(from: now())
         var path = stem, n = 1
         while FileManager.default.fileExists(atPath: path) { n += 1; path = "\(stem)-\(n)" }
-        try contents.write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
+
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: path]) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: contents)
+            if let mode = (permissions as? NSNumber)?.uint16Value { fchmod(fd, mode_t(mode)) }
+            try handle.close()
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(atPath: path)
+            throw error
+        }
+        return URL(fileURLWithPath: path)
     }
 
     /// Atomic replace, then the original permissions are put back (atomic writes create a new inode).

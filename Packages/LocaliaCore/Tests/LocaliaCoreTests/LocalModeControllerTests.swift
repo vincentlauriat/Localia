@@ -5,13 +5,17 @@ private struct ModelEngine: Engine {
     let id: EngineID
     let baseURL: URL
     let models: [String]
+    var down = false
     func installState() async -> InstallState { .installed("1", managedByLocalia: false) }
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
     func uninstall() async throws {}
     func isServing() async -> Bool { true }
     func startServing() async throws {}
     func stopServing() async throws {}
-    func installedModels() async throws -> [InstalledModel] { models.map { InstalledModel(name: $0, sizeGB: 1) } }
+    func installedModels() async throws -> [InstalledModel] {
+        if down { throw URLError(.cannotConnectToHost) }
+        return models.map { InstalledModel(name: $0, sizeGB: 1) }
+    }
     func loadedModels() async throws -> [LoadedModel] { [] }
     func pull(_ c: ModelCandidate, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> String { c.id }
     func delete(_ modelName: String) async throws {}
@@ -149,5 +153,82 @@ final class LocalModeControllerTests: XCTestCase {
         try await c.noteModelUsed("b")
         XCTAssertEqual(s.lastModel, "b")
         XCTAssertEqual(shim.states.last?.model, "b")
+    }
+
+    // MARK: fix round 1 — engine down, active engine in every shim-state write
+
+    private let llamaURL = URL(string: "http://127.0.0.1:11435")!
+
+    private func makeDown(_ id: EngineID = .ollama, settings: InMemoryLocalModeSettings, shim: ShellShimming)
+        -> LocalModeController {
+        let e = ModelEngine(id: id, baseURL: id == .ollama ? url : llamaURL, models: [], down: true)
+        return LocalModeController(settings: settings, shim: shim, source: FakeSource(engine: e, preferred: ["p"]))
+    }
+
+    func test_engineDown_withLastModel_setOnSucceeds() async throws {
+        let s = InMemoryLocalModeSettings(); s.lastModel = "m"; s.localModeScope = .everyClaude
+        let shim = FakeShim()
+        let c = makeDown(.llamaCpp, settings: s, shim: shim)
+        try await c.setOn(true)
+        XCTAssertTrue(c.isOn)
+        XCTAssertEqual(shim.states.last, .init(on: true, baseURL: llamaURL, model: "m", policy: .autoStart, profile: .light, engine: .llamaCpp))
+        guard case let .local(engine, baseURL, model) = await c.launchTarget() else { return XCTFail() }
+        XCTAssertEqual(engine, .llamaCpp); XCTAssertEqual(baseURL, llamaURL); XCTAssertEqual(model, "m")
+    }
+
+    func test_engineDown_withoutLastModel_throwsEngineUnreachable() async {
+        let s = InMemoryLocalModeSettings()
+        let c = makeDown(settings: s, shim: FakeShim())
+        do { try await c.setOn(true); XCTFail("expected throw") } catch {
+            XCTAssertEqual(error as? LocalModeError, .engineUnreachable)
+        }
+        XCTAssertFalse(c.isOn)
+    }
+
+    func test_unresolvedStateWrite_usesActiveEngine() async throws {
+        let shim = FakeShim()
+        let e = ModelEngine(id: .llamaCpp, baseURL: llamaURL, models: [])
+        let c = LocalModeController(settings: InMemoryLocalModeSettings(), shim: shim, source: FakeSource(engine: e))
+        try await c.setOn(false)
+        XCTAssertEqual(shim.states.last?.engine, .llamaCpp)
+        XCTAssertEqual(shim.states.last?.baseURL, llamaURL)
+    }
+
+    /// Real `ShellShim` in a temp HOME: the state file carries the active engine's probe.
+    func test_engineDown_realShim_writesActiveEngineProbe() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("lmc-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let shimDir = home.appendingPathComponent("Library/Application Support/Localia/shell")
+        let shim = ShellShim(rcFiles: [home.appendingPathComponent(".zshrc")], shimDir: shimDir, home: home)
+        let s = InMemoryLocalModeSettings(); s.lastModel = "m"
+        let c = makeDown(.llamaCpp, settings: s, shim: shim)
+        try await c.setScope(.everyClaude)
+        try await c.setOn(true)
+        let state = try String(contentsOf: shimDir.appendingPathComponent("state.env"), encoding: .utf8)
+        XCTAssertTrue(state.contains("\non=1\n"), state)
+        XCTAssertTrue(state.contains("\nprobe=http://127.0.0.1:11435/health\n"), state)
+        XCTAssertTrue(state.contains("\nengine=llamaCpp\n"), state)
+    }
+
+    /// A failing install leaves the first rc as it was and the scope at `.localiaOnly`.
+    func test_partialInstall_realShim_keepsScopeAndFirstRc() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("lmc-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let zshrc = home.appendingPathComponent(".zshrc"), bashrc = home.appendingPathComponent(".bashrc")
+        try "a\n".write(to: zshrc, atomically: true, encoding: .utf8)
+        try "b\n".write(to: bashrc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: bashrc.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: bashrc.path)
+            try? FileManager.default.removeItem(at: home)
+        }
+        let shim = ShellShim(rcFiles: [zshrc, bashrc], shimDir: home.appendingPathComponent("Library/Application Support/Localia/shell"), home: home)
+        let s = InMemoryLocalModeSettings()
+        let real = LocalModeController(settings: s, shim: shim, source: FakeSource(engine: ModelEngine(id: .ollama, baseURL: url, models: ["a"])))
+        do { try await real.setScope(.everyClaude); XCTFail("expected throw") } catch {}
+        XCTAssertEqual(real.scope, .localiaOnly); XCTAssertEqual(s.localModeScope, .localiaOnly)
+        XCTAssertEqual(try String(contentsOf: zshrc, encoding: .utf8), "a\n")
+        XCTAssertEqual(try String(contentsOf: bashrc, encoding: .utf8), "b\n")
     }
 }
