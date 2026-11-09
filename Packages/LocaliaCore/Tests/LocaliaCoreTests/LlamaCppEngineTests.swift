@@ -93,10 +93,10 @@ final class LlamaCppEngineTests: XCTestCase {
 
     func test_serverArgs() {
         let m = URL(fileURLWithPath: "/m/model.gguf"), p = URL(fileURLWithPath: "/m/mmproj-F16.gguf")
-        XCTAssertEqual(LlamaCppEngine.serverArguments(model: m, mmproj: nil, contextTokens: 65536, port: 11435),
-                       ["-m", "/m/model.gguf", "-c", "65536", "-np", "1", "--jinja",
+        XCTAssertEqual(LlamaCppEngine.serverArguments(model: m, alias: "o/r/model.gguf", mmproj: nil, contextTokens: 65536, port: 11435),
+                       ["-m", "/m/model.gguf", "--alias", "o/r/model.gguf", "-c", "65536", "-np", "1", "--jinja",
                         "--host", "127.0.0.1", "--port", "11435"])
-        XCTAssertEqual(LlamaCppEngine.serverArguments(model: m, mmproj: p, contextTokens: 65536, port: 11435).suffix(2),
+        XCTAssertEqual(LlamaCppEngine.serverArguments(model: m, alias: "a", mmproj: p, contextTokens: 65536, port: 11435).suffix(2),
                        ["--mmproj", "/m/mmproj-F16.gguf"])
     }
 
@@ -159,7 +159,8 @@ final class LlamaCppEngineTests: XCTestCase {
         let spawn = try XCTUnwrap(launcher.spawns.first)
         let dir = Paths.models(base: tmp).appendingPathComponent("gguf/o/r").resolvingSymlinksInPath().path
         XCTAssertEqual(spawn.exe.resolvingSymlinksInPath().path, server.resolvingSymlinksInPath().path)
-        XCTAssertEqual(spawn.args.count, 13)
+        XCTAssertEqual(spawn.args.count, 15)
+        XCTAssertEqual(Array(spawn.args[2...3]), ["--alias", "o/r/a-Q4_K_M.gguf"])
         XCTAssertEqual(spawn.args.suffix(2), ["--mmproj", Paths.models(base: tmp).appendingPathComponent("gguf/o/r/mmproj-F16.gguf").path])
         XCTAssertTrue(spawn.args[1].hasSuffix("/o/r/a-Q4_K_M.gguf"), dir)
         let loaded = try await engine.loadedModels()
@@ -239,5 +240,139 @@ final class LlamaCppEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), payload)
         let models = try await engine.installedModels()
         XCTAssertEqual(models.map(\.name), [name])
+    }
+
+    // MARK: - Fix round 1
+
+    private final class SeqHandle: ServerHandle, @unchecked Sendable {
+        private let lock = NSLock()
+        private var running = true
+        let pid: Int32
+        init(pid: Int32) { self.pid = pid }
+        var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
+        func terminate() { lock.lock(); running = false; lock.unlock() }
+    }
+    private final class SeqLauncher: ServerLauncher, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _handles: [SeqHandle] = []
+        private var _args: [[String]] = []
+        var handles: [SeqHandle] { lock.lock(); defer { lock.unlock() }; return _handles }
+        var args: [[String]] { lock.lock(); defer { lock.unlock() }; return _args }
+        var anyRunning: Bool { handles.contains { $0.isRunning } }
+        func launch(executable: URL, arguments: [String], environment: [String: String]) throws -> any ServerHandle {
+            lock.lock(); defer { lock.unlock() }
+            let h = SeqHandle(pid: Int32(5000 + _handles.count)); _handles.append(h); _args.append(arguments)
+            return h
+        }
+    }
+
+    func test_loadedModels_afterRestart_matchesAliasWithLiveRecord() async throws {
+        let server = try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf", bytes: 8)
+        let inspector = FakeInspector()
+        inspector.setAlive(321, path: server.resolvingSymlinksInPath().path)
+        try Data(#"{"pid":321,"path":"\#(server.resolvingSymlinksInPath().path)"}"#.utf8)
+            .write(to: Paths.engines(base: tmp).appendingPathComponent("llama-server.pid"))
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/health": return StubResponse(status: 200)
+            case "/v1/models": return StubResponse(text: #"{"data":[{"id":"o/r/a-Q4_K_M.gguf"}]}"#)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let fresh = LlamaCppEngine(session: EngineStubProtocol.session(), launcher: FakeLauncher(), appSupportBase: tmp,
+                                   startupTimeout: 1, pollInterval: 0.02, inspector: inspector)
+        let loaded = try await fresh.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), ["o/r/a-Q4_K_M.gguf"])
+        XCTAssertEqual(loaded[0].memoryGB, 8e-9, accuracy: 1e-12)
+        // delete of the served model stops our recorded server first.
+        try await fresh.delete("o/r/a-Q4_K_M.gguf")
+        XCTAssertEqual(inspector.signals.first?.0, 321)
+        XCTAssertEqual(inspector.signals.first?.1, SIGTERM)
+    }
+
+    func test_deleteLoadedModel_stopsServerFirst() async throws {
+        try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf")
+        let launcher = SeqLauncher()
+        EngineStubProtocol.handler = { req in
+            req.path == "/health" ? StubResponse(status: launcher.anyRunning ? 200 : 503) : StubResponse(status: 404)
+        }
+        let engine = LlamaCppEngine(session: EngineStubProtocol.session(), launcher: launcher, appSupportBase: tmp,
+                                    startupTimeout: 2, pollInterval: 0.02, inspector: FakeInspector())
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        try await engine.delete("o/r/a-Q4_K_M.gguf")
+        XCTAssertFalse(launcher.handles[0].isRunning)
+        let loaded = try await engine.loadedModels()
+        XCTAssertTrue(loaded.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Paths.models(base: tmp).appendingPathComponent("gguf/o").path))
+    }
+
+    func test_concurrentLoads_areSerialized() async throws {
+        try fakeInstall()
+        try fakeModel("o/r/a-Q4_K_M.gguf")
+        try fakeModel("o/r/b-Q4_K_M.gguf")
+        let launcher = SeqLauncher()
+        EngineStubProtocol.handler = { req in
+            req.path == "/health" ? StubResponse(status: launcher.anyRunning ? 200 : 503) : StubResponse(status: 404)
+        }
+        let engine = LlamaCppEngine(session: EngineStubProtocol.session(), launcher: launcher, appSupportBase: tmp,
+                                    startupTimeout: 2, pollInterval: 0.02, inspector: FakeInspector())
+        async let l1: Void = engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        async let l2: Void = engine.load("o/r/b-Q4_K_M.gguf", contextTokens: 65536)
+        _ = try await (l1, l2)
+        let hs = launcher.handles
+        XCTAssertEqual(hs.count, 2)
+        XCTAssertEqual(hs.filter(\.isRunning).count, 1, "exactly one server may survive")
+        XCTAssertFalse(hs[0].isRunning)
+        XCTAssertTrue(hs[1].isRunning)
+        let loaded = try await engine.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), [launcher.args[1][3]])
+    }
+
+    func test_unsafeRepoOrPaths_areRejected() async throws {
+        let engine = makeEngine()
+        for repo in ["../x", "/abs/x", "a//b", "", "a/./b"] {
+            let c = ModelCandidate(id: "x", displayName: "x", ggufRepo: repo, quant: "Q4_K_M", weightsGB: 0, memoryGB: 0,
+                                   estimatedTPS: 0, fit: .good, slow: false, supportsTools: true,
+                                   memoryIsMeasured: false, speedIsMeasured: false, quality: 0)
+            do { _ = try await engine.pull(c) { _, _ in }; XCTFail(repo) }
+            catch { XCTAssertEqual(error as? EngineError, .assetNotFound(repo)) }
+        }
+        for name in ["/etc/passwd", "o//a.gguf", "o/../a.gguf"] {
+            do { try await engine.delete(name); XCTFail(name) } catch { XCTAssertEqual(error as? EngineError, .assetNotFound(name)) }
+        }
+    }
+
+    func test_pull_keepsSubfolder_andLoadFindsParentMMProj() async throws {
+        let payload = Data("part".utf8), proj = Data("proj".utf8)
+        func sha(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
+        let tree = #"[{"type":"file","path":"Q4_K_M/m-Q4_K_M.gguf","size":4,"lfs":{"oid":"\#(sha(payload))"}},{"type":"file","path":"mmproj-F16.gguf","size":4,"lfs":{"oid":"\#(sha(proj))"}}]"#
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/api/models/o/r/tree/main": return StubResponse(text: tree)
+            case "/o/r/resolve/main/Q4_K_M/m-Q4_K_M.gguf": return StubResponse(body: payload)
+            case "/o/r/resolve/main/mmproj-F16.gguf": return StubResponse(body: proj)
+            default: return StubResponse(status: 404)
+            }
+        }
+        try fakeInstall()
+        let session = EngineStubProtocol.session()
+        let launcher = SeqLauncher()
+        let engine = LlamaCppEngine(session: session, downloader: Downloader(session: session), launcher: launcher,
+                                    appSupportBase: tmp, startupTimeout: 0.3, pollInterval: 0.02,
+                                    hfAPIBase: URL(string: "https://hf.test/api/models")!, hfFileBase: URL(string: "https://hf.test")!)
+        let c = ModelCandidate(id: "x", displayName: "x", ggufRepo: "o/r", quant: "Q4_K_M", weightsGB: 0, memoryGB: 0,
+                               estimatedTPS: 0, fit: .good, slow: false, supportsTools: true,
+                               memoryIsMeasured: false, speedIsMeasured: false, quality: 0)
+        let name = try await engine.pull(c) { _, _ in }
+        XCTAssertEqual(name, "o/r/Q4_K_M/m-Q4_K_M.gguf")
+        let models = try await engine.installedModels()
+        XCTAssertEqual(models.map(\.name), [name])
+        _ = try? await engine.load(name, contextTokens: 65536)   // health stub 404: fails after launch, argv is what matters
+        XCTAssertEqual(launcher.args.first?.suffix(2).first, "--mmproj")
+        XCTAssertTrue(launcher.args.first?.last?.hasSuffix("/o/r/mmproj-F16.gguf") ?? false)
+        try await engine.delete(name)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Paths.models(base: tmp).appendingPathComponent("gguf/o").path))
     }
 }

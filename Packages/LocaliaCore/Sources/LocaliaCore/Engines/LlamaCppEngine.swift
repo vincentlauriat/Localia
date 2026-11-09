@@ -22,6 +22,8 @@ public actor LlamaCppEngine: Engine {
     /// Set only for a server Localia itself spawned; `unload` / `stopServing` never touch anything else.
     private var ownServer: (any ServerHandle)?
     private var loadedName: String?
+    /// Tail of the load queue: loads (and unloads) run one at a time, so two callers cannot kill each other's server.
+    private var queueTail: Task<Void, Never>?
 
     public init(
         baseURL: URL = URL(string: "http://127.0.0.1:\(LocaliaConstants.llamaServerPort)")!,
@@ -182,8 +184,9 @@ public actor LlamaCppEngine: Engine {
         try await record.stop(handle: handle)
     }
 
-    static func serverArguments(model: URL, mmproj: URL?, contextTokens: Int, port: Int) -> [String] {
-        var a = ["-m", model.path, "-c", String(contextTokens), "-np", "1", "--jinja",
+    /// `alias` is the installed model name, so `/v1/models` and the Anthropic `model` field carry a stable id.
+    static func serverArguments(model: URL, alias: String, mmproj: URL?, contextTokens: Int, port: Int) -> [String] {
+        var a = ["-m", model.path, "--alias", alias, "-c", String(contextTokens), "-np", "1", "--jinja",
                  "--host", "127.0.0.1", "--port", String(port)]
         if let mmproj { a += ["--mmproj", mmproj.path] }
         return a
@@ -230,8 +233,14 @@ public actor LlamaCppEngine: Engine {
         return out
     }
 
+    /// Non-empty relative path with no `.`, `..` or empty components (so no absolute paths either).
+    static func isSafeRelativePath(_ p: String) -> Bool {
+        let parts = p.split(separator: "/", omittingEmptySubsequences: false)
+        return !p.isEmpty && !parts.contains { $0.isEmpty || $0 == "." || $0 == ".." }
+    }
+
     private func modelFile(_ name: String) throws -> URL {
-        guard !name.split(separator: "/").contains("..") else { throw EngineError.assetNotFound(name) }
+        guard Self.isSafeRelativePath(name) else { throw EngineError.assetNotFound(name) }
         let url = ggufRoot.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else { throw EngineError.assetNotFound(name) }
         return url
@@ -243,16 +252,15 @@ public actor LlamaCppEngine: Engine {
 
     public func loadedModels() async throws -> [LoadedModel] {
         guard await healthy() else { return [] }
+        // The server is started with `--alias <installed name>`, so its model id is that name, also after an app restart.
         var name = loadedName
-        if name == nil {   // server from an earlier run: match the id it reports to an installed file
+        if name == nil {
             let data = try await send(URLRequest(url: baseURL.appendingPathComponent("v1/models")))
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            let first = (obj?["data"] as? [[String: Any]])?.first?["id"] as? String
-            name = scanModels().first(where: { $0.name == first || $0.url.lastPathComponent == first })?.name ?? first
+            name = (obj?["data"] as? [[String: Any]])?.first?["id"] as? String
         }
-        guard let name else { return [] }
-        let size = scanModels().first(where: { $0.name == name })?.sizeBytes ?? 0
-        return [LoadedModel(name: name, memoryGB: Double(size) / 1e9)]
+        guard let name, let m = scanModels().first(where: { $0.name == name }) else { return [] }
+        return [LoadedModel(name: name, memoryGB: Double(m.sizeBytes) / 1e9)]
     }
 
     struct HFFile: Equatable { let path: String; let size: Int64; let sha256: String }
@@ -296,6 +304,7 @@ public actor LlamaCppEngine: Engine {
     }
 
     public func pull(_ c: ModelCandidate, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> String {
+        guard Self.isSafeRelativePath(c.ggufRepo) else { throw EngineError.assetNotFound(c.ggufRepo) }
         let treeURL = hfAPIBase.appendingPathComponent("\(c.ggufRepo)/tree/main")
         var comps = URLComponents(url: treeURL, resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "recursive", value: "true")]
@@ -303,11 +312,12 @@ public actor LlamaCppEngine: Engine {
         let files = try Self.resolveFiles(treeJSON: tree, quant: c.quant)
 
         let all = files.model + (files.mmproj.map { [$0] } ?? [])
+        guard all.allSatisfy({ Self.isSafeRelativePath($0.path) }) else { throw EngineError.assetNotFound("unsafe path in \(c.ggufRepo)") }
         let total = all.reduce(Int64(0)) { $0 + $1.size }
         let dir = ggufRoot.appendingPathComponent(c.ggufRepo, isDirectory: true)
         var base: Int64 = 0
         for f in all {
-            let dest = dir.appendingPathComponent((f.path as NSString).lastPathComponent)
+            let dest = dir.appendingPathComponent(f.path)   // keeps the subfolder: no name collisions
             let done = base
             let existing = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int64) ?? nil
             if existing != f.size {   // a file at its final path was verified when it was downloaded
@@ -320,13 +330,15 @@ public actor LlamaCppEngine: Engine {
             base += f.size
             progress(base, total > 0 ? total : nil)
         }
-        let main = (files.model[0].path as NSString).lastPathComponent
+        let main = files.model[0].path
         return "\(c.ggufRepo)/\(main)"
     }
 
-    /// Removes the model (all split parts); the repo's mmproj goes with the last model of that repo.
+    /// Removes the model (all split parts). A model that is currently served is unloaded first, because the
+    /// server keeps the file mapped. Directories left without any model (mmproj files included) are removed.
     public func delete(_ modelName: String) async throws {
         let url = try modelFile(modelName)
+        if try await loadedModels().contains(where: { $0.name == modelName }) { try await stopServing() }
         let dir = url.deletingLastPathComponent()
         let fm = FileManager.default
         let file = url.lastPathComponent
@@ -336,26 +348,39 @@ public actor LlamaCppEngine: Engine {
                 try fm.removeItem(at: dir.appendingPathComponent(f))
             }
         }
-        let rest = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
-        if !rest.contains(where: { $0.lowercased().hasSuffix(".gguf") && !Self.isMMProj($0) }) {
-            try? fm.removeItem(at: dir)
-            let parent = dir.deletingLastPathComponent()
-            if parent != ggufRoot, ((try? fm.contentsOfDirectory(atPath: parent.path)) ?? []).isEmpty { try? fm.removeItem(at: parent) }
+        let root = ggufRoot.resolvingSymlinksInPath().path
+        var d = dir.resolvingSymlinksInPath()
+        while d.path != root, d.path.hasPrefix(root + "/") {
+            let hasModel = fm.enumerator(at: d, includingPropertiesForKeys: nil)?.contains {
+                guard let u = $0 as? URL else { return false }
+                return u.pathExtension.lowercased() == "gguf" && !Self.isMMProj(u.lastPathComponent)
+            } ?? false
+            if hasModel { break }
+            try? fm.removeItem(at: d)
+            d = d.deletingLastPathComponent()
         }
     }
 
-    /// (Re)starts `llama-server` on this model and waits for `/health` to answer 200.
+    /// (Re)starts `llama-server` on this model and waits for `/health` to answer 200. Calls are serialized.
     public func load(_ modelName: String, contextTokens: Int) async throws {
+        let prev = queueTail
+        let task = Task { () -> Result<Void, Error> in
+            await prev?.value
+            do { try await self.performLoad(modelName, contextTokens: contextTokens); return .success(()) }
+            catch { return .failure(error) }
+        }
+        queueTail = Task { _ = await task.value }
+        try await task.value.get()
+    }
+
+    private func performLoad(_ modelName: String, contextTokens: Int) async throws {
         guard let bin = serverBinary() else { throw EngineError.notInstalled }
         let file = try modelFile(modelName)
         try await stopServing()   // restarts our own server; a foreign one is never touched
         if await healthy() { throw EngineError.server("Port \(baseURL.port ?? LocaliaConstants.llamaServerPort) is already in use by another server.") }
 
-        let mmproj = (try? FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path))?
-            .filter { Self.isMMProj($0) && $0.lowercased().hasSuffix(".gguf") }.sorted()
-            .map { file.deletingLastPathComponent().appendingPathComponent($0) }
-        let args = Self.serverArguments(model: file, mmproj: mmproj?.first, contextTokens: contextTokens,
-                                        port: baseURL.port ?? LocaliaConstants.llamaServerPort)
+        let args = Self.serverArguments(model: file, alias: modelName, mmproj: mmprojFile(near: file),
+                                        contextTokens: contextTokens, port: baseURL.port ?? LocaliaConstants.llamaServerPort)
         let handle = try launcher.launch(executable: bin, arguments: args, environment: ProcessInfo.processInfo.environment)
         ownServer = handle
         record.write(pid: handle.pid, binary: bin)
@@ -366,8 +391,24 @@ public actor LlamaCppEngine: Engine {
         loadedName = modelName
     }
 
-    /// Terminates the server, but only one that Localia launched.
-    public func unload(_ modelName: String) async throws { try await stopServing() }
+    /// The repo's mmproj: in the model's directory or the nearest parent below the gguf root.
+    private func mmprojFile(near file: URL) -> URL? {
+        let root = ggufRoot.resolvingSymlinksInPath().path
+        var d = file.deletingLastPathComponent()
+        while d.resolvingSymlinksInPath().path.hasPrefix(root + "/") {
+            let found = ((try? FileManager.default.contentsOfDirectory(atPath: d.path)) ?? [])
+                .filter { Self.isMMProj($0) && $0.lowercased().hasSuffix(".gguf") }.sorted().first
+            if let found { return d.appendingPathComponent(found) }
+            d = d.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Terminates the server, but only one that Localia launched. Waits for a load in flight.
+    public func unload(_ modelName: String) async throws {
+        await queueTail?.value
+        try await stopServing()
+    }
 
     // MARK: - HTTP
 
