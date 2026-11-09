@@ -2,8 +2,10 @@ import AppKit
 import LocaliaCore
 import SwiftUI
 
-/// The menu-bar panel (`MenuBarExtra` in `.window` style), laid out like ClaudeCockpit's: the local-mode
-/// switch, memory, the main actions, the engine, and a footer. Every action goes through `AppModel`.
+/// The menu-bar panel (`MenuBarExtra` in `.window` style), laid out like Juicy's: a hero card (model speed,
+/// free memory, local-mode badge, memory bar), three collapsible cards (installed models and engine, memory-
+/// hungry apps, running sessions), then a list card with the actions and the local-mode switch. Every action
+/// goes through `AppModel`.
 struct MenuBarPanel: View {
     @ObservedObject var model: AppModel
     let windows: WindowManager
@@ -11,21 +13,28 @@ struct MenuBarPanel: View {
     /// `false` renders the content without a scroll container: used by `PanelSizer` and snapshots.
     var scrolls = true
 
-    @State private var launchExpanded: Bool
-    @State private var engineExpanded: Bool
+    /// Which collapsible parts are open (cards and the inline folder list).
+    struct Expansion: Equatable {
+        var launch = false
+        var models = false
+        var apps = false
+        var sessions = false
+        static let all = Expansion(launch: true, models: true, apps: true, sessions: true)
+    }
+
+    @State private var open: Expansion
     @State private var freeing = false
     /// The panel's natural height, measured through AppKit (see `remeasure`).
     @State private var contentHeight: CGFloat = 0
     @State private var host = PanelHost()
 
     init(model: AppModel, windows: WindowManager, updater: Updater, scrolls: Bool = true,
-         launchExpanded: Bool = false, engineExpanded: Bool = false) {
+         expansion: Expansion = Expansion()) {
         self.model = model
         self.windows = windows
         self.updater = updater
         self.scrolls = scrolls
-        _launchExpanded = State(initialValue: launchExpanded)
-        _engineExpanded = State(initialValue: engineExpanded)
+        _open = State(initialValue: expansion)
     }
 
     // MARK: Height
@@ -37,20 +46,20 @@ struct MenuBarPanel: View {
     }
 
     /// Never zero: an unmeasured panel falls back to a plausible height and scrolls.
-    private var resolvedHeight: CGFloat { min(contentHeight > 0 ? contentHeight : 520, maxHeight) }
+    private var resolvedHeight: CGFloat { min(contentHeight > 0 ? contentHeight : 560, maxHeight) }
 
     private func remeasure() {
         contentHeight = PanelSizer.naturalHeight(of: MenuBarPanel(
-            model: model, windows: windows, updater: updater, scrolls: false,
-            launchExpanded: launchExpanded, engineExpanded: engineExpanded))
+            model: model, windows: windows, updater: updater, scrolls: false, expansion: open))
     }
 
     /// Everything that changes how tall the panel wants to be. Text that merely gets longer is absorbed
     /// by the scroll view.
     private var layoutSignature: String {
-        [launchExpanded, engineExpanded, model.isLocalModeOn, model.heavyApps.isEmpty, isBusy,
-         model.launchModel != nil].map(\.description).joined(separator: "|")
-            + "|\(model.recentFolders().count)"
+        let flags = [model.isLocalModeOn, isBusy, model.launchModel != nil, updater.isAvailable]
+        let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
+                      model.recentFolders().count]
+        return "\(open)|\(flags)|\(counts)"
     }
 
     // MARK: Body
@@ -77,113 +86,230 @@ struct MenuBarPanel: View {
 
     private var content: some View {
         VStack(spacing: 8) {
-            localModeCard
-            memoryCard
-            actionsCard
-            engineCard
-            footerCard
+            heroCard
+            modelsCard
+            appsCard
+            sessionsCard
+            listCard
         }
         .padding(10)
     }
 
-    // MARK: Local mode
+    // MARK: Hero
 
     private var isBusy: Bool { model.switchingLocalMode || model.busyMessage != nil }
 
-    private var localModeBinding: Binding<Bool> {
-        Binding(get: { model.isLocalModeOn },
-                set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
+    /// The model the hero describes: what a launch would use, else what is loaded, else what chat would use.
+    private var heroModel: String? {
+        model.launchModel ?? model.loaded.first?.name ?? model.chatModel(for: model.settings.activeEngine)
     }
 
-    private var localModeCard: some View {
-        let on = model.isLocalModeOn
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    Circle().fill(on ? Theme.local : Theme.track)
-                    Image(systemName: "airplane")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(on ? Color.white : Theme.slate)
-                }
-                .frame(width: 34, height: 34)
-                .accessibilityHidden(true)
+    private var heroTint: Color { model.isLocalModeOn ? Theme.local : Theme.blue }
 
-                Text(String(localized: "Local mode"))
-                    .font(.display(17))
-                Spacer(minLength: 8)
-                if isBusy {
-                    ProgressView().controlSize(.small)
-                        .accessibilityLabel(Text(model.busyMessage ?? String(localized: "Switching…")))
-                }
-                Toggle(String(localized: "Local mode"), isOn: localModeBinding)
-                    .toggleStyle(PillToggleStyle())
-                    .disabled(model.switchingLocalMode)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(on ? String(localized: "Claude Code runs on this Mac")
-                        : String(localized: "Claude Code uses Anthropic's cloud"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(on ? Theme.local : .secondary)
-                if on, let detail = localDetail {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                }
-                if let busy = model.busyMessage {
-                    Text(busy).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-            }
-            .padding(.leading, 46)
-        }
-        .padding(14)
-        .card(fill: on ? Theme.local.opacity(0.13) : Theme.cardFill,
-              stroke: on ? Theme.local.opacity(0.45) : Theme.cardStroke)
-        .animation(.easeInOut(duration: 0.2), value: on)
-    }
-
-    /// `<model> · <engine> · ~N words/s` (or `… estimated`).
-    private var localDetail: String? {
-        var parts: [String] = []
-        if let m = model.launchModel { parts.append(model.displayName(for: m)) }
-        parts.append(AppModel.engineName(model.settings.activeEngine))
-        if let m = model.launchModel, let s = model.wordsPerSecond(for: m) {
-            let n = String(Int(s.value.rounded()))
-            parts.append(s.measured ? String(localized: "~\(n) words/s") : String(localized: "~\(n) words/s, estimated"))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: Memory
-
-    private var memoryCard: some View {
+    private var heroCard: some View {
+        let speed = heroModel.flatMap { model.wordsPerSecond(for: $0) }
+        let number = speed.map { ($0.measured ? "" : "≈") + String(Int($0.value.rounded())) } ?? "—"
         let total = model.profile.totalRAMGB
         let fraction = total > 0 ? model.usedGB / total : 0
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: String(localized: "Memory"))
-                Spacer()
-                Text(String(localized: "\(Fmt.gb(model.freeGB)) free"))
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).monospacedDigit()
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(number)
+                            .font(.display(46, weight: .bold))
+                            .monospacedDigit()
+                            .minimumScaleFactor(0.6)
+                        Text(String(localized: "words/s"))
+                            .font(.display(17, weight: .semibold))
+                    }
+                    .foregroundStyle(heroTint)
+                    .lineLimit(1)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text(speed?.measured == false
+                                             ? String(localized: "Estimated speed") : String(localized: "Speed")))
+
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "cpu")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(heroTint)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(heroModel.map(model.displayName(for:)) ?? String(localized: "No local model"))
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(AppModel.engineName(model.settings.activeEngine))
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(String(localized: "Free memory").uppercased())
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(Fmt.gb(model.freeGB))
+                        .font(.display(18, weight: .bold))
+                        .monospacedDigit()
+                    statusPill.padding(.top, 6)
+                }
+                .fixedSize()
             }
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(Fmt.gb(model.usedGB)).font(.display(22)).monospacedDigit()
-                Text(String(localized: "used of \(Fmt.gb(total))"))
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            UsageBar(fraction: fraction, tint: memoryTint(fraction))
-            if !model.heavyApps.isEmpty {
-                WarningBanner(message: String(localized: "Memory-hungry apps are open: \(model.heavyApps.joined(separator: ", ")). Quitting them makes the model faster."))
-                    .padding(.top, 2)
-            }
+            SegmentedBar(fraction: fraction, tint: memoryTint(fraction))
+                .accessibilityLabel(Text(String(localized: "Memory used")))
         }
-        .padding(14)
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 20)
         .card()
+    }
+
+    /// "✈︎ Local mode" while local mode is on, a spinner while switching or loading, nothing otherwise.
+    @ViewBuilder private var statusPill: some View {
+        if isBusy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(model.busyMessage ?? String(localized: "Switching…"))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Theme.track.opacity(0.6), in: Capsule())
+        } else if model.isLocalModeOn {
+            HStack(spacing: 5) {
+                Image(systemName: "airplane").font(.system(size: 11, weight: .bold))
+                Text(String(localized: "Local mode")).font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(Theme.local)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Theme.local.opacity(0.18), in: Capsule())
+        }
     }
 
     private func memoryTint(_ fraction: Double) -> Color {
         fraction < 0.75 ? Theme.local : (fraction < 0.9 ? Theme.orange : Theme.red)
     }
 
-    // MARK: Actions
+    // MARK: Collapsible cards
+
+    private var engineName: String { AppModel.engineName(model.settings.activeEngine) }
+
+    private var modelsCard: some View {
+        DisclosureCard(title: String(localized: "Installed models"), icon: "square.stack.3d.up.fill",
+                       iconColor: Theme.blue, value: String(model.installed.count), expanded: $open.models) {
+            Picker(String(localized: "Active Engine"), selection: Binding(
+                get: { model.settings.activeEngine },
+                set: { id in Task { await model.setActiveEngine(id) } })) {
+                ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+
+            Button {
+                Task {
+                    if model.activeServing { await model.stopEngine() } else { await model.startEngine() }
+                    presentAlertIfNeeded()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle().fill(model.activeServing ? Theme.local : Theme.slate.opacity(0.6))
+                        .frame(width: 7, height: 7)
+                    Text("\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(model.activeServing ? String(localized: "Stop \(engineName)")
+                                             : String(localized: "Start \(engineName)"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(model.activeServing ? Theme.red : Theme.local)
+                }
+                .frame(minHeight: 28)
+            }
+            .buttonStyle(.plain)
+
+            if model.installed.isEmpty {
+                emptyLine(String(localized: "No local model"))
+            } else {
+                ForEach(model.installed) { row in
+                    Divider().opacity(0.4)
+                    HStack(spacing: 8) {
+                        Circle().fill(row.loaded ? Theme.local : Color.clear)
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(row.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            Text(row.loaded ? "\(AppModel.engineName(row.engine)) · \(String(localized: "loaded"))"
+                                            : AppModel.engineName(row.engine))
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Text(Fmt.gb(row.sizeGB)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 5)
+                }
+            }
+        }
+    }
+
+    private var appsCard: some View {
+        DisclosureCard(title: String(localized: "Apps using a lot of memory"), icon: "gauge.with.dots.needle.67percent",
+                       iconColor: .primary, value: model.heavyApps.isEmpty ? nil : String(model.heavyApps.count),
+                       valueColor: Theme.orange, expanded: $open.apps) {
+            if model.heavyApps.isEmpty {
+                emptyLine(String(localized: "None right now."))
+            } else {
+                ForEach(model.heavyApps, id: \.self) { app in
+                    HStack(spacing: 8) {
+                        Image(systemName: "app.fill").font(.system(size: 11)).foregroundStyle(Theme.orange)
+                        Text(app).font(.system(size: 12, weight: .medium))
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+                Text(String(localized: "Quitting them makes the model faster."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private var sessionsCard: some View {
+        let sessions = model.runningSessions.sorted { $0.key.model < $1.key.model }
+        let total = sessions.reduce(0) { $0 + $1.value }
+        return DisclosureCard(title: String(localized: "Running sessions"), icon: "terminal",
+                              iconColor: .primary, value: total == 0 ? nil : String(total),
+                              valueColor: Theme.local, expanded: $open.sessions) {
+            if sessions.isEmpty {
+                emptyLine(String(localized: "No session launched by Localia is running."))
+            } else {
+                ForEach(sessions, id: \.key) { key, count in
+                    HStack(spacing: 8) {
+                        Circle().fill(Theme.local).frame(width: 6, height: 6)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(model.displayName(for: key.model)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            Text(AppModel.engineName(key.engine)).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(String(localized: "×\(String(count))"))
+                            .font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func emptyLine(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+    }
+
+    // MARK: List card
 
     private var launchSubtitle: String {
         guard model.isLocalModeOn else { return String(localized: "Cloud") }
@@ -191,37 +317,109 @@ struct MenuBarPanel: View {
         return String(localized: "Local · \(model.displayName(for: m))")
     }
 
-    private var actionsCard: some View {
+    private var chatSubtitle: String {
+        guard let m = model.chatModel(for: model.settings.activeEngine) else { return String(localized: "No local model") }
+        return model.displayName(for: m)
+    }
+
+    private var modelsSubtitle: String {
+        let installed = String(localized: "Installed: \(String(model.installed.count))")
+        guard !model.downloads.isEmpty else { return installed }
+        return installed + " · " + String(localized: "Downloading: \(String(model.downloads.count))")
+    }
+
+    private var localModeBinding: Binding<Bool> {
+        Binding(get: { model.isLocalModeOn },
+                set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
+    }
+
+    private var listCard: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { launchExpanded.toggle() }
+                withAnimation(.easeInOut(duration: 0.18)) { open.launch.toggle() }
             } label: {
-                ActionRow(icon: "terminal", iconColor: model.isLocalModeOn ? Theme.local : Theme.blue,
-                          title: String(localized: "Launch Claude Code"), subtitle: launchSubtitle) {
-                    RowChevron(expanded: launchExpanded)
+                ListRow(icon: "terminal.fill", title: String(localized: "Launch Claude Code"), subtitle: launchSubtitle) {
+                    RowChevron(expanded: open.launch)
                 }
             }
             .buttonStyle(PanelRowButtonStyle())
-
-            if launchExpanded { launchList }
+            if open.launch { launchList }
 
             RowDivider()
             Button {
                 Task { await model.chat(); presentAlertIfNeeded() }
             } label: {
-                ActionRow(icon: "bubble.left.and.text.bubble.right", iconColor: Theme.violet,
-                          title: String(localized: "Chat with the model"), subtitle: chatSubtitle)
+                ListRow(icon: "bubble.left.and.bubble.right.fill", title: String(localized: "Chat with the model"),
+                        subtitle: chatSubtitle)
             }
             .buttonStyle(PanelRowButtonStyle())
 
             RowDivider()
             Button { show(.models) } label: {
-                ActionRow(icon: "square.stack.3d.up", iconColor: Theme.orange,
-                          title: String(localized: "Models"), subtitle: modelsSubtitle) {
+                ListRow(icon: "square.stack.3d.up", title: String(localized: "Models…"), subtitle: modelsSubtitle) {
                     RowChevron()
                 }
             }
             .buttonStyle(PanelRowButtonStyle())
+
+            RowDivider()
+            ListRow(icon: "airplane", iconColor: Theme.local, title: String(localized: "Local mode"),
+                    subtitle: model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
+                                                  : String(localized: "Claude Code uses Anthropic's cloud")) {
+                HStack(spacing: 8) {
+                    if model.switchingLocalMode { ProgressView().controlSize(.small) }
+                    Toggle(String(localized: "Local mode"), isOn: localModeBinding)
+                        .toggleStyle(PillToggleStyle())
+                        .disabled(model.switchingLocalMode)
+                }
+            }
+
+            RowDivider()
+            Button {
+                guard !freeing else { return }
+                freeing = true
+                Task { await model.freeMemory(); freeing = false }
+            } label: {
+                ListRow(icon: "memorychip", title: String(localized: "Free Memory")) {
+                    if freeing { ProgressView().controlSize(.small) }
+                }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .disabled(freeing)
+
+            RowDivider()
+            Button { show(.settings) } label: {
+                ListRow(icon: "gearshape.fill", title: String(localized: "Settings…")) { RowChevron() }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .keyboardShortcut(",")
+
+            RowDivider()
+            Button { dismiss(); updater.checkForUpdates() } label: {
+                ListRow(icon: "arrow.triangle.2.circlepath", title: String(localized: "Check for Updates…"),
+                        subtitle: updater.isAvailable ? nil : String(localized: "Updates Unavailable in This Build"))
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .disabled(!updater.isAvailable)
+
+            RowDivider()
+            Button { show(.about) } label: {
+                ListRow(icon: "info.circle", title: String(localized: "About Localia"))
+            }
+            .buttonStyle(PanelRowButtonStyle())
+
+            RowDivider()
+            Button { NSApplication.shared.terminate(nil) } label: {
+                ListRow(icon: "power", iconColor: Theme.red, title: String(localized: "Quit Localia")) {
+                    if let v = Self.version {
+                        Text(String(localized: "v\(v)"))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .keyboardShortcut("q")
         }
         .padding(.vertical, 4)
         .card()
@@ -259,124 +457,16 @@ struct MenuBarPanel: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 46)
+        .padding(.leading, 50)
         .padding(.trailing, 14)
         .frame(minHeight: 30)
     }
 
-    private var chatSubtitle: String {
-        guard let m = model.chatModel(for: model.settings.activeEngine) else { return String(localized: "No local model") }
-        return model.displayName(for: m)
-    }
-
-    private var modelsSubtitle: String {
-        let installed = String(localized: "Installed: \(String(model.installed.count))")
-        guard !model.downloads.isEmpty else { return installed }
-        return installed + " · " + String(localized: "Downloading: \(String(model.downloads.count))")
-    }
-
-    // MARK: Engine
-
-    private var engineName: String { AppModel.engineName(model.settings.activeEngine) }
-
-    private var engineCard: some View {
-        DisclosureCard(title: String(localized: "Engine"), icon: "server.rack", iconColor: Theme.teal,
-                       value: "\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))",
-                       expanded: $engineExpanded) {
-            Picker(String(localized: "Active Engine"), selection: Binding(
-                get: { model.settings.activeEngine },
-                set: { id in Task { await model.setActiveEngine(id) } })) {
-                ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.vertical, 6)
-
-            Button {
-                Task {
-                    if model.activeServing { await model.stopEngine() } else { await model.startEngine() }
-                    presentAlertIfNeeded()
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: model.activeServing ? "stop.circle" : "play.circle")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(model.activeServing ? Theme.red : Theme.local)
-                        .frame(width: 22)
-                    Text(model.activeServing ? String(localized: "Stop \(engineName)")
-                                             : String(localized: "Start \(engineName)"))
-                        .font(.system(size: 13))
-                    Spacer()
-                }
-                .frame(minHeight: 28)
-            }
-            .buttonStyle(PanelRowButtonStyle())
-        }
-    }
-
-    // MARK: Footer
-
-    private var footerCard: some View {
-        VStack(spacing: 0) {
-            Button {
-                guard !freeing else { return }
-                freeing = true
-                Task { await model.freeMemory(); freeing = false }
-            } label: {
-                ActionRow(icon: "memorychip", iconColor: Theme.teal, title: String(localized: "Free Memory"),
-                          subtitle: String(localized: "Unload the models Localia loaded")) {
-                    if freeing { ProgressView().controlSize(.small) }
-                }
-            }
-            .buttonStyle(PanelRowButtonStyle())
-            .disabled(freeing)
-
-            RowDivider()
-            Button { show(.settings) } label: {
-                ActionRow(icon: "gearshape", iconColor: Theme.slate, title: String(localized: "Settings…")) {
-                    Text("⌘,").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-            }
-            .buttonStyle(PanelRowButtonStyle())
-            .keyboardShortcut(",")
-
-            RowDivider()
-            Button { dismiss(); updater.checkForUpdates() } label: {
-                ActionRow(icon: "arrow.down.circle", iconColor: Theme.violet,
-                          title: String(localized: "Check for Updates…"),
-                          subtitle: updater.isAvailable ? Self.versionLine
-                                                        : String(localized: "Updates Unavailable in This Build"))
-            }
-            .buttonStyle(PanelRowButtonStyle())
-            .disabled(!updater.isAvailable)
-
-            RowDivider()
-            Button { show(.about) } label: {
-                ActionRow(icon: "info.circle", iconColor: Theme.slate, title: String(localized: "About Localia"))
-            }
-            .buttonStyle(PanelRowButtonStyle())
-
-            RowDivider()
-            Button { NSApplication.shared.terminate(nil) } label: {
-                ActionRow(icon: "xmark.circle", iconColor: Theme.red, title: String(localized: "Quit Localia")) {
-                    Text("⌘Q").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-            }
-            .buttonStyle(PanelRowButtonStyle())
-            .keyboardShortcut("q")
-        }
-        .padding(.vertical, 4)
-        .card()
-    }
-
-    private static var versionLine: String? {
-        guard let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else { return nil }
-        return String(localized: "Version \(v)")
-    }
+    private static var version: String? { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String }
 
     // MARK: Behaviour
 
-    /// Memory, heavy apps, engine status and the launch destination, read fresh when the panel opens.
+    /// Memory, heavy apps, sessions, engine status and the launch destination, read fresh when the panel opens.
     private func refresh() {
         Task {
             await model.refreshStatus()
@@ -421,6 +511,43 @@ struct MenuBarPanel: View {
         guard model.alert != nil else { return }
         dismiss()
         AlertPresenter.present(model)
+    }
+}
+
+/// A row of the list card, Juicy style: a primary-coloured SF Symbol (or a coloured one), title, optional
+/// grey subtitle, trailing accessory.
+struct ListRow<Trailing: View>: View {
+    let icon: String
+    var iconColor: Color = .primary
+    let title: String
+    var subtitle: String? = nil
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(iconColor)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 14, weight: .medium))
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .frame(minHeight: 44)
+    }
+}
+
+extension ListRow where Trailing == EmptyView {
+    init(icon: String, iconColor: Color = .primary, title: String, subtitle: String? = nil) {
+        self.init(icon: icon, iconColor: iconColor, title: title, subtitle: subtitle) { EmptyView() }
     }
 }
 

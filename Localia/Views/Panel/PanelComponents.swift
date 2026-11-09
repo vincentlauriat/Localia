@@ -1,40 +1,5 @@
 import SwiftUI
 
-/// Settings-list row with a leading SF Symbol (ported from ClaudeCockpit).
-struct ActionRow<Trailing: View>: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    var subtitle: String? = nil
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(iconColor)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 14, weight: .medium))
-                if let subtitle {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 8)
-            trailing
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 40)
-    }
-}
-
-extension ActionRow where Trailing == EmptyView {
-    init(icon: String, iconColor: Color, title: String, subtitle: String? = nil) {
-        self.init(icon: icon, iconColor: iconColor, title: title, subtitle: subtitle) { EmptyView() }
-    }
-}
-
 /// The chevron of a row that opens or reveals something: points right, down when `expanded`.
 struct RowChevron: View {
     var expanded = false
@@ -72,7 +37,7 @@ struct PanelRowButtonStyle: ButtonStyle {
 
 /// Hairline between rows of a card, inset past the icon column.
 struct RowDivider: View {
-    var body: some View { Divider().opacity(0.4).padding(.leading, 46) }
+    var body: some View { Divider().opacity(0.4).padding(.leading, 50) }
 }
 
 /// Collapsible card with a chevron header (ported from ClaudeCockpit), with an optional value on the right.
@@ -81,6 +46,7 @@ struct DisclosureCard<Content: View>: View {
     let icon: String
     let iconColor: Color
     var value: String? = nil
+    var valueColor: Color? = nil
     @Binding var expanded: Bool
     @ViewBuilder var content: Content
 
@@ -97,12 +63,16 @@ struct DisclosureCard<Content: View>: View {
                     Text(title).font(.system(size: 14, weight: .semibold))
                     Spacer()
                     if let value {
-                        Text(value).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(value).font(.system(size: 12, weight: .medium)).foregroundStyle(valueColor ?? .secondary)
+                            .monospacedDigit().lineLimit(1)
                     }
-                    RowChevron(expanded: expanded)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
                 }
                 .padding(.horizontal, 14)
-                .frame(height: 40)
+                .frame(height: 46)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -116,48 +86,40 @@ struct DisclosureCard<Content: View>: View {
     }
 }
 
-/// "Label ……… value" row (ported from ClaudeCockpit).
-struct InfoRow: View {
-    let label: String
-    let value: String
-    var tint: Color? = nil
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).font(.system(size: 13)).foregroundStyle(.secondary)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(.system(size: 13, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(tint ?? .primary)
-        }
-        .padding(.vertical, 6)
-    }
-}
-
-/// Horizontal fill bar, like ClaudeCockpit's quota bar.
-struct UsageBar: View {
+/// Fill bar split by tick marks into equal segments, like Juicy's battery bar.
+struct SegmentedBar: View {
     /// 0…1.
     let fraction: Double
     let tint: Color
+    var segments = 4
 
     var body: some View {
         GeometryReader { geo in
+            let w = geo.size.width
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.track)
-                Capsule().fill(tint)
-                    .frame(width: max(8, geo.size.width * min(1, max(0, fraction))))
+                Capsule().fill(tint).frame(width: max(10, w * min(1, max(0, fraction))))
+                ForEach(1..<segments, id: \.self) { i in
+                    Rectangle()
+                        .fill(Color.black.opacity(0.28))
+                        .frame(width: 1, height: geo.size.height)
+                        .offset(x: w * CGFloat(i) / CGFloat(segments))
+                }
             }
+            .clipShape(Capsule())
         }
-        .frame(height: 8)
+        .frame(height: 10)
         .accessibilityElement()
         .accessibilityValue(Text(fraction.formatted(.percent.precision(.fractionLength(0)))))
     }
 }
 
-/// A large pill switch drawn in SwiftUI (no NSSwitch), in the spirit of a "Low Power Mode" toggle.
+/// A switch drawn in SwiftUI (no NSSwitch, so the tint is honoured and it renders in snapshots), sized
+/// like the native one by default, in the spirit of a "Low Power Mode" toggle.
 struct PillToggleStyle: ToggleStyle {
     var onColor: Color = Theme.local
+    var width: CGFloat = 40
+    var height: CGFloat = 24
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -168,31 +130,15 @@ struct PillToggleStyle: ToggleStyle {
                     .fill(configuration.isOn ? onColor : Theme.track)
                 Circle()
                     .fill(.white)
-                    .shadow(color: .black.opacity(0.22), radius: 1.5, y: 1)
-                    .padding(3)
+                    .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
+                    .padding(2)
             }
-            .frame(width: 54, height: 32)
+            .frame(width: width, height: height)
             .animation(.spring(response: 0.28, dampingFraction: 0.78), value: configuration.isOn)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         // VoiceOver sees a standard switch with the toggle's label.
         .accessibilityRepresentation { Toggle(isOn: configuration.$isOn) { configuration.label } }
-    }
-}
-
-/// Inline warning banner (ClaudeCockpit's `SourceBanner`, warning kind only).
-struct WarningBanner: View {
-    let message: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.orange)
-            Text(message).font(.system(size: 11)).foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .background(Theme.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

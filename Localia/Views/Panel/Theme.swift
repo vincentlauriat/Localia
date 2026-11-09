@@ -61,14 +61,3 @@ extension View {
         modifier(CardBackground(fill: fill, stroke: stroke))
     }
 }
-
-/// Uppercase tracked label above a value.
-struct SectionLabel: View {
-    let text: String
-    var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 11, weight: .medium))
-            .tracking(1.2)
-            .foregroundStyle(Theme.slate)
-    }
-}

@@ -70,6 +70,14 @@ final class PanelSnapshotTests: XCTestCase {
             await model.startEngine()
             await model.refreshAll()
             if v.on { await model.setLocalMode(true) }
+            if v.expanded {
+                // A real launch through the fakes, so the sessions card has something to list.
+                let folder = base.appendingPathComponent("project", isDirectory: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                await model.launch(folder: folder)
+                await model.refreshStatus()
+                XCTAssertEqual(model.runningSessions, [ModelKey(engine: .ollama, model: Self.served): 1])
+            }
             XCTAssertEqual(model.isLocalModeOn, v.on)
             XCTAssertNil(model.alert)
             XCTAssertEqual(model.launchModel, v.on ? Self.served : nil)
@@ -83,7 +91,7 @@ final class PanelSnapshotTests: XCTestCase {
                 let url = dir.appendingPathComponent("panel-\(v.name)-\(suffix)-\(lang).png")
                 let size = render(MenuBarPanel(model: model, windows: WindowManager(model: model),
                                                updater: Updater(enabled: false), scrolls: false,
-                                               launchExpanded: v.expanded, engineExpanded: v.expanded),
+                                               expansion: v.expanded ? .all : .init()),
                                   appearance: appearance, to: url)
                 XCTAssertGreaterThan(size.height, 300, url.lastPathComponent)
                 let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0

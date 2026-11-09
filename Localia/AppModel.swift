@@ -68,6 +68,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var heavyApps: [String] = []
     /// Served name of the model a launch would use now; nil when local mode is off.
     @Published private(set) var launchModel: String?
+    /// Localia sessions still running, per (engine, model).
+    @Published private(set) var runningSessions: [ModelKey: Int] = [:]
     /// True while local mode is being switched on or off.
     @Published private(set) var switchingLocalMode = false
     /// Selected tab of the Models window (0 Recommended, 1 Installed, 2 Downloads).
@@ -204,6 +206,7 @@ final class AppModel: ObservableObject {
     func refreshStatus() async {
         freeGB = deps.freeMemoryGB()
         heavyApps = deps.memoryGuard.check(requiredGB: 0, profile: profile)?.heavyApps ?? []
+        runningSessions = await tracker.sessionCounts()
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
