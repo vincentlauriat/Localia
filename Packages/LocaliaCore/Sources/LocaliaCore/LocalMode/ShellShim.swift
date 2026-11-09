@@ -150,7 +150,8 @@ public struct ShellShim: ShellShimming {
         return undo
     }
 
-    func blockText(shimFile: String) -> String {
+    /// The exact block `install()` appends to each rc file (`claude.zsh` for zsh, `claude.bash` for bash).
+    public func blockText(shimFile: String) -> String {
         let path = Self.doubleQuotedPath(shimDir.appendingPathComponent(shimFile).standardizedFileURL.path, home: home)
         return "\(Self.beginMarker)\n[ -f \(path) ] && source \(path)\n\(Self.endMarker)\n"
     }

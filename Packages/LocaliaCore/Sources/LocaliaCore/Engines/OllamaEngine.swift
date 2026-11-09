@@ -68,6 +68,9 @@ public actor OllamaEngine: Engine {
         ([managedBinary, appBinary] + systemBinaries).first(where: isExecutable)
     }
 
+    /// The `ollama` CLI (for `ollama run`), in the same order as the server binary.
+    public func cliBinary() -> URL? { serveBinary() }
+
     // MARK: - Install state
 
     public func installState() async -> InstallState {

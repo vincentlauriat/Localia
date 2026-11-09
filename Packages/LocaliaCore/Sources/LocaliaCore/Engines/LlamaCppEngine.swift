@@ -79,6 +79,12 @@ public actor LlamaCppEngine: Engine {
 
     private func serverBinary() -> URL? { Self.locate("llama-server", in: currentLink.resolvingSymlinksInPath()) }
 
+    /// `llama-cli` of the current build, for interactive chat.
+    public func cliBinary() -> URL? { Self.locate("llama-cli", in: currentLink.resolvingSymlinksInPath()) }
+
+    /// Absolute path of an installed model's (first) GGUF file, or nil.
+    public func modelFileURL(_ name: String) -> URL? { try? modelFile(name) }
+
     // MARK: - Install state
 
     public func installState() async -> InstallState {

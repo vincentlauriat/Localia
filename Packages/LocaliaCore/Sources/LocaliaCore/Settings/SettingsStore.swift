@@ -21,6 +21,9 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     @Published public var autoLocalWhenOffline: Bool { didSet { defaults.set(autoLocalWhenOffline, forKey: "autoLocalWhenOffline") } }
     @Published public var defaultModel: String? { didSet { defaults.set(defaultModel, forKey: "defaultModel") } }
     @Published public var lastModel: String? { didSet { defaults.set(lastModel, forKey: "lastModel") } }
+    /// Served model name (engine-specific) -> llmfit candidate id, so measurements and "installed"
+    /// status line up with recommendations.
+    @Published public var modelIDs: [String: String] { didSet { defaults.set(modelIDs, forKey: "modelIDs") } }
     @Published public var measurements: Measurements {
         didSet { defaults.set(try? JSONEncoder().encode(measurements), forKey: "measurements") }
     }
@@ -41,6 +44,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         autoLocalWhenOffline = defaults.bool(forKey: "autoLocalWhenOffline")
         defaultModel = defaults.string(forKey: "defaultModel")
         lastModel = defaults.string(forKey: "lastModel")
+        modelIDs = defaults.dictionary(forKey: "modelIDs") as? [String: String] ?? [:]
         measurements = defaults.data(forKey: "measurements")
             .flatMap { try? JSONDecoder().decode(Measurements.self, from: $0) } ?? Measurements()
     }
