@@ -1,0 +1,46 @@
+name: Localia
+options:
+  bundleIdPrefix: fr.vincentlauriat
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  LocaliaCore:
+    path: Packages/LocaliaCore
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
+targets:
+  Localia:
+    type: application
+    platform: macOS
+    sources:
+      - path: Localia
+        excludes:
+          - Info.plist
+          - Localia.entitlements
+    dependencies:
+      - package: LocaliaCore
+      - package: Sparkle
+    info:
+      path: Localia/Info.plist
+      properties:
+        CFBundleName: Localia
+        CFBundleDisplayName: Localia
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+    entitlements:
+      path: Localia/Localia.entitlements
+      properties: {}
+    settings:
+      base:
+        PRODUCT_NAME: Localia
+        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        GENERATE_INFOPLIST_FILE: NO
