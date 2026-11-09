@@ -182,25 +182,9 @@ public actor OllamaEngine: Engine {
 
     public func isServing() async -> Bool { await serverVersion() != nil }
 
-    private var pidFile: URL { Paths.engines(base: appSupportBase).appendingPathComponent("ollama-serve.pid") }
-    private struct PIDRecord: Codable { let pid: Int32; let path: String }
-
-    /// pid of a still-running server that Localia launched earlier (possibly before an app restart).
-    /// The record is trusted only if the live process runs the very executable Localia launched.
-    private func recordedOwnPID() -> Int32? {
-        guard let data = try? Data(contentsOf: pidFile),
-              let rec = try? JSONDecoder().decode(PIDRecord.self, from: data) else {
-            try? FileManager.default.removeItem(at: pidFile)
-            return nil
-        }
-        if inspector.isAlive(rec.pid), inspector.executablePath(rec.pid) == rec.path { return rec.pid }
-        try? FileManager.default.removeItem(at: pidFile)   // stale: dead pid or pid reused by another program
-        return nil
-    }
-
-    private func writePIDRecord(pid: Int32, binary: URL) {
-        let rec = PIDRecord(pid: pid, path: binary.resolvingSymlinksInPath().path)
-        if let data = try? JSONEncoder().encode(rec) { try? data.write(to: pidFile, options: .atomic) }
+    private var record: OwnServerRecord {
+        OwnServerRecord(file: Paths.engines(base: appSupportBase).appendingPathComponent("ollama-serve.pid"),
+                        inspector: inspector, pollInterval: pollInterval, exitTimeout: exitTimeout, killAfter: killAfter)
     }
 
     public func startServing() async throws {
@@ -209,7 +193,7 @@ public actor OllamaEngine: Engine {
             try await waitUntilServing()
             return
         }
-        if recordedOwnPID() != nil {      // our server from a previous app run, still starting
+        if record.recordedPID() != nil {      // our server from a previous app run, still starting
             try await waitUntilServing()
             return
         }
@@ -218,7 +202,7 @@ public actor OllamaEngine: Engine {
         env["OLLAMA_HOST"] = "127.0.0.1:\(LocaliaConstants.ollamaPort)"
         let handle = try launcher.launch(executable: bin, arguments: ["serve"], environment: env)
         ownServer = handle
-        writePIDRecord(pid: handle.pid, binary: bin)
+        record.write(pid: handle.pid, binary: bin)
         do { try await waitUntilServing() } catch {
             try? await stopServing()
             throw error
@@ -239,19 +223,7 @@ public actor OllamaEngine: Engine {
     public func stopServing() async throws {
         let handle = ownServer
         ownServer = nil
-        let pid = handle?.pid ?? recordedOwnPID()
-        guard let pid else { return }
-        func running() -> Bool { handle?.isRunning ?? inspector.isAlive(pid) }
-        if let handle { handle.terminate() } else { inspector.signal(pid, SIGTERM) }
-        let start = Date()
-        var killed = false
-        while running(), Date().timeIntervalSince(start) < exitTimeout {
-            if !killed, Date().timeIntervalSince(start) >= killAfter {
-                inspector.signal(pid, SIGKILL); killed = true
-            }
-            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
-        }
-        try? FileManager.default.removeItem(at: pidFile)
+        try await record.stop(handle: handle)
     }
 
     // MARK: - Models

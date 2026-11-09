@@ -204,3 +204,26 @@ Ollama model was unloaded. Spike 2 stays: tool call unproven (FAIL with the 1.5B
 To close it, a tool-capable GGUF must be downloaded (for example a Qwen2.5-Coder-7B or gemma GGUF
 from unsloth, several GB) with Vincent's approval, or Ollama's `ollama create` could export one
 (not possible for safetensors models without conversion). Generation speed was not measured.
+
+## Spike 2 closed with a capable model: Qwen2.5-Coder-7B-Instruct Q4_K_M (FAIL, 3/3 attempts)
+
+Task 7 live test (`LOCALIA_LIVE=1`, `LlamaCppLiveTests`): llama.cpp `b12230` installed by `LlamaCppEngine`
+into a temp base, `unsloth/Qwen2.5-Coder-7B-Instruct-GGUF` `Q4_K_M` pulled (sha256-verified), served with
+`-m <file> -c 65536 -np 1 --jinja --host 127.0.0.1 --port 11435`, `/health` 200.
+
+- Speed: `/completion` `timings.predicted_per_second` = 11.1 tok/s (prompt 26.7 tok/s, cold). Below the 15 tok/s floor.
+- Claude Code `-p "create hello.txt containing hi" --permission-mode acceptEdits --bare --strict-mcp-config`:
+  **no hello.txt in 3 attempts**. Every attempt printed the intended tool call as text in a code fence,
+  e.g. ```` ```json {"name": "Edit", "arguments": {"file_path": ".../hello.txt", "old_string": "", "new_string": "hi"}} ``` ````.
+  llama-server returned it as a plain `text` block, never as `tool_use`, so Claude Code ran nothing.
+- Isolated with curl, one tiny `Write` tool: `/v1/messages` returned `stop_reason: end_turn` and
+  `{"type":"text","text":"```xml\n<function name=\"Write\" arguments='{\"file_path\": \"hello.txt\", \"content\": \"hi\"}' />\n```"}`;
+  `/v1/chat/completions` returned `"content":"```xml\n{\"name\": \"Write\", ...}\n```"` with no `tool_calls`.
+  So the failure is not Claude Code's large prompt: the model (with this GGUF's template) does not emit the
+  `<tool_call>` format that llama-server's `--jinja` parser extracts.
+- Verdict: tool calls through llama-server with this model do **not** work. The pipeline itself
+  (install, pull, serve, `/v1/messages`) works; the open question is the model/template pair, not the engine.
+  Also: the served model id is the full GGUF path (no `--alias`), so `ANTHROPIC_MODEL` must be read from
+  `/v1/models`; Claude Code warns "doesn't recognize the model" (assumes a 200k window) for that id.
+- Archive layout: `llama-<tag>-bin-macos-arm64.tar.gz` extracts to a single top-level `llama-<tag>/` holding
+  `llama-server`, `llama-cli` and the `.dylib` files side by side (no `build/bin/`).
