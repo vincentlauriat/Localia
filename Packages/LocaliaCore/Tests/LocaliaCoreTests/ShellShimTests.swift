@@ -478,6 +478,49 @@ final class ShellShimTests: XCTestCase {
         XCTAssertEqual(try backups(of: bashrc).count, 0)
     }
 
+    // MARK: final review I2 — engine-aware start wait
+
+    func test_stateFile_startWaitIsEngineAware() throws {
+        try installAndState(on: true, engine: .llamaCpp)
+        XCTAssertTrue(read("Library/Application Support/Localia/shell/state.env")?.contains("\nwait=90\n") ?? false)
+        try installAndState(on: true, engine: .ollama)
+        XCTAssertTrue(read("Library/Application Support/Localia/shell/state.env")?.contains("\nwait=20\n") ?? false)
+    }
+
+    private func autoStartState(wait: [String]) throws {
+        try shim().install()
+        let lines = ["on=1", "probe=http://127.0.0.1:11434/health", "policy=autoStart",
+                     "start=localia://start?model=m"] + wait.map { "wait=" + $0 }
+        try (lines.joined(separator: "\n") + "\n").write(to: shimDir.appendingPathComponent("state.env"),
+                                                         atomically: true, encoding: .utf8)
+    }
+
+    func test_shim_waitsAsLongAsTheStateSays() throws {
+        try autoStartState(wait: ["1"])
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertTrue(r.stderr.contains("did not start within 1 s"), "\(shell): \(r.stderr)")
+            XCTAssertLessThan(r.seconds, 6, shell)
+        }
+    }
+
+    func test_shim_waitValueIsDataNotCode() throws {
+        touch("open_heals")
+        // One payload per run: a later valid line would otherwise hide an earlier one.
+        let payloads = ["$(touch \"$HOME/pwned1\")", "a[$(touch \"$HOME/pwned2\")]", "x[`touch \"$HOME/pwned3\"`]",
+                        "08", "0", "99999", "1 + 1"]
+        for payload in payloads {
+            try autoStartState(wait: [payload])
+            for shell in ["zsh", "bash"] {
+                try? FileManager.default.removeItem(at: home.appendingPathComponent("healthy"))
+                let r = try run(shell, ["q"])
+                XCTAssertEqual(r.status, 7, "\(shell) \(payload): \(r.stderr)")
+            }
+        }
+        for n in 1...3 { XCTAssertNil(read("pwned\(n)"), "pwned\(n)") }
+    }
+
     func test_shimToolsAreAliasProof() throws {
         try installAndState(on: true, policy: .autoStart)
         for name in ["claude.zsh", "claude.bash"] {
