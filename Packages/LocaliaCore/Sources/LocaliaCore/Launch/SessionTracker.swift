@@ -12,11 +12,25 @@ public struct FinishedSession: Equatable, Sendable {
     public let model: String
 }
 
+/// A session still running: what it runs on and where. `folder` is nil when the launcher did not say.
+public struct RunningSession: Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public let engine: EngineID
+    public let model: String
+    public let folder: URL?
+    public init(id: UUID, engine: EngineID, model: String, folder: URL?) {
+        self.id = id; self.engine = engine; self.model = model; self.folder = folder
+    }
+}
+
 /// Watches `<statusDir>/<id>.done` files written by launch scripts. The caller unloads a model
 /// when a finished session's (engine, model) is no longer in `modelsStillInUse()`.
 public actor SessionTracker {
     private let statusDir: URL
     private var sessions: [UUID: ModelKey] = [:]
+    /// Folder and start order of each running session, for display only.
+    private var details: [UUID: (folder: URL?, order: Int)] = [:]
+    private var nextOrder = 0
 
     /// Removes launch scripts and status files older than `maxAge` (leftovers of earlier runs).
     public init(statusDir: URL, maxAge: TimeInterval = 24 * 3600, now: Date = Date()) {
@@ -34,10 +48,12 @@ public actor SessionTracker {
         return n.hasSuffix(".command") || n.hasSuffix(".done") || n.hasSuffix(".done.tmp")
     }
 
-    public func begin(id: UUID, engine: EngineID, model: String) {
+    public func begin(id: UUID, engine: EngineID, model: String, folder: URL? = nil) {
         // A stale file from a previous run must not end the new session.
         try? FileManager.default.removeItem(at: file(id, "done"))
         sessions[id] = ModelKey(engine: engine, model: model)
+        details[id] = (folder, nextOrder)
+        nextOrder += 1
     }
 
     /// Sessions whose `.done` file appeared since the last call. They are forgotten and their
@@ -47,6 +63,7 @@ public actor SessionTracker {
         var out: [FinishedSession] = []
         for id in ids {
             guard let key = sessions.removeValue(forKey: id) else { continue }
+            details.removeValue(forKey: id)
             for ext in ["done", "done.tmp", "command"] { try? FileManager.default.removeItem(at: file(id, ext)) }
             out.append(FinishedSession(id: id, engine: key.engine, model: key.model))
         }
@@ -55,9 +72,10 @@ public actor SessionTracker {
 
     public func modelsStillInUse() -> Set<ModelKey> { Set(sessions.values) }
 
-    /// Number of running sessions per (engine, model).
-    public func sessionCounts() -> [ModelKey: Int] {
-        sessions.values.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+    /// Sessions still running, oldest first.
+    public func runningSessions() -> [RunningSession] {
+        sessions.map { id, key in RunningSession(id: id, engine: key.engine, model: key.model, folder: details[id]?.folder) }
+            .sorted { (details[$0.id]?.order ?? 0) < (details[$1.id]?.order ?? 0) }
     }
 
     private func file(_ id: UUID, _ ext: String) -> URL {
