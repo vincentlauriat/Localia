@@ -177,6 +177,9 @@ public actor LlamaCppEngine: Engine {
         guard serverBinary() != nil else { throw EngineError.notInstalled }
     }
 
+    /// pid of the `llama-server` Localia launched (this run or an earlier one), for memory measurement.
+    public func serverPID() -> Int32? { ownServer?.pid ?? record.recordedPID() }
+
     public func stopServing() async throws {
         let handle = ownServer
         ownServer = nil
