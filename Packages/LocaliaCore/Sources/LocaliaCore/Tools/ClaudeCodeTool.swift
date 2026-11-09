@@ -82,6 +82,9 @@ public struct ClaudeCodeTool: CodingTool {
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": model,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            // Unknown local models are assumed to have a 200k window; the servers run 65536.
+            // Auto-compact must fire inside the real window (it never raises above the model window).
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": String(LocaliaConstants.localContextTokens),
         ]
         command.unsetEnvironment = ["ANTHROPIC_AUTH_TOKEN"]
         if profile == .light {

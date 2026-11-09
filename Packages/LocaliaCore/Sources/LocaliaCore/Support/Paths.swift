@@ -13,6 +13,7 @@ public struct Paths {
     public static func claudeConfig(base: URL? = nil) -> URL { sub("claude-config", base) }
     public static func shell(base: URL? = nil) -> URL { sub("shell", base) }
     public static func logs(base: URL? = nil) -> URL { sub("logs", base) }
+    public static func sessions(base: URL? = nil) -> URL { sub("sessions", base) }
 
     private static func sub(_ name: String, _ base: URL?) -> URL {
         ensure(appSupport(base: base).appendingPathComponent(name, isDirectory: true))

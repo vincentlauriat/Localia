@@ -63,6 +63,7 @@ final class ClaudeCodeToolTests: XCTestCase {
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemma4-code",
             "CLAUDE_CODE_SUBAGENT_MODEL": "gemma4-code",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "65536",
             "CLAUDE_CONFIG_DIR": cfg.path,
         ])
         XCTAssertEqual(c.unsetEnvironment, ["ANTHROPIC_AUTH_TOKEN"])
