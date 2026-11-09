@@ -76,6 +76,8 @@ targets:
         # into the source tree (Localia/Resources); both are blocked by the user-script sandbox.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         GENERATE_INFOPLIST_FILE: NO
+        # Logo teal (#045A54, #4FD1C5 in dark mode), kept in sync with Theme.accent.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
   LocaliaTests:
