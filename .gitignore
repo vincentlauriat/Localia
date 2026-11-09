@@ -9,3 +9,10 @@ release/
 .DS_Store
 vendor/
 .superpowers/
+*.xcodeproj/xcuserdata
+Localia.xcodeproj/
+.build/
+Localia/Resources/llmfit
+build/
+.dmgbuild-venv/
+.sparkle-tools/

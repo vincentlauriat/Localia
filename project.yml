@@ -1,0 +1,109 @@
+name: Localia
+options:
+  # llmfit must exist before generation: the copy phase is planned from files present at build start.
+  preGenCommand: Scripts/fetch-llmfit.sh
+  bundleIdPrefix: fr.vincentlauriat
+  developmentLanguage: en
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  LocaliaCore:
+    path: Packages/LocaliaCore
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
+targets:
+  Localia:
+    type: application
+    platform: macOS
+    sources:
+      - path: Localia
+        excludes:
+          - Info.plist
+          - Localia.entitlements
+          - Resources/llmfit
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: Localia/Resources/llmfit
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Helpers
+            phaseOrder: postCompile
+        attributes: [CodeSignOnCopy]
+    preBuildScripts:
+      - name: Fetch llmfit (pinned, SHA-256 verified)
+        script: |
+          "$SRCROOT/Scripts/fetch-llmfit.sh"
+        inputFiles:
+          - $(SRCROOT)/Scripts/fetch-llmfit.sh
+        outputFiles:
+          - $(SRCROOT)/Localia/Resources/llmfit
+    dependencies:
+      - package: LocaliaCore
+      - package: Sparkle
+    info:
+      path: Localia/Info.plist
+      properties:
+        CFBundleName: Localia
+        CFBundleDisplayName: Localia
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+        SUFeedURL: https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml
+        # EdDSA public key for Sparkle updates. Empty until Vincent generates the key
+        # (see README, "Releasing"). Never commit the private key.
+        SUPublicEDKey: ""
+        SUEnableAutomaticChecks: true
+        CFBundleURLTypes:
+          - CFBundleURLName: fr.vincentlauriat.localia
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - localia
+    entitlements:
+      path: Localia/Localia.entitlements
+      properties: {}
+    settings:
+      base:
+        PRODUCT_NAME: Localia
+        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        # The pre-build phase runs Scripts/fetch-llmfit.sh, which needs the network and writes
+        # into the source tree (Localia/Resources); both are blocked by the user-script sandbox.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GENERATE_INFOPLIST_FILE: NO
+        # Logo teal (#045A54, #4FD1C5 in dark mode), kept in sync with Theme.accent.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+  LocaliaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: LocaliaTests
+    dependencies:
+      - target: Localia
+      - package: LocaliaCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia.tests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Localia.app/Contents/MacOS/Localia"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  Localia:
+    build:
+      targets:
+        Localia: all
+        LocaliaTests: [test]
+    test:
+      targets:
+        - LocaliaTests
+      gatherCoverageData: false
