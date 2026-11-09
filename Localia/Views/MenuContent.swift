@@ -27,6 +27,7 @@ struct MenuBarIcon: View {
 struct MenuContent: View {
     @ObservedObject var model: AppModel
     let windows: WindowManager
+    let updater: Updater
 
     var body: some View {
         Text(model.statusLine)
@@ -73,6 +74,9 @@ struct MenuContent: View {
         Divider()
         Button(String(localized: "Settings…")) { windows.show(.settings) }
             .keyboardShortcut(",")
+        Button(updater.isAvailable ? String(localized: "Check for Updates…")
+                                   : String(localized: "Updates Unavailable in This Build")) { updater.checkForUpdates() }
+            .disabled(!updater.isAvailable)
         Button(String(localized: "About Localia")) { windows.show(.about) }
         Button(String(localized: "Quit Localia")) { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")

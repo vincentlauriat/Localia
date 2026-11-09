@@ -55,11 +55,13 @@ The build runs `Scripts/fetch-llmfit.sh`, which downloads the pinned llmfit rele
 
 `./Scripts/release.sh [version]` builds, signs (`llmfit` first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
 
+Notarization uses the shared keychain profile `AppliMacVincentGithub`. It may exist only on the other Mac (minim6); check with `xcrun notarytool history --keychain-profile AppliMacVincentGithub`. If it is missing, recreate it with `xcrun notarytool store-credentials AppliMacVincentGithub --apple-id <your-apple-id> --team-id KFLACS69T9` (the command prompts for an app-specific password).
+
 Sparkle updates read `https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml`. Before the first public release:
 
 1. Generate the Sparkle EdDSA key once (`generate_keys --account Localia`, from the Sparkle tools). The private key stays in the login keychain; back it up and never regenerate it.
 2. Put the printed public key in `SUPublicEDKey` in `project.yml`.
-3. Run the release with `SPARKLE_ACCOUNT=Localia` to get a signed `release/appcast.xml` item, then merge it into `appcast.xml`.
+3. Run the release with `SPARKLE_ACCOUNT=Localia` to get a signed `release/appcast.xml` item, then merge it into `appcast.xml`. While `SUPublicEDKey` is empty the app never starts the updater and "Check for Updates…" is disabled.
 
 ## Credits
 

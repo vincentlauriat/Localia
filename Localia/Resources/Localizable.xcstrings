@@ -321,6 +321,22 @@
         }
       }
     },
+    "Check for Updates…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher des mises à jour…"
+          }
+        }
+      }
+    },
     "Choose a Folder…": {
       "localizations": {
         "en": {
@@ -2285,6 +2301,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mettre à jour llmfit"
+          }
+        }
+      }
+    },
+    "Updates Unavailable in This Build": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates Unavailable in This Build"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mises à jour indisponibles dans cette version"
           }
         }
       }

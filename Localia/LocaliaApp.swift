@@ -8,7 +8,7 @@ struct LocaliaApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(model: delegate.model, windows: delegate.windows)
+            MenuContent(model: delegate.model, windows: delegate.windows, updater: delegate.updater)
         } label: {
             MenuBarIcon(model: delegate.model)
         }
@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let model: AppModel
     let windows: WindowManager
+    let updater: Updater
     private var shuttingDown = false
 
     override init() {
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = AppModel(deps: deps, confirmMemory: { warning in MemoryAlert.confirm(warning) })
         self.model = model
         self.windows = WindowManager(model: model)
+        self.updater = Updater(enabled: !Self.isRunningTests)
         super.init()
     }
 
