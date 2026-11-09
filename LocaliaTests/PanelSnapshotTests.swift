@@ -115,10 +115,29 @@ final class PanelSnapshotTests: XCTestCase {
         }
     }
 
+    /// The menu-bar icons come from the asset catalog (not an empty fallback), as templates with a label.
+    func testMenuBarIconsComeFromTheAssetCatalog() throws {
+        for on in [false, true] {
+            let image = MenuBarIcon.image(on: on)
+            XCTAssertGreaterThan(image.size.width, 0)
+            XCTAssertTrue(image.isTemplate)
+            XCTAssertEqual(image.accessibilityDescription,
+                           on ? String(localized: "Localia, local mode on") : String(localized: "Localia, local mode off"))
+            // A 4x bitmap of each, on light and dark, so the shapes can be checked by eye.
+            for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                let url = outputDir.appendingPathComponent("menubar-\(on ? "filled" : "outline")-\(suffix).png")
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+                let view = Image(nsImage: image).resizable().frame(width: 72, height: 72).padding(12)
+                    .foregroundStyle(.primary)
+                render(view, appearance: appearance, to: url)
+            }
+        }
+    }
+
     /// Hosts the view in an off-screen window with the given appearance (so `NSColor(name:)` colours resolve
     /// for it) and writes the window's content as a 2x PNG.
     @discardableResult
-    private func render(_ panel: MenuBarPanel, appearance: NSAppearance.Name, to url: URL) -> CGSize {
+    private func render(_ panel: some View, appearance: NSAppearance.Name, to url: URL) -> CGSize {
         let root = panel.background(Color(nsColor: .windowBackgroundColor))
         let hosting = NSHostingView(rootView: root)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Theme.panelWidth, height: 600),

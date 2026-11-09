@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Version and the credits from the bundled `THIRD_PARTY_NOTICES.md`.
@@ -34,7 +35,10 @@ struct AboutView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Image(systemName: "cpu.fill").font(.system(size: 36)).foregroundStyle(Color.accentColor)
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading) {
                     Text("Localia").font(.title.weight(.semibold))
                     Text(version).foregroundStyle(.secondary)

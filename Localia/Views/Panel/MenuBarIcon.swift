@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The menu-bar icon: `cpu` when local mode is off, an accent-tinted `cpu.fill` when on.
+/// The menu-bar icon: the Localia mark, outlined when local mode is off and filled when on.
 struct MenuBarIcon: View {
     @ObservedObject var model: AppModel
 
@@ -10,15 +10,11 @@ struct MenuBarIcon: View {
     }
 
     static func image(on: Bool) -> NSImage {
-        let name = on ? "cpu.fill" : "cpu"
         let label = on ? String(localized: "Localia, local mode on") : String(localized: "Localia, local mode off")
-        guard var image = NSImage(systemSymbolName: name, accessibilityDescription: label) else { return NSImage() }
-        if on, let tinted = image.withSymbolConfiguration(.init(paletteColors: [.controlAccentColor])) {
-            image = tinted
-            image.isTemplate = false
-        } else {
-            image.isTemplate = true
-        }
+        let image = NSImage(named: on ? "MenuBarFilled" : "MenuBarOutline") ?? NSImage()
+        // A template, untinted: the menu bar colours it, and the filled shape carries the state.
+        image.isTemplate = true
+        image.accessibilityDescription = label
         return image
     }
 }

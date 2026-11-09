@@ -141,10 +141,14 @@ struct MenuBarPanel: View {
                                              ? String(localized: "Estimated speed") : String(localized: "Speed")))
 
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "cpu.fill")
-                            .font(.system(size: 14, weight: .semibold))
+                        Image("MenuBarFilled")
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
                             .foregroundStyle(Theme.accent)
+                            .frame(width: 16, height: 16)
                             .frame(width: 18)
+                            .accessibilityHidden(true)
                         Text(heroLine(served))
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(3)
