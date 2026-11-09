@@ -65,7 +65,7 @@ struct AppDependencies {
     var claudeConfigDir: URL
     var llmfit: LlmfitManager
     /// Best-effort: is there a Claude login for cloud sessions (spec 6.4)? Only ever a hint.
-    var hasCloudLogin: @Sendable () -> Bool
+    var hasCloudLogin: @Sendable () async -> Bool
     /// Shows an alert raised by background work (no window to attach it to).
     var notify: @MainActor (AppAlert) -> Void
 
@@ -94,10 +94,14 @@ struct AppDependencies {
             claudeConfigDir: Paths.claudeConfig(),
             llmfit: llmfit,
             hasCloudLogin: {
-                let env = ProcessInfo.processInfo.environment
-                let dir = env["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-                    ?? FileManager.default.homeDirectoryForCurrentUser
-                return ClaudeCodeTool.hasCloudLogin(claudeJSON: dir.appendingPathComponent(".claude.json"), environment: env)
+                // File read off the main actor; read only.
+                await Task.detached(priority: .utility) {
+                    let env = ProcessInfo.processInfo.environment
+                    let dir = env["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+                        ?? FileManager.default.homeDirectoryForCurrentUser
+                    return ClaudeCodeTool.hasCloudLogin(claudeJSON: dir.appendingPathComponent(".claude.json"),
+                                                        environment: env)
+                }.value
             },
             notify: { a in
                 let alert = NSAlert()

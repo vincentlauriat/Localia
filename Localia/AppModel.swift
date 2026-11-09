@@ -152,7 +152,7 @@ final class AppModel: ObservableObject {
     func shutdown() async {
         pollTask?.cancel(); statusTask?.cancel(); pathMonitor?.cancel()
         for t in downloadTasks.values { t.cancel() }
-        let inUse = await tracker.modelsStillInUse()
+        let inUse = Set(await busyKeys())
         for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
             if let e = await registry.engine(key.engine) { try? await e.unload(key.model) }
         }
@@ -414,7 +414,7 @@ final class AppModel: ObservableObject {
             }
             recent.add(folder)
             if session != nil { startPolling() }
-            if case .cloud = target, !deps.hasCloudLogin() { alert = noCloudLoginAlert() }
+            if case .cloud = target, !(await deps.hasCloudLogin()) { alert = noCloudLoginAlert() }
         } catch {
             show(error, title: String(localized: "Could not open the terminal"))
         }
@@ -505,7 +505,7 @@ final class AppModel: ObservableObject {
     /// Unloads a model this launch loaded when the launch failed before any session could own it.
     private func undoLoad(_ key: ModelKey?) async {
         guard let key, loadedByLocalia.contains(key),
-              !(await tracker.modelsStillInUse().contains(key)),
+              !(await busyKeys(excluding: key).contains(key)),   // another session or launch on it
               let e = await registry.engine(key.engine) else { return }
         do { try await e.unload(key.model) } catch {
             log.error("unload after failed launch: \(String(describing: error), privacy: .public)")
@@ -554,7 +554,7 @@ final class AppModel: ObservableObject {
     func pollSessions() async {
         let finished = await tracker.pollFinished()
         guard !finished.isEmpty else { return }
-        let inUse = await tracker.modelsStillInUse()
+        let inUse = Set(await busyKeys())   // a launch still starting on the model counts as a user
         for f in finished {
             let key = ModelKey(engine: f.engine, model: f.model)
             guard !inUse.contains(key), loadedByLocalia.contains(key),
@@ -625,7 +625,7 @@ final class AppModel: ObservableObject {
     /// Unloads every model Localia loaded that no session still uses, and stops Localia's own llama-server
     /// (also one recorded before an app restart) when no session uses it: it holds its model while it runs.
     func freeMemory() async {
-        let inUse = await tracker.modelsStillInUse()
+        let inUse = Set(await busyKeys())   // sessions and launches / measurements still loading
         for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
             if let e = await registry.engine(key.engine) { try? await e.unload(key.model) }
             loadedByLocalia.remove(key)
@@ -645,7 +645,7 @@ final class AppModel: ObservableObject {
 
     func stopEngine() async {
         guard let e = await registry.active else { return }
-        if await tracker.modelsStillInUse().contains(where: { $0.engine == e.id }) {
+        if await engineInUse(e.id) {
             alert = AppAlert(title: String(localized: "Engine in use"),
                              message: String(localized: "A Claude Code session still uses this engine."))
             return
@@ -692,6 +692,10 @@ final class AppModel: ObservableObject {
                 log.notice("localia://start: not loading, a session uses \(other.model, privacy: .public) on llama.cpp")
                 return
             }
+            // The shim's load owns llama-server while it runs, like a launch does.
+            let key = ModelKey(engine: engine.id, model: model)
+            if engine.id == .llamaCpp { llamaPending.append(key) }
+            defer { if engine.id == .llamaCpp { release(key) } }
             let needed = requiredGB(for: model, engine: engine.id, fileSizeGB: entry.sizeGB)
             // Headless: only a real shortfall stops the load. Heavy apps alone are worth a log line, not a block.
             if let w = deps.memoryGuard.check(requiredGB: needed, profile: profile) {
@@ -703,7 +707,7 @@ final class AppModel: ObservableObject {
             }
             try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
             await forgetReplaced(on: engine)
-            loadedForShim.insert(ModelKey(engine: engine.id, model: model))
+            loadedForShim.insert(key)
         } catch {
             log.error("localia://start failed: \(String(describing: error), privacy: .public)")
         }

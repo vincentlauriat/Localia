@@ -376,6 +376,84 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(loads, ["X"], "Y never replaced the server of the launch in flight")
     }
 
+    // MARK: Pass 2
+
+    private func waitFor(_ cond: () async -> Bool) async throws {
+        for _ in 0..<300 where !(await cond()) { try await Task.sleep(nanoseconds: 10_000_000) }
+    }
+
+    /// N1: Free Memory never stops the llama-server a launch is still loading.
+    func test_freeMemory_leavesAnInFlightLaunchAlone() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.setLocalMode(true)
+        await llama.holdLoads()
+        let f = try folder()
+        let launch = Task { await model.launch(folder: f) }
+        try await waitFor { await !llama.loads.isEmpty }
+        await model.freeMemory()
+        let stops = await llama.stopCount, unloads = await llama.unloads
+        XCTAssertEqual(stops, 0)
+        XCTAssertEqual(unloads, [])
+        await llama.releaseLoads()
+        await launch.value
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+    }
+
+    /// N2: session A ends while launch B on the same model is still starting: the model stays loaded.
+    func test_sessionEnd_doesNotUnloadAModelALaunchIsStartingOn() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.setLocalMode(true)
+        let f = try folder()
+        await model.launch(folder: f)   // A on X, loaded by Localia
+        await llama.holdStarts()
+        let starts = await llama.startCount
+        let launchB = Task { await model.launch(folder: f) }
+        try await waitFor { await llama.startCount > starts }
+        try "0\n".write(to: terminal.opened[0].url.deletingPathExtension().appendingPathExtension("done"),
+                        atomically: true, encoding: .utf8)
+        await model.pollSessions()
+        var unloads = await llama.unloads
+        XCTAssertEqual(unloads, [], "B is about to use X")
+        await llama.releaseStarts()
+        await launchB.value
+        XCTAssertEqual(terminal.opened.count, 2)
+        try "0\n".write(to: terminal.opened[1].url.deletingPathExtension().appendingPathExtension("done"),
+                        atomically: true, encoding: .utf8)
+        await model.pollSessions()
+        unloads = await llama.unloads
+        XCTAssertEqual(unloads, ["X"], "the last user gone, Localia's model is unloaded")
+    }
+
+    /// N3: while the shim's load of X runs, a Localia launch on another llama.cpp model is refused.
+    func test_launchOnAnotherModel_refusedWhileTheShimLoads() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: llama, terminal: terminal) { $0.lastModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.setLocalMode(true)
+        await llama.holdLoads()
+        let start = Task { await model.handleStart(model: "X") }
+        try await waitFor { await !llama.loads.isEmpty }
+        model.settings.lastModel = "Y"
+        let f = try folder()
+        let launch = Task { await model.launch(folder: f) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNotNil(model.alert)
+        await llama.releaseLoads()
+        await start.value
+        await launch.value
+        let loads = await llama.loads
+        XCTAssertEqual(loads, ["X"])
+        XCTAssertTrue(terminal.opened.isEmpty)
+    }
+
     /// I2: heavy apps alone do not block the shim's headless start; only a real memory shortfall does.
     func test_startURL_heavyAppsAlone_stillLoads() async throws {
         let engine = FakeEngine(installed: ["m1"])
@@ -484,6 +562,8 @@ actor FakeEngine: Engine {
     /// llama.cpp semantics: one model at a time, a load replaces it.
     private let singleModel: Bool
     private var holding = false
+    private var holdingStarts = false
+    private var heldStarts: [CheckedContinuation<Void, Never>] = []
     private var held: [CheckedContinuation<Void, Never>] = []
 
     init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false) {
@@ -495,7 +575,13 @@ actor FakeEngine: Engine {
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
     func uninstall() async throws {}
     func isServing() async -> Bool { startCount > 0 }
-    func startServing() async throws { startCount += 1 }
+    func startServing() async throws {
+        startCount += 1
+        if holdingStarts { await withCheckedContinuation { heldStarts.append($0) } }
+    }
+    /// Until `releaseStarts()`, startServing is counted and then suspended.
+    func holdStarts() { holdingStarts = true }
+    func releaseStarts() { holdingStarts = false; heldStarts.forEach { $0.resume() }; heldStarts = [] }
     func stopServing() async throws { stopCount += 1 }
     func installedModels() async throws -> [InstalledModel] {
         if failInstalled { throw EngineError.http(0) }
