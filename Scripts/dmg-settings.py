@@ -1,9 +1,7 @@
 # dmgbuild settings for the release DMG, read by Scripts/release.sh.
 #
 # dmgbuild writes the Finder layout (.DS_Store) itself, so the DMG gets its
-# background and icon positions without scripting Finder. The AppleScript this
-# replaces could not send Apple Events from every shell, and silently shipped
-# 1.1.3 and 1.1.4 without a layout.
+# background and icon positions without scripting Finder.
 #
 # Values come in through `-D`: app (the signed .app) and background (the PNG
 # made by make-dmg-background.swift, 144 dpi so it fills the window on Retina).

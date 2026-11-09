@@ -37,7 +37,7 @@ The menu toggle switches local mode on and off. Its scope is a setting:
   # <<< localia <<<
   ```
 
-  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Turning the scope off, or uninstalling, removes exactly this block and nothing else. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message.
+  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching the scope back to "Localia sessions only" removes exactly this block and nothing else. Deleting the app does not: switch the scope back first, or delete the block by hand. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message.
 
 With local mode off, `claude` runs exactly as before.
 
@@ -57,7 +57,7 @@ The build runs `Scripts/fetch-llmfit.sh`, which downloads the pinned llmfit rele
 
 Notarization uses the shared keychain profile `AppliMacVincentGithub`. It may exist only on the other Mac (minim6); check with `xcrun notarytool history --keychain-profile AppliMacVincentGithub`. If it is missing, recreate it with `xcrun notarytool store-credentials AppliMacVincentGithub --apple-id <your-apple-id> --team-id KFLACS69T9` (the command prompts for an app-specific password).
 
-Sparkle updates read `https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml`. Before the first public release:
+Sparkle updates read `https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml`. Before the first public release (distributable releases need `BUILD_NUMBER=<n>`, the main branch and a non-empty `SUPublicEDKey`; `ALLOW_NO_UPDATES=1` overrides the key check):
 
 1. Generate the Sparkle EdDSA key once (`generate_keys --account Localia`, from the Sparkle tools). The private key stays in the login keychain; back it up and never regenerate it.
 2. Put the printed public key in `SUPublicEDKey` in `project.yml`.

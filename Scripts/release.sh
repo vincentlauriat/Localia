@@ -8,6 +8,8 @@
 #   - Developer ID Application: Vincent LAURIAT (KFLACS69T9)
 #   - notarytool keychain profile "AppliMacVincentGithub"
 # Overridable via env: SIGNING_IDENTITY, NOTARY_PROFILE, SPARKLE_ACCOUNT.
+# Distributable releases (NOTARIZE != 0) need an explicit BUILD_NUMBER (monotonic, it is Sparkle's
+# version), must run from the main branch, and need a non-empty SUPublicEDKey unless ALLOW_NO_UPDATES=1.
 # NOTARIZE=0 builds and signs the DMG only (local check; the result is NOT distributable).
 #
 # Sparkle: set SPARKLE_ACCOUNT to the keychain account holding the EdDSA private key
@@ -27,7 +29,14 @@ SCHEME="Localia"
 PROJECT="Localia.xcodeproj"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Vincent LAURIAT (KFLACS69T9)}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AppliMacVincentGithub}"
-BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+NOTARIZE="${NOTARIZE:-1}"
+if [ "$NOTARIZE" = "0" ]; then
+  BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
+else
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  [ "$BRANCH" = "main" ] || { echo "x Distributable releases run from main (on '$BRANCH'). Use NOTARIZE=0 for a local build." >&2; exit 1; }
+  [ -n "${BUILD_NUMBER:-}" ] || { echo "x Set BUILD_NUMBER explicitly (monotonic, above the last published build)." >&2; exit 1; }
+fi
 RELEASE_DIR="$ROOT/release"
 DMG="$RELEASE_DIR/$APP_NAME-$VERSION.dmg"
 DMG_VOLNAME="$APP_NAME $VERSION"
@@ -36,7 +45,6 @@ mkdir -p "$RELEASE_DIR"
 echo "> Releasing $APP_NAME $VERSION (build $BUILD_NUMBER)"
 
 # Fail early if the notary profile is missing (before spending time on the build).
-NOTARIZE="${NOTARIZE:-1}"
 [ "$NOTARIZE" = "0" ] || xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || {
   echo "x Notary profile \"$NOTARY_PROFILE\" not found. Recreate it manually:" >&2
   echo "    xcrun notarytool store-credentials \"$NOTARY_PROFILE\" --apple-id <your-apple-id> --team-id KFLACS69T9" >&2
@@ -65,6 +73,30 @@ STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 STAGING="$STAGING_DIR/$APP_NAME.app"
 ditto --norsrc --noextattr --noacl "$APP" "$STAGING"
+
+# Sparkle command-line tools, pinned and checksum-verified (same version as the framework in project.yml).
+SPARKLE_VERSION="2.10.1"
+SPARKLE_SHA256="1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27"
+SPARKLE_TOOLS="$ROOT/.sparkle-tools/$SPARKLE_VERSION"
+fetch_sparkle_tools() {
+  [ -x "$SPARKLE_TOOLS/bin/sign_update" ] && return 0
+  local tarball="$STAGING_DIR/Sparkle.tar.xz"
+  curl -fsSL -o "$tarball" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+  [ "$(shasum -a 256 "$tarball" | cut -d' ' -f1)" = "$SPARKLE_SHA256" ] || { echo "x Sparkle tarball checksum mismatch" >&2; exit 1; }
+  mkdir -p "$SPARKLE_TOOLS" && tar -xJf "$tarball" -C "$SPARKLE_TOOLS"
+}
+
+# Update-key guards for distributable releases.
+STAGED_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$STAGING/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$NOTARIZE" != "0" ] && [ -z "$STAGED_KEY" ] && [ "${ALLOW_NO_UPDATES:-0}" != "1" ]; then
+  echo "x SUPublicEDKey is empty: this build could never update. Set it in project.yml, or ALLOW_NO_UPDATES=1." >&2
+  exit 1
+fi
+if [ -n "${SPARKLE_ACCOUNT:-}" ]; then
+  fetch_sparkle_tools
+  ACCOUNT_KEY="$("$SPARKLE_TOOLS/bin/generate_keys" -p --account "$SPARKLE_ACCOUNT")"
+  [ "$ACCOUNT_KEY" = "$STAGED_KEY" ] || { echo "x Keychain account '$SPARKLE_ACCOUNT' key differs from SUPublicEDKey in the app." >&2; exit 1; }
+fi
 
 # 4. Sign deepest first. Apple's timestamp server is flaky: retry.
 codesign_ts() {
@@ -117,7 +149,9 @@ echo "> dmgbuild $DMG"
 codesign_ts "$DMG"
 
 if [ "$NOTARIZE" = "0" ]; then
-  codesign --verify --deep --strict --verbose=2 "$STAGING"
+  MOUNT="$(hdiutil attach -nobrowse -readonly -noverify -noautoopen "$DMG" | awk -F '\t' 'END {print $NF}')"
+  codesign --verify --deep --strict --verbose=2 "$MOUNT/$APP_NAME.app"
+  hdiutil detach "$MOUNT" -quiet
   echo "Done (NOT notarized, NOT distributable): $(ls -la "$DMG")"
   exit 0
 fi
@@ -142,15 +176,8 @@ spctl -a -t open --context context:primary-signature -vv "$DMG" || true
 
 # 8. Optional Sparkle signature + appcast item (written under release/, not into the repo).
 if [ -n "${SPARKLE_ACCOUNT:-}" ]; then
-  SPARKLE_VERSION="2.9.1"
-  SPARKLE_SHA256="c0dde519fd2a43ddfc6a1eb76aec284d7d888fe281414f9177de3164d98ba4c7"
-  TOOLS="$ROOT/.sparkle-tools/$SPARKLE_VERSION"
-  if [ ! -x "$TOOLS/bin/sign_update" ]; then
-    TARBALL="$STAGING_DIR/Sparkle.tar.xz"
-    curl -fsSL -o "$TARBALL" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
-    [ "$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)" = "$SPARKLE_SHA256" ] || { echo "x Sparkle tarball checksum mismatch" >&2; exit 1; }
-    mkdir -p "$TOOLS" && tar -xJf "$TARBALL" -C "$TOOLS"
-  fi
+  fetch_sparkle_tools
+  TOOLS="$SPARKLE_TOOLS"
   SIG_LINE="$("$TOOLS/bin/sign_update" --account "$SPARKLE_ACCOUNT" "$DMG")"
   BUILT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$STAGING/Contents/Info.plist")"
   cat > "$RELEASE_DIR/appcast.xml" <<APPCAST
