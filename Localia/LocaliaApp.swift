@@ -8,11 +8,11 @@ struct LocaliaApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(model: delegate.model, windows: delegate.windows, updater: delegate.updater)
+            MenuBarPanel(model: delegate.model, windows: delegate.windows, updater: delegate.updater)
         } label: {
             MenuBarIcon(model: delegate.model)
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }
 

@@ -33,6 +33,22 @@
         }
       }
     },
+    "%@ free": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ free"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ libres"
+          }
+        }
+      }
+    },
     "%@ is ready.": {
       "localizations": {
         "en": {
@@ -337,18 +353,18 @@
         }
       }
     },
-    "Chat with a Model": {
+    "Chat with the model": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Chat with a Model"
+            "value": "Chat with the model"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Discuter avec un modèle"
+            "value": "Discuter avec le modèle"
           }
         }
       }
@@ -445,6 +461,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Claude Code n'est pas installé"
+          }
+        }
+      }
+    },
+    "Claude Code runs on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code runs on this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code tourne sur ce Mac"
+          }
+        }
+      }
+    },
+    "Claude Code uses Anthropic's cloud": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code uses Anthropic's cloud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code utilise le cloud d’Anthropic"
+          }
+        }
+      }
+    },
+    "Cloud": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud"
           }
         }
       }
@@ -897,6 +961,22 @@
         }
       }
     },
+    "Downloading: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En téléchargement : %@"
+          }
+        }
+      }
+    },
     "Downloads": {
       "localizations": {
         "en": {
@@ -1233,6 +1313,22 @@
         }
       }
     },
+    "Installed: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installés : %@"
+          }
+        }
+      }
+    },
     "Launch": {
       "localizations": {
         "en": {
@@ -1313,6 +1409,22 @@
         }
       }
     },
+    "Local": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local"
+          }
+        }
+      }
+    },
     "Local AI on this Mac, in three steps": {
       "localizations": {
         "en": {
@@ -1325,22 +1437,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "L'IA locale sur ce Mac, en trois étapes"
-          }
-        }
-      }
-    },
-    "Local Mode": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Local Mode"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mode local"
           }
         }
       }
@@ -1377,38 +1473,6 @@
         }
       }
     },
-    "Local mode OFF": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Local mode OFF"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mode local DÉSACTIVÉ"
-          }
-        }
-      }
-    },
-    "Local mode ON": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Local mode ON"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mode local ACTIVÉ"
-          }
-        }
-      }
-    },
     "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept.": {
       "localizations": {
         "en": {
@@ -1421,6 +1485,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Le mode local est désactivé et chaque claude repasse par le cloud. Vos autres réglages et vos modèles sont conservés."
+          }
+        }
+      }
+    },
+    "Local · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local · %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local · %@"
           }
         }
       }
@@ -1629,22 +1709,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Modèles"
-          }
-        }
-      }
-    },
-    "Models…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Models…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modèles…"
           }
         }
       }
@@ -2177,6 +2241,22 @@
         }
       }
     },
+    "Switching…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basculement…"
+          }
+        }
+      }
+    },
     "Terminal": {
       "localizations": {
         "en": {
@@ -2417,6 +2497,22 @@
         }
       }
     },
+    "Unload the models Localia loaded": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unload the models Localia loaded"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décharger les modèles chargés par Localia"
+          }
+        }
+      }
+    },
     "Up to date": {
       "localizations": {
         "en": {
@@ -2493,6 +2589,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mises à jour indisponibles dans cette version"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
           }
         }
       }
@@ -2589,22 +2701,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "par défaut"
-          }
-        }
-      }
-    },
-    "free %@%%": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "free %@%%"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "libre %@ %%"
           }
         }
       }
@@ -2737,22 +2833,6 @@
         }
       }
     },
-    "no model loaded": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "no model loaded"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "aucun modèle chargé"
-          }
-        }
-      }
-    },
     "no tools": {
       "localizations": {
         "en": {
@@ -2785,6 +2865,22 @@
         }
       }
     },
+    "running": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "running"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en marche"
+          }
+        }
+      }
+    },
     "slow": {
       "localizations": {
         "en": {
@@ -2801,22 +2897,6 @@
         }
       }
     },
-    "speed not measured": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "speed not measured"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "vitesse non mesurée"
-          }
-        }
-      }
-    },
     "stopped": {
       "localizations": {
         "en": {
@@ -2829,6 +2909,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "arrêté"
+          }
+        }
+      }
+    },
+    "used of %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "used of %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "utilisés sur %@"
+          }
+        }
+      }
+    },
+    "~%@ words/s": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~%@ words/s"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~%@ mots/s"
+          }
+        }
+      }
+    },
+    "~%@ words/s, estimated": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~%@ words/s, estimated"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~%@ mots/s, estimé"
           }
         }
       }

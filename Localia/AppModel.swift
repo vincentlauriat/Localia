@@ -60,9 +60,16 @@ final class AppModel: ObservableObject {
     // Status
     @Published private(set) var activeServing = false
     @Published private(set) var loaded: [LoadedModel] = []
-    @Published private(set) var freePercent: Int = 0
     @Published private(set) var busyMessage: String?
     @Published var alert: AppAlert?
+    /// Free memory in GiB at the last status refresh.
+    @Published private(set) var freeGB: Double = 0
+    /// Memory-hungry apps open at the last status refresh (MemoryGuard's list).
+    @Published private(set) var heavyApps: [String] = []
+    /// Served name of the model a launch would use now; nil when local mode is off.
+    @Published private(set) var launchModel: String?
+    /// True while local mode is being switched on or off.
+    @Published private(set) var switchingLocalMode = false
     /// Selected tab of the Models window (0 Recommended, 1 Installed, 2 Downloads).
     @Published var modelsTab = 0
 
@@ -170,12 +177,33 @@ final class AppModel: ObservableObject {
         claudeChecked = true
         await refreshInstalled()
         await refreshStatus()
+        await refreshLaunchTarget()
         llmfitVersion = await llmfit.version()
     }
 
+    /// Re-resolves the model a launch would use. Not part of the 5 s status poll: it reads the engine's model list.
+    func refreshLaunchTarget() async {
+        if case let .local(_, _, m) = await controller.launchTarget(), !m.isEmpty { launchModel = m } else { launchModel = nil }
+    }
+
+    /// Used memory in GiB: total RAM minus the free memory of the last refresh.
+    var usedGB: Double { max(0, profile.totalRAMGB - freeGB) }
+
+    /// Generation speed of a served model in words per second (about 0.75 words per token): the measured
+    /// tok/s when there is one, else llmfit's estimate. Nil when neither is known.
+    func wordsPerSecond(for served: String) -> (value: Double, measured: Bool)? {
+        let id = candidateID(for: served)
+        if let tps = settings.measurements.tps[id] { return (tps * Self.wordsPerToken, true) }
+        let all = (recommendation?.candidates ?? []) + (recommendation?.uncertain ?? [])
+        if let c = all.first(where: { $0.id == id }) { return (c.estimatedTPS * Self.wordsPerToken, false) }
+        return nil
+    }
+
+    nonisolated static let wordsPerToken = 0.75
+
     func refreshStatus() async {
-        freePercent = profile.totalRAMGB > 0
-            ? Int((deps.freeMemoryGB() / profile.totalRAMGB * 100).rounded()) : 0
+        freeGB = deps.freeMemoryGB()
+        heavyApps = deps.memoryGuard.check(requiredGB: 0, profile: profile)?.heavyApps ?? []
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
@@ -225,23 +253,6 @@ final class AppModel: ObservableObject {
             bytes += (try? u.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize) ?? 0
         }
         return Double(bytes) / 1_073_741_824
-    }
-
-    /// `Local mode ON/OFF · <engine> · <loaded model> (<GB>, <tok/s>) · free <x>%`
-    var statusLine: String {
-        var parts = [isLocalModeOn ? String(localized: "Local mode ON") : String(localized: "Local mode OFF"),
-                     AppModel.engineName(settings.activeEngine)]
-        if let m = loaded.first {
-            let id = candidateID(for: m.name)
-            let tps = settings.measurements.tps[id].map(Fmt.tps) ?? String(localized: "speed not measured")
-            parts.append("\(displayName(for: m.name)) (\(Fmt.gb(m.memoryGB)), \(tps))")
-        } else if !activeServing {
-            parts.append(String(localized: "stopped"))
-        } else {
-            parts.append(String(localized: "no model loaded"))
-        }
-        parts.append(String(localized: "free \(String(freePercent))%"))
-        return parts.joined(separator: " · ")
     }
 
     // MARK: - Recommendations
@@ -301,7 +312,10 @@ final class AppModel: ObservableObject {
     var isLocalModeOn: Bool { controller.isOn }
 
     func setLocalMode(_ on: Bool) async {
+        switchingLocalMode = true
+        defer { switchingLocalMode = false }
         do { try await controller.setOn(on) } catch { show(error, title: String(localized: "Could not change local mode")) }
+        await refreshLaunchTarget()
     }
 
     func setScope(_ scope: LocalModeScope) async {
@@ -322,6 +336,7 @@ final class AppModel: ObservableObject {
         await registry.setActive(id)
         await refreshShim()
         await refreshStatus()
+        await refreshLaunchTarget()
     }
 
     /// Policy, profile and similar settings feed the shim state.
