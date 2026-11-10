@@ -627,7 +627,7 @@ final class AppModel: ObservableObject {
     func chatModel(for engine: EngineID) -> String? {
         let names = installed.filter { $0.engine == engine }.map(\.name)
         let loadedHere = engine == settings.activeEngine ? loaded.first?.name : nil
-        return [loadedHere, settings.defaultModel, settings.lastModel].compactMap { $0 }.first(where: names.contains)
+        return [settings.lastModel, settings.defaultModel, loadedHere].compactMap { $0 }.first(where: names.contains)
             ?? names.first
     }
 
