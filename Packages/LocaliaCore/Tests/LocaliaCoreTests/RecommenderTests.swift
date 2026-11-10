@@ -162,6 +162,17 @@ final class RecommenderTests: XCTestCase {
         XCTAssertEqual(r.candidates.first?.id, "Qwen/Late-4B", "highest quality, fast, tools: ranked first")
     }
 
+    func test_memoryBreakdown_weightsKVAndOverheadSumToMemory() throws {
+        for c in try rec(m5, limit: 100_000).allCompatible where !c.memoryIsMeasured {
+            XCTAssertTrue(c.fits)
+            XCTAssertEqual(c.overheadGB ?? -1, 0.5, accuracy: 1e-9, c.id)
+            XCTAssertEqual(c.weightsGB + (c.kvCacheGB ?? 0) + (c.overheadGB ?? 0), c.memoryGB, accuracy: 1e-9, c.id)
+        }
+        let measured = try rec(m5, Measurements(tps: [:], memoryGB: [gemma12: 11], speedRatio: nil), limit: 5000)
+        let c = try XCTUnwrap(measured.candidates.first { $0.id == gemma12 })
+        XCTAssertNil(c.kvCacheGB, "measured memory has no breakdown")
+    }
+
     func test_allCompatible_isEveryFittingModelRankedLikeCandidates() throws {
         let r = try rec(m5)
         XCTAssertEqual(r.candidates.count, 12)

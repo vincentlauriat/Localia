@@ -72,6 +72,8 @@ final class HFCatalogTests: XCTestCase {
         XCTAssertEqual(vl.weightsGB, weights, accuracy: 1e-6)
         // + llmfit's 0.5 GB runtime overhead + the vision projector the repo ships.
         XCTAssertEqual(vl.memoryGB, weights + kv + 0.5 + 1.2, accuracy: 1e-6)
+        XCTAssertEqual(vl.kvCacheGB ?? 0, kv, accuracy: 1e-6)
+        XCTAssertEqual(vl.overheadGB ?? 0, 0.5 + 1.2, accuracy: 1e-6)
         XCTAssertFalse(vl.memoryIsEstimate)
         XCTAssertEqual(vl.fit, .marginal)
         XCTAssertEqual(vl.estimatedTPS, 88.7 / weights, accuracy: 1e-6)
@@ -85,6 +87,7 @@ final class HFCatalogTests: XCTestCase {
         let e = try XCTUnwrap(entries.first { $0.candidate.ggufRepo == "unsloth/Llama-3.1-8B-Instruct-GGUF" })
         let p = 8.030261248
         XCTAssertTrue(e.candidate.memoryIsEstimate)
+        XCTAssertNil(e.candidate.kvCacheGB)
         XCTAssertEqual(e.candidate.memoryGB, p * 0.58 + 1.3 * p, accuracy: 1e-6)
         XCTAssertEqual(e.candidate.fit, .marginal)
     }
@@ -121,8 +124,8 @@ final class HFCatalogTests: XCTestCase {
         XCTAssertTrue(q.contains("search=qwen3%208b%2Btools"), q)
         XCTAssertTrue(q.contains("sort=downloads") && q.contains("filter=gguf"), q)
         let big = try XCTUnwrap(results.first { $0.candidate.ggufRepo == "unsloth/Mistral-Large-4-1T-A52B-GGUF" })
-        XCTAssertEqual(big.candidate.fit, .tooBig)
         XCTAssertFalse(big.candidate.fits)
+        XCTAssertNil(big.verdict)
         XCTAssertEqual(results.map(\.downloads), results.map(\.downloads).sorted(by: >))
         let qwen = try XCTUnwrap(results.first { $0.candidate.ggufRepo == "unsloth/Qwen3-8B-GGUF" }).candidate
         XCTAssertEqual(qwen.estimatedTPS, 2 * 88.7 / (8.190735360 * 0.58), accuracy: 1e-6, "scaled by the measured ratio")

@@ -32,7 +32,8 @@ struct DownloadState: Equatable {
 
 /// An installed model as the Models window shows it.
 /// Loading state of a Hugging Face section of the Recommended tab.
-enum HFLoadState: Equatable { case idle, loading, loaded, unavailable }
+/// `waitingForLlmfit`: the speed constant comes from llmfit's rows, not read yet (or llmfit failed).
+enum HFLoadState: Equatable { case idle, waitingForLlmfit, loading, loaded, unavailable }
 
 struct InstalledRow: Identifiable, Equatable {
     var id: String { "\(engine.rawValue)|\(name)" }
@@ -87,6 +88,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var hfRecentState: HFLoadState = .idle
     @Published private(set) var hfSearchResults: [HFCatalogEntry] = []
     @Published private(set) var hfSearchState: HFLoadState = .idle
+    /// llmfit returned as many rows as Localia asked for: its catalog may have been cut.
+    @Published private(set) var catalogMayBeTruncated = false
     @Published private(set) var installed: [InstalledRow] = []
     @Published private(set) var diskUsageGB: [EngineID: Double] = [:]
     @Published private(set) var downloads: [String: DownloadState] = [:]
@@ -208,8 +211,7 @@ final class AppModel: ObservableObject {
     func wordsPerSecond(for served: String) -> (value: Double, measured: Bool)? {
         let id = candidateID(for: served)
         if let tps = settings.measurements.tps[id] { return (tps * Self.wordsPerToken, true) }
-        let all = (recommendation?.candidates ?? []) + (recommendation?.uncertain ?? [])
-        if let c = all.first(where: { $0.id == id }) { return (c.estimatedTPS * Self.wordsPerToken, false) }
+        if let c = knownCandidate(id) { return (c.estimatedTPS * Self.wordsPerToken, false) }
         return nil
     }
 
@@ -276,7 +278,9 @@ final class AppModel: ObservableObject {
         loadingRecommendations = true
         defer { loadingRecommendations = false }
         do {
-            rows = try await deps.rows.rows(profile: profile)
+            let fresh = try await deps.rows.rows(profile: profile)
+            rows = fresh
+            catalogMayBeTruncated = LlmfitClient.mayBeTruncated(fresh)
             recommendationError = nil
             recompute()
         } catch {
@@ -303,15 +307,27 @@ final class AppModel: ObservableObject {
     /// Grading context for Hugging Face GGUFs; nil until llmfit rows give this Mac's speed constant.
     private func hfContext() -> HFCatalogContext? {
         guard let rows, let k = HFCatalog.speedConstant(rows: rows) else { return nil }
-        let listed = (recommendation?.allCompatible ?? []) + (recommendation?.uncertain ?? [])
+        let listed = llmfitListed
         return HFCatalogContext(poolGB: profile.usablePoolGB, speedConstant: k,
-                                speedRatio: settings.measurements.speedRatio, knownRepos: Set(listed.map(\.ggufRepo)))
+                                speedRatio: settings.measurements.speedRatio, knownRepos: Set(listed.map(\.ggufRepo)),
+                                knownBases: Set(listed.map(\.id)))
+    }
+
+    /// Every candidate llmfit lists (capped lists included).
+    private var llmfitListed: [ModelCandidate] {
+        (recommendation?.candidates ?? []) + (recommendation?.allCompatible ?? []) + (recommendation?.uncertain ?? [])
+    }
+
+    /// A candidate shown anywhere in the Models window: llmfit first, then Hugging Face.
+    func knownCandidate(_ id: String) -> ModelCandidate? {
+        (llmfitListed + hfRecent.map(\.candidate) + hfSearchResults.map(\.candidate)).first { $0.id == id }
     }
 
     /// Loads "New on Hugging Face" once (again when `force`). Offline only marks that section unavailable.
     func loadHFRecent(force: Bool = false) async {
-        guard force || hfRecentState == .idle || hfRecentState == .unavailable, hfRecentState != .loading,
-              let ctx = hfContext() else { return }
+        guard force || [.idle, .unavailable, .waitingForLlmfit].contains(hfRecentState),
+              hfRecentState != .loading else { return }
+        guard let ctx = hfContext() else { hfRecentState = .waitingForLlmfit; return }
         hfRecentState = .loading
         let entries = try? await deps.hfCatalog.recent(ctx)
         // Cancelled (tab switched, window closed): partial estimates are dropped and the next visit reloads.
@@ -326,14 +342,20 @@ final class AppModel: ObservableObject {
         guard !q.isEmpty, let ctx = hfContext() else {
             hfSearchQuery = nil
             hfSearchResults = []
-            hfSearchState = .idle
+            hfSearchState = q.isEmpty ? .idle : .waitingForLlmfit
             return
         }
         hfSearchQuery = q
         hfSearchState = .loading
         let results = try? await deps.hfCatalog.search(q, ctx)
         guard hfSearchQuery == q else { return }   // a newer search started meanwhile
-        hfSearchResults = results ?? []
+        // A repo llmfit rates is shown with llmfit's candidate (quality, its estimates) rather than Localia's.
+        let rated = Dictionary(llmfitListed.map { ($0.ggufRepo.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+        hfSearchResults = (results ?? []).map { e in
+            rated[e.candidate.ggufRepo.lowercased()].map {
+                HFCatalogEntry(candidate: $0, createdAt: e.createdAt, downloads: e.downloads)
+            } ?? e
+        }
         hfSearchState = results == nil ? .unavailable : .loaded
     }
 
@@ -586,13 +608,13 @@ final class AppModel: ObservableObject {
         loadedByLocalia.remove(key)
     }
 
-    /// Measured memory, else the recommendation's estimate, else the file size plus a margin.
-    private func requiredGB(for model: String, engine: EngineID, fileSizeGB: Double? = nil) -> Double {
+    /// Measured memory, else the estimate of a listed candidate, else the estimate saved at download,
+    /// else the file size plus a margin.
+    func requiredGB(for model: String, engine: EngineID, fileSizeGB: Double? = nil) -> Double {
         let id = candidateID(for: model)
         if let m = settings.measurements.memoryGB[id] { return m }
-        if let c = ((recommendation?.candidates ?? []) + (recommendation?.uncertain ?? [])).first(where: { $0.id == id }) {
-            return c.memoryGB
-        }
+        if let c = knownCandidate(id) { return c.memoryGB }
+        if let m = settings.estimatedMemoryGB[id] { return m }
         let size = fileSizeGB ?? installed.first { $0.engine == engine && $0.name == model }?.sizeGB ?? 0
         return size * 1.15
     }
@@ -817,7 +839,8 @@ final class AppModel: ObservableObject {
     // MARK: - Models window actions
 
     func download(_ c: ModelCandidate) {
-        guard downloads[c.id] == nil else { return }
+        // A search result too big for this Mac is never downloaded (it could become the default model).
+        guard c.fits, downloads[c.id] == nil else { return }
         let engineID = settings.activeEngine
         downloads[c.id] = DownloadState(candidateID: c.id, displayName: c.displayName, engine: engineID)
         downloadTasks[c.id] = Task { [weak self] in
@@ -836,6 +859,8 @@ final class AppModel: ObservableObject {
                     }
                 }
                 self.settings.modelIDs[name] = c.id
+                // Kept for the memory guard once the candidate leaves the lists (HF search cleared, catalog changed).
+                self.settings.estimatedMemoryGB[c.id] = c.memoryGB
                 if self.settings.defaultModel == nil { self.settings.defaultModel = name }
             } catch {
                 if !Task.isCancelled, !(error is CancellationError), (error as? URLError)?.code != .cancelled {

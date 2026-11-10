@@ -10,6 +10,9 @@ public struct Recommender: Sendable {
     public static let bytesPerParam: [String: Double] = ["Q8_0": 1.05, "Q6_K": 0.80, "Q5_K_M": 0.68,
         "Q4_K_M": 0.58, "Q3_K_M": 0.48, "Q2_K": 0.37, "MXFP4": 0.53]
 
+    /// Runtime buffers llmfit adds to weights + KV cache (constant in llmfit 1.1.20).
+    public static let runtimeOverheadGB = 0.5
+
     public let maxCandidates: Int
     public let maxUncertain: Int
 
@@ -42,7 +45,9 @@ public struct Recommender: Sendable {
             guard let bpp = Self.bytesPerParam[q] else { excluded.noSpeedEstimate += 1; continue }
             let weightsGB = paramsB * bpp
             let measuredMem = measurements.memoryGB[id]
-            let memoryGB = measuredMem ?? weightsGB + (row.memoryRequiredGB - paramsB * rowBpp)
+            // llmfit's memory beyond the weights: KV cache + its 0.5 GB runtime overhead.
+            let contextGB = row.memoryRequiredGB - paramsB * rowBpp
+            let memoryGB = measuredMem ?? weightsGB + contextGB
             let measuredTPS = measurements.tps[id]
             let tps: Double
             if let m = measuredTPS { tps = m }
@@ -61,7 +66,9 @@ public struct Recommender: Sendable {
                                estimatedTPS: tps, fit: f, slow: slow,
                                supportsTools: row.capabilities.contains("Tool Use"),
                                memoryIsMeasured: measuredMem != nil, speedIsMeasured: measuredTPS != nil,
-                               quality: row.quality)
+                               quality: row.quality,
+                               kvCacheGB: measuredMem == nil ? max(0, contextGB - Self.runtimeOverheadGB) : nil,
+                               overheadGB: measuredMem == nil ? min(contextGB, Self.runtimeOverheadGB) : nil)
             }
             if let g = grade {
                 seen.insert(id); fit.append(make(g))

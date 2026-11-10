@@ -24,6 +24,11 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     /// Served model name (engine-specific) -> llmfit candidate id, so measurements and "installed"
     /// status line up with recommendations.
     @Published public var modelIDs: [String: String] { didSet { defaults.set(modelIDs, forKey: "modelIDs") } }
+    /// Candidate id -> estimated memory (GB) saved at download, for the memory guard once the candidate
+    /// is no longer listed (a Hugging Face search result, a model llmfit dropped).
+    @Published public var estimatedMemoryGB: [String: Double] {
+        didSet { defaults.set(estimatedMemoryGB, forKey: "estimatedMemoryGB") }
+    }
     @Published public var measurements: Measurements {
         didSet { defaults.set(try? JSONEncoder().encode(measurements), forKey: "measurements") }
     }
@@ -45,6 +50,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         defaultModel = defaults.string(forKey: "defaultModel")
         lastModel = defaults.string(forKey: "lastModel")
         modelIDs = defaults.dictionary(forKey: "modelIDs") as? [String: String] ?? [:]
+        estimatedMemoryGB = defaults.dictionary(forKey: "estimatedMemoryGB") as? [String: Double] ?? [:]
         measurements = defaults.data(forKey: "measurements")
             .flatMap { try? JSONDecoder().decode(Measurements.self, from: $0) } ?? Measurements()
     }

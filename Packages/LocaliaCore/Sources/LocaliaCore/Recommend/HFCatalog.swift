@@ -20,7 +20,7 @@ public struct HFCatalogContext: Sendable, Equatable {
     }
 }
 
-/// A Hugging Face GGUF graded for this Mac (`candidate.fit` is `.tooBig` when it does not fit).
+/// A Hugging Face GGUF graded for this Mac (`candidate.fits` is false when it does not fit).
 /// Not rated by llmfit: no quality score.
 public struct HFCatalogEntry: Identifiable, Sendable, Equatable {
     public let candidate: ModelCandidate
@@ -33,6 +33,8 @@ public struct HFCatalogEntry: Identifiable, Sendable, Equatable {
     }
 
     public var id: String { candidate.id }
+    /// The fit grade, nil when the model does not fit.
+    public var verdict: Fit? { candidate.fits ? candidate.fit : nil }
 }
 
 /// Recent GGUFs from trusted providers and free-text search on the Hugging Face Hub, mapped to candidates
@@ -44,7 +46,7 @@ public struct HFCatalog: Sendable {
     static let fallbackOverheadPerB = 1.3
     /// Compute buffers and runtime: llmfit's memory_required_gb is exactly weights + KV + 0.5
     /// (Qwen3-8B, Qwen2.5-7B, Llama-3.1-8B, Mistral-7B, Qwen3-14B, Qwen3-30B-A3B rows of llmfit 1.1.20).
-    static let runtimeOverheadGB = 0.5
+    static let runtimeOverheadGB = Recommender.runtimeOverheadGB
     /// Vision projector (`mmproj-*.gguf`, about 0.8–1.2 GB in BF16), counted when the repo ships one.
     static let mmprojGB = 1.2
     /// llmfit's MoE speed against the dense constant: Qwen3-30B-A3B gives 21 tok/s × 3.35B active × 1.05
@@ -160,8 +162,9 @@ public struct HFCatalog: Sendable {
         let weightsGB = paramsB * bpp
         let context = min(LocaliaConstants.localContextTokens, rawContext)
         let projector = m.hasMMProj ? mmprojGB : 0
-        let memoryGB = projector + (shape.map { weightsGB + $0.kvGiB(context: context) + runtimeOverheadGB }
-            ?? weightsGB + fallbackOverheadPerB * paramsB)
+        let kv = shape?.kvGiB(context: context)
+        let overhead = projector + (kv == nil ? fallbackOverheadPerB * paramsB : runtimeOverheadGB)
+        let memoryGB = weightsGB + (kv ?? 0) + overhead
 
         // Speed is bound by the bytes read per token: the active parameters for a mixture of experts.
         let active = shape?.activeParamsB(totalB: paramsB) ?? activeParamsFromName(m.id)
@@ -171,25 +174,27 @@ public struct HFCatalog: Sendable {
         // An MoE whose active size is unknown is far faster than its total size says: never call it slow.
         let slow = tps < Double(LocaliaConstants.speedFloorTPS) && !(active == nil && looksMoE(m))
 
+        let verdict = grade(memoryGB: memoryGB, poolGB: ctx.poolGB)
         let name = String(m.id.split(separator: "/").last ?? Substring(m.id))
         let display = name.hasSuffix("-GGUF") ? String(name.dropLast(5)) : name
         let candidate = ModelCandidate(
             id: m.id, displayName: display, ggufRepo: m.id, quant: LocaliaConstants.defaultQuant,
             weightsGB: weightsGB, memoryGB: memoryGB, estimatedTPS: tps,
-            fit: grade(memoryGB: memoryGB, poolGB: ctx.poolGB), slow: slow,
+            fit: verdict ?? .marginal, slow: slow,
             supportsTools: m.gguf?.chatTemplate?.contains("tools") ?? false,
             memoryIsMeasured: false, speedIsMeasured: false, quality: 0,
-            source: .huggingface, memoryIsEstimate: shape == nil)
+            source: .huggingface, memoryIsEstimate: shape == nil, fits: verdict != nil,
+            kvCacheGB: kv, overheadGB: kv == nil ? nil : overhead)
         return HFCatalogEntry(candidate: candidate, createdAt: m.createdAt, downloads: m.downloads ?? 0)
     }
 
     /// Same thresholds as `Recommender`.
-    static func grade(memoryGB: Double, poolGB: Double) -> Fit {
+    static func grade(memoryGB: Double, poolGB: Double) -> Fit? {
         let ratio = memoryGB / poolGB
         if ratio <= 0.60 { return .perfect }
         if ratio <= 0.85 { return .good }
         if ratio <= 0.98 { return .marginal }
-        return .tooBig
+        return nil
     }
 
     // MARK: - Network

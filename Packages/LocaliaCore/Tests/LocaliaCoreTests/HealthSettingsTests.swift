@@ -145,6 +145,8 @@ final class SettingsStoreTests: XCTestCase {
         s.engineDownPolicy = .fail; s.launchProfile = .full; s.localModeOn = true
         s.autoLocalWhenOffline = true; s.defaultModel = "qwen"; s.lastModel = "qwen-localia"
         s.measurements = Measurements(tps: ["a": 30], memoryGB: ["a": 5], speedRatio: 0.5)
+        XCTAssertEqual(s.estimatedMemoryGB, [:])
+        s.estimatedMemoryGB = ["bartowski/X-GGUF": 10.4]
         let folders = RecentFolders(store: s)
         folders.add(URL(fileURLWithPath: "/tmp/proj"))
 
@@ -158,6 +160,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(r.autoLocalWhenOffline)
         XCTAssertEqual(r.defaultModel, "qwen")
         XCTAssertEqual(r.lastModel, "qwen-localia")
+        XCTAssertEqual(r.estimatedMemoryGB, ["bartowski/X-GGUF": 10.4])
         XCTAssertEqual(r.measurements, Measurements(tps: ["a": 30], memoryGB: ["a": 5], speedRatio: 0.5))
         XCTAssertEqual(r.recentFolders, ["/tmp/proj"])
     }

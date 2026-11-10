@@ -1,7 +1,6 @@
 import Foundation
 
-/// `tooBig` only comes from Hugging Face search results: llmfit candidates always fit.
-public enum Fit: String, Sendable, Equatable { case perfect, good, marginal, tooBig }
+public enum Fit: String, Sendable, Equatable { case perfect, good, marginal }
 
 public enum EmptyReason: Sendable, Equatable { case nothingFits, allFiltered }
 
@@ -26,22 +25,26 @@ public struct ModelCandidate: Identifiable, Sendable, Equatable {
     public let source: CandidateSource
     /// Memory derived from a rough per-parameter overhead (the base model's config could not be read).
     public let memoryIsEstimate: Bool
+    /// False for a Hugging Face search result too big for this Mac: `fit` is then meaningless and the model
+    /// must not be downloaded. llmfit candidates always fit.
+    public let fits: Bool
+    /// Memory breakdown, nil when unknown (measured memory, or a gated base): memoryGB = weightsGB +
+    /// kvCacheGB + overheadGB when both are set. Overhead = runtime buffers, plus the vision projector.
+    public let kvCacheGB: Double?
+    public let overheadGB: Double?
 
     public init(id: String, displayName: String, ggufRepo: String, quant: String, weightsGB: Double,
                 memoryGB: Double, estimatedTPS: Double, fit: Fit, slow: Bool, supportsTools: Bool,
                 memoryIsMeasured: Bool, speedIsMeasured: Bool, quality: Double,
-                source: CandidateSource = .llmfit, memoryIsEstimate: Bool = false) {
+                source: CandidateSource = .llmfit, memoryIsEstimate: Bool = false, fits: Bool = true,
+                kvCacheGB: Double? = nil, overheadGB: Double? = nil) {
         self.id = id; self.displayName = displayName; self.ggufRepo = ggufRepo; self.quant = quant
         self.weightsGB = weightsGB; self.memoryGB = memoryGB; self.estimatedTPS = estimatedTPS
         self.fit = fit; self.slow = slow; self.supportsTools = supportsTools
         self.memoryIsMeasured = memoryIsMeasured; self.speedIsMeasured = speedIsMeasured
         self.quality = quality; self.source = source; self.memoryIsEstimate = memoryIsEstimate
+        self.fits = fits; self.kvCacheGB = kvCacheGB; self.overheadGB = overheadGB
     }
-}
-
-extension ModelCandidate {
-    /// False for a search result too big for this Mac: it must not be downloaded.
-    public var fits: Bool { fit != .tooBig }
 }
 
 public struct Measurements: Codable, Sendable, Equatable {
