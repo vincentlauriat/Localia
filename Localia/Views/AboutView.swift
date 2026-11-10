@@ -42,6 +42,7 @@ struct AboutView: View {
                 VStack(alignment: .leading) {
                     Text("Localia").font(.title.weight(.semibold))
                     Text(version).foregroundStyle(.secondary)
+                    Text(String(localized: "Made with ♥ by Vincent Lauriat")).foregroundStyle(.secondary)
                 }
             }
             Text(String(localized: "Local coding models on this Mac, in one click. Free and open source."))

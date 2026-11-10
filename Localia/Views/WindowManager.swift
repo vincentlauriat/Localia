@@ -39,14 +39,17 @@ final class WindowManager {
                 self?.close(.onboarding)
             }))
             title = String(localized: "Welcome to Localia")
-            size = NSSize(width: 560, height: 480)
+            size = OnboardingView.windowSize
         case .about:
             root = AnyView(AboutView())
             title = String(localized: "About Localia")
             size = NSSize(width: 520, height: 480)
         }
+        // The onboarding is laid out for one fixed size; the other windows resize.
+        var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
+        if kind != .onboarding { style.insert(.resizable) }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              styleMask: style,
                               backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false

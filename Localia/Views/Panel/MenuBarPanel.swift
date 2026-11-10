@@ -112,9 +112,9 @@ struct MenuBarPanel: View {
 
     private var isBusy: Bool { model.switchingLocalMode || model.busyMessage != nil }
 
-    /// The model the hero describes: what a launch would use, else what is loaded, else what chat would use.
+    /// The model the hero describes: what a launch would use, else the selected model, else what is loaded.
     private var heroModel: String? {
-        model.launchModel ?? model.loaded.first?.name ?? model.chatModel(for: model.settings.activeEngine)
+        model.launchModel ?? model.selectedModel ?? model.loaded.first?.name
     }
 
     private var heroCard: some View {
@@ -216,32 +216,92 @@ struct MenuBarPanel: View {
 
     private var engineName: String { AppModel.engineName(model.settings.activeEngine) }
 
+    /// Collapsed: the selected model's name. Open: the number of models (the names are listed).
+    private var modelsCardValue: String? {
+        guard !model.installed.isEmpty else { return nil }
+        if !modelsOpen, let m = model.selectedModel { return model.displayName(for: m) }
+        return String(model.installed.count)
+    }
+
     private var modelsCard: some View {
-        DisclosureCard(title: String(localized: "Installed models"), icon: "square.stack.3d.up.fill",
-                       iconColor: Theme.blue, value: model.installed.isEmpty ? nil : String(model.installed.count),
+        DisclosureCard(title: String(localized: "Models"), icon: "square.stack.3d.up.fill",
+                       iconColor: Theme.blue, value: modelsCardValue,
                        expanded: $modelsOpen) {
             if model.installed.isEmpty {
                 emptyLine(String(localized: "No local model"))
             } else {
                 ForEach(Array(model.installed.enumerated()), id: \.element.id) { i, row in
                     if i > 0 { Divider().opacity(0.4) }
-                    HStack(spacing: 8) {
-                        Circle().fill(row.loaded ? Theme.local : Color.clear)
-                            .frame(width: 6, height: 6)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(row.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(row.loaded ? "\(AppModel.engineName(row.engine)) · \(String(localized: "loaded"))"
-                                            : AppModel.engineName(row.engine))
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 8)
-                        Text(Fmt.gb(row.sizeGB)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 5)
+                    modelRow(row)
                 }
             }
+            Divider().opacity(0.4)
+            Button { show(.models) } label: {
+                HStack(spacing: 6) {
+                    Text(String(localized: "Download and manage models…"))
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+                    Spacer(minLength: 8)
+                    if !model.downloads.isEmpty {
+                        Text(String(localized: "Downloading: \(String(model.downloads.count))"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    /// One installed model: a click makes it the model launches and chat use. Teal check: selected; green
+    /// dot: in memory.
+    private func modelRow(_ row: InstalledRow) -> some View {
+        let selected = model.isSelected(row)
+        let name = model.displayName(for: row.name)
+        return Button {
+            Task {
+                await model.setDefault(row)
+                presentAlertIfNeeded()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                ZStack {
+                    if model.selectingModel == row.id {
+                        ProgressView().controlSize(.mini)
+                    } else if selected {
+                        Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
+                    }
+                }
+                .frame(width: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.displayName)
+                        .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                        .foregroundStyle(selected ? Theme.accent : Color.primary)
+                        .lineLimit(1).truncationMode(.middle)
+                    HStack(spacing: 4) {
+                        if row.loaded {
+                            Circle().fill(Theme.local).frame(width: 5, height: 5)
+                        }
+                        Text(row.loaded ? "\(AppModel.engineName(row.engine)) · \(String(localized: "loaded"))"
+                                        : AppModel.engineName(row.engine))
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text(Fmt.gb(row.sizeGB)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+        }
+        .buttonStyle(PanelRowButtonStyle())
+        .disabled(model.selectingModel != nil)
+        .padding(.horizontal, -8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(String(localized: "Use \(name)")))
+        .accessibilityValue(Text(row.loaded ? String(localized: "loaded") : ""))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private var appsCard: some View {
@@ -350,12 +410,6 @@ struct MenuBarPanel: View {
         return model.displayName(for: m)
     }
 
-    private var modelsSubtitle: String {
-        let installed = String(localized: "Installed: \(String(model.installed.count))")
-        guard !model.downloads.isEmpty else { return installed }
-        return installed + " · " + String(localized: "Downloading: \(String(model.downloads.count))")
-    }
-
     private var localModeBinding: Binding<Bool> {
         Binding(get: { model.isLocalModeOn },
                 set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
@@ -398,13 +452,6 @@ struct MenuBarPanel: View {
             }
             .buttonStyle(PanelRowButtonStyle())
 
-            RowDivider()
-            Button { show(.models) } label: {
-                ListRow(icon: "square.stack.3d.up.fill", title: String(localized: "Models…"), subtitle: modelsSubtitle) {
-                    RowChevron()
-                }
-            }
-            .buttonStyle(PanelRowButtonStyle())
 
 
             RowDivider()
