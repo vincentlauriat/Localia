@@ -375,7 +375,7 @@ final class AppModel: ObservableObject {
                              message: String(localized: "Install it from the welcome window or Settings, then try again."))
             return
         }
-        let target = await controller.launchTarget()
+        var target = await controller.launchTarget()
         let sessionID = UUID()
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
@@ -412,6 +412,10 @@ final class AppModel: ObservableObject {
             }
             await noteModelUsed(model)
             session = key
+            // Resolved before the engine was up; now that the model is loaded, read the window it really got.
+            if case let .local(id, baseURL, m, _) = target {
+                target = .local(engine: id, baseURL: baseURL, model: m, contextTokens: await engine.contextWindow(m))
+            }
         }
         let command = deps.tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
         do {
@@ -671,6 +675,7 @@ final class AppModel: ObservableObject {
                 }
                 if let other = await llamaConflict(engine: .llamaCpp, model: m) {
                     alert = llamaBusyAlert(other)
+                    await refreshStatus()
                     return
                 }
                 let key = ModelKey(engine: .llamaCpp, model: m)

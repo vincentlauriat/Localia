@@ -18,15 +18,18 @@ public enum GGUFMetadata {
 
     private struct Reader {
         let handle: FileHandle
+        let size: UInt64
         mutating func bytes(_ n: Int) throws -> Data {
             guard n >= 0, let d = try handle.read(upToCount: n), d.count == n else { throw CocoaError(.fileReadCorruptFile) }
             return d
         }
         mutating func u32() throws -> UInt32 { try bytes(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian }
         mutating func u64() throws -> UInt64 { try bytes(8).withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }.littleEndian }
+        /// Lengths come from the file: overflow or a skip past the end is corruption, never a trap.
         mutating func skip(_ n: UInt64) throws {
-            let off = try handle.offset()
-            try handle.seek(toOffset: off + n)
+            let (end, overflow) = try handle.offset().addingReportingOverflow(n)
+            guard !overflow, end <= size else { throw CocoaError(.fileReadCorruptFile) }
+            try handle.seek(toOffset: end)
         }
         mutating func string() throws -> String {
             let n = try u64()
@@ -39,11 +42,13 @@ public enum GGUFMetadata {
     public static func contextLength(of url: URL) -> Int? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        var r = Reader(handle: handle)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+        else { return nil }
+        var r = Reader(handle: handle, size: size)
         do {
             guard try r.bytes(4) == Data("GGUF".utf8) else { return nil }
             let version = try r.u32()
-            guard version >= 2 else { return nil }
+            guard version == 2 || version == 3 else { return nil }   // also rejects big-endian files
             _ = try r.u64()                       // tensor count
             let kvCount = try r.u64()
             guard kvCount <= 100_000 else { return nil }
@@ -60,7 +65,9 @@ public enum GGUFMetadata {
                     guard let inner = ValueType(rawValue: try r.u32()) else { return nil }
                     let n = try r.u64()
                     if let size = inner.fixedSize {
-                        try r.skip(n * UInt64(size))
+                        let (bytes, overflow) = n.multipliedReportingOverflow(by: UInt64(size))
+                        guard !overflow else { return nil }
+                        try r.skip(bytes)
                     } else if inner == .string {
                         for _ in 0..<n { try r.skip(try r.u64()) }
                     } else {

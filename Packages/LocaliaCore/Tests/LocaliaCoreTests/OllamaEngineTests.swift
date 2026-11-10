@@ -27,6 +27,25 @@ final class OllamaEngineTests: XCTestCase {
                        supportsTools: true, memoryIsMeasured: false, speedIsMeasured: false, quality: 0.8)
     }
 
+    /// A loaded model reports what Ollama really serves (/api/ps); otherwise /api/show is used.
+    func test_contextWindow_prefersLoadedContext_thenShow() async throws {
+        EngineStubProtocol.handler = { r in
+            switch r.path {
+            case "/api/ps": StubResponse(text: #"{"models":[{"name":"a-localia","context_length":32768}]}"#)
+            case "/api/show": StubResponse(text: #"{"parameters":"num_ctx 65536","model_info":{"general.architecture":"llama","llama.context_length":131072}}"#)
+            default: StubResponse(status: 404)
+            }
+        }
+        let engine = makeEngine()
+        let loaded = await engine.contextWindow("a-localia")
+        XCTAssertEqual(loaded, 32768)
+        let notLoaded = await engine.contextWindow("b-localia")
+        XCTAssertEqual(notLoaded, 65536)
+        EngineStubProtocol.handler = { _ in StubResponse(status: 500) }
+        let down = await engine.contextWindow("a-localia")
+        XCTAssertEqual(down, LocaliaConstants.localContextTokens)
+    }
+
     func test_reusesRunningOllama_doesNotSpawn() async throws {
         EngineStubProtocol.handler = { r in r.path == "/api/version" ? StubResponse(text: #"{"version":"0.40.3"}"#) : StubResponse(status: 404) }
         let launcher = FakeLauncher()

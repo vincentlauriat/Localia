@@ -23,6 +23,33 @@ final class GGUFMetadataTests: XCTestCase {
         XCTAssertNil(GGUFMetadata.contextLength(of: tmp.appendingPathComponent("none.gguf")))
     }
 
+    /// Lengths read from the file must never trap (UInt64 overflow) or seek past the end.
+    func test_hugeLengths_returnNil_withoutCrashing() throws {
+        func header(_ body: (inout Data) -> Void) throws -> URL {
+            var d = Data("GGUF".utf8)
+            func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+            func u64(_ v: UInt64) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+            u32(3); u64(0); u64(2)
+            u64(4); d.append(contentsOf: Array("a.xs".utf8)); u32(9)
+            body(&d)
+            let f = tmp.appendingPathComponent(UUID().uuidString + ".gguf")
+            try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            try d.write(to: f); return f
+        }
+        func le32(_ v: UInt32) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
+        func le64(_ v: UInt64) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
+        // uint64 array of 2^62 elements: count * 8 overflows.
+        let a = try header { $0 += le32(10) + le64(1 << 62) }
+        XCTAssertNil(GGUFMetadata.contextLength(of: a))
+        // string array whose element length is UInt64.max: offset + length overflows.
+        let b = try header { $0 += le32(8) + le64(1) + le64(.max) }
+        XCTAssertNil(GGUFMetadata.contextLength(of: b))
+        // big-endian header: version reads as 0x03000000.
+        var be = Data("GGUF".utf8); be += [0, 0, 0, 3] + [UInt8](repeating: 0, count: 16)
+        let c = tmp.appendingPathComponent("be.gguf"); try be.write(to: c)
+        XCTAssertNil(GGUFMetadata.contextLength(of: c))
+    }
+
     func test_servedContext_capsAtTrained() {
         XCTAssertEqual(LocaliaConstants.servedContext(trained: 32768), 32768)
         XCTAssertEqual(LocaliaConstants.servedContext(trained: 262_144), LocaliaConstants.localContextTokens)
@@ -49,6 +76,8 @@ final class GGUFMetadataTests: XCTestCase {
         XCTAssertEqual(OllamaEngine.contextWindow(show: show(32768, "num_ctx                        65536")), 32768)
         XCTAssertEqual(OllamaEngine.contextWindow(show: show(131_072, "num_ctx 65536\nstop \"<|im_end|>\"")), 65536)
         XCTAssertEqual(OllamaEngine.contextWindow(show: show(131_072, "num_ctx 8192")), 8192)
-        XCTAssertEqual(OllamaEngine.contextWindow(show: show(nil, nil)), LocaliaConstants.localContextTokens)
+        // No num_ctx: Ollama serves its default, not the trained length.
+        XCTAssertEqual(OllamaEngine.contextWindow(show: show(32768, nil)), OllamaEngine.defaultContext)
+        XCTAssertEqual(OllamaEngine.contextWindow(show: show(nil, nil)), OllamaEngine.defaultContext)
     }
 }
