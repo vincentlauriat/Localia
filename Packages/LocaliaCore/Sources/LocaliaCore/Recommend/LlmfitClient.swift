@@ -15,8 +15,9 @@ public struct LlmfitClient: Sendable {
     }
 
     /// The caller passes `poolGB = 2 x totalRAMGB` so llmfit neither drops rows nor halves the context;
-    /// Localia grades fit itself.
-    public func recommend(poolGB: Double, contextTokens: Int, limit: Int = 2000) async throws -> [LlmfitRow] {
+    /// Localia grades fit itself. llmfit sorts by its own score (favouring big models), so any small cap drops
+    /// small fast models: the default asks for the whole catalog (about 14k rows, under 2 s).
+    public func recommend(poolGB: Double, contextTokens: Int, limit: Int = 100_000) async throws -> [LlmfitRow] {
         let args = ["recommend", "-n", String(limit), "--force-runtime", "llamacpp",
                     "--memory", Self.formatPool(poolGB), "--max-context", String(contextTokens), "--json"]
         let result = try await runner.run(binary, args, env: nil, timeout: 120)

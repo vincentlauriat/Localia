@@ -24,16 +24,22 @@ public struct Recommender: Sendable {
         var seen = Set<String>()
         var fit: [ModelCandidate] = []
         var uncertain: [ModelCandidate] = []
+        var excluded = ExclusionCounts()
 
         for row in rows {
-            guard let repo = Self.sourceRepo(row), let paramsB = row.paramsB,
-                  let rowQuant = row.bestQuant, let rowBpp = Self.bytesPerParam[rowQuant] else { continue }
+            let repo: String
+            switch Self.source(row) {
+            case .success(let r): repo = r
+            case .failure(let reason): excluded.count(reason); continue
+            }
+            guard let paramsB = row.paramsB, let rowQuant = row.bestQuant,
+                  let rowBpp = Self.bytesPerParam[rowQuant] else { excluded.noSpeedEstimate += 1; continue }
             passedFilter += 1
             let id = row.name
             guard !seen.contains(id) else { continue }
 
             let q = rowQuant == "MXFP4" ? "MXFP4" : LocaliaConstants.defaultQuant
-            guard let bpp = Self.bytesPerParam[q] else { continue }
+            guard let bpp = Self.bytesPerParam[q] else { excluded.noSpeedEstimate += 1; continue }
             let weightsGB = paramsB * bpp
             let measuredMem = measurements.memoryGB[id]
             let memoryGB = measuredMem ?? weightsGB + (row.memoryRequiredGB - paramsB * rowBpp)
@@ -41,7 +47,7 @@ public struct Recommender: Sendable {
             let tps: Double
             if let m = measuredTPS { tps = m }
             else if let e = row.estimatedTPS { tps = e * rowBpp / bpp * (measurements.speedRatio ?? 1) }
-            else { continue }
+            else { excluded.noSpeedEstimate += 1; continue }
 
             let ratio = memoryGB / pool
             let grade: Fit?
@@ -61,6 +67,8 @@ public struct Recommender: Sendable {
                 seen.insert(id); fit.append(make(g))
             } else if measuredMem == nil, weightsGB + 0.5 <= 0.85 * pool {
                 seen.insert(id); uncertain.append(make(.marginal))
+            } else {
+                excluded.tooBig += 1
             }
         }
 
@@ -79,15 +87,39 @@ public struct Recommender: Sendable {
 
         var reason: EmptyReason?
         if passedFilter == 0 { reason = .allFiltered } else if candidates.isEmpty { reason = .nothingFits }
-        return Recommendation(candidates: candidates, uncertain: unc, emptyReason: reason)
+        return Recommendation(candidates: candidates, uncertain: unc, emptyReason: reason,
+                              allCompatible: ranked, exclusions: excluded)
     }
 
-    static func sourceRepo(_ row: LlmfitRow) -> String? {
-        guard row.runnable, !row.ggufSources.isEmpty, row.category != "Embedding",
-              let org = row.name.split(separator: "/").first.map(String.init),
-              trustedBaseOrgs.contains(org) else { return nil }
-        let lower = row.name.lowercased()
-        if excludedNameFragments.contains(where: { lower.contains($0) }) { return nil }
-        return row.ggufSources.first { trustedGGUFProviders.contains($0.provider) }?.repo
+    enum Exclusion: Error { case notRunnable, noGGUF, untrustedOrg, excludedName, noTrustedProvider }
+
+    /// The trusted GGUF repo of a row, or the first reason it is left out.
+    static func source(_ row: LlmfitRow) -> Result<String, Exclusion> {
+        guard row.runnable else { return .failure(.notRunnable) }
+        guard !row.ggufSources.isEmpty else { return .failure(.noGGUF) }
+        guard let org = row.name.split(separator: "/").first.map(String.init),
+              trustedBaseOrgs.contains(org) else { return .failure(.untrustedOrg) }
+        if row.category == "Embedding" || isExcludedName(row.name) { return .failure(.excludedName) }
+        guard let repo = row.ggufSources.first(where: { trustedGGUFProviders.contains($0.provider) })?.repo
+        else { return .failure(.noTrustedProvider) }
+        return .success(repo)
+    }
+
+    /// Community finetunes, embeddings, rerankers, guards, drafts and base checkpoints.
+    public static func isExcludedName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return excludedNameFragments.contains { lower.contains($0) }
+    }
+}
+
+private extension ExclusionCounts {
+    mutating func count(_ reason: Recommender.Exclusion) {
+        switch reason {
+        case .notRunnable: notRunnable += 1
+        case .noGGUF: noGGUF += 1
+        case .untrustedOrg: untrustedOrg += 1
+        case .excludedName: excludedName += 1
+        case .noTrustedProvider: noTrustedProvider += 1
+        }
     }
 }
