@@ -82,6 +82,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var installed: [InstalledRow] = []
     @Published private(set) var diskUsageGB: [EngineID: Double] = [:]
     @Published private(set) var downloads: [String: DownloadState] = [:]
+    /// `InstalledRow.id` of the model being made the default, while `setDefault` runs.
+    @Published private(set) var selectingModel: String?
 
     // Installs
     @Published private(set) var engineStates: [EngineID: InstallState] = [:]
@@ -790,11 +792,36 @@ final class AppModel: ObservableObject {
         await refreshInstalled()
     }
 
+    /// Makes `row` the model launches and chat use (Models window "Set as Default", or a click in the panel),
+    /// switching the active engine when it lives on the other one. Nothing is loaded here. Refused when
+    /// llama.cpp would have to serve another model than the one a session uses.
     func setDefault(_ row: InstalledRow) async {
+        if let other = await llamaConflict(engine: row.engine, model: row.name) {
+            alert = llamaBusyAlert(other)
+            return
+        }
+        selectingModel = row.id
+        defer { selectingModel = nil }
         settings.defaultModel = row.name
         if row.engine != settings.activeEngine { await setActiveEngine(row.engine) }
         await noteModelUsed(row.name)
         await refreshInstalled()
+        await refreshLaunchTarget()
+    }
+
+    /// Served name of the model a launch or chat would use on the active engine: what a local launch resolves,
+    /// else the last or default model when installed there, else what chat picks.
+    var selectedModel: String? {
+        let active = settings.activeEngine
+        let names = installed.filter { $0.engine == active }.map(\.name)
+        if let m = launchModel, names.contains(m) { return m }
+        return [settings.lastModel, settings.defaultModel].compactMap { $0 }.first(where: names.contains)
+            ?? chatModel(for: active)
+    }
+
+    /// Whether `row` is the selected model (same engine and name).
+    func isSelected(_ row: InstalledRow) -> Bool {
+        row.engine == settings.activeEngine && row.name == selectedModel
     }
 
     /// Loads the model and measures it (again).

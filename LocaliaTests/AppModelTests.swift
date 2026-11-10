@@ -293,7 +293,13 @@ final class AppModelTests: XCTestCase {
         await model.setLocalMode(true)
         await model.launch(folder: try folder())   // session A on X
         XCTAssertNil(model.alert)
+        // Selecting Y is already refused (see test_setDefault_refusedDuringLlamaSession); force it to reach
+        // the launch-time guard as well.
         await model.setDefault(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
+        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        model.alert = nil
+        model.settings.defaultModel = "Y"
+        model.settings.lastModel = "Y"
         await model.launch(folder: try folder())   // B on Y: refused
         XCTAssertNotNil(model.alert)
         XCTAssertEqual(terminal.opened.count, 1)
@@ -544,6 +550,65 @@ final class AppModelTests: XCTestCase {
         let action = try XCTUnwrap(alert.action)
         await action.run()
         XCTAssertTrue(model.isLocalModeOn)
+    }
+
+    // MARK: Model selection (panel rows, Models window "Set as Default")
+
+    private func row(_ model: AppModel, _ name: String) throws -> InstalledRow {
+        try XCTUnwrap(model.installed.first { $0.name == name }, "\(name) is listed")
+    }
+
+    /// Selecting another installed model makes it the launch model right away, without loading it.
+    func test_setDefault_updatesLaunchModel() async throws {
+        let engine = FakeEngine(installed: ["m1", "m2"])
+        let model = makeModel(engine: engine) { $0.lastModel = "m1" }
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.launchModel, "m1")
+        XCTAssertEqual(model.selectedModel, "m1")
+        await model.setDefault(try row(model, "m2"))
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.launchModel, "m2")
+        XCTAssertEqual(model.selectedModel, "m2")
+        XCTAssertTrue(model.isSelected(try row(model, "m2")))
+        XCTAssertFalse(model.isSelected(try row(model, "m1")))
+        XCTAssertNil(model.selectingModel)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [], "selecting a model does not load it")
+    }
+
+    /// A model on the other engine switches the active engine too.
+    func test_setDefault_onOtherEngine_switchesEngine() async throws {
+        let ollama = FakeEngine(installed: ["m1"])
+        let llama = FakeEngine(id: .llamaCpp, installed: ["g1"])
+        let model = makeModel(engine: ollama, others: [llama]) { $0.lastModel = "m1" }
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.launchModel, "m1")
+        await model.setDefault(try row(model, "g1"))
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.launchModel, "g1")
+        XCTAssertEqual(model.selectedModel, "g1")
+    }
+
+    /// llama.cpp serves one model: while a session uses one, selecting another llama.cpp model is refused.
+    func test_setDefault_refusedDuringLlamaSession() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let model = makeModel(engine: llama) { $0.defaultModel = "X"; $0.lastModel = "X"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.runningSessions.map(\.model), ["X"])
+
+        await model.setDefault(try row(model, "Y"))
+        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        XCTAssertEqual(model.settings.defaultModel, "X")
+        XCTAssertEqual(model.settings.lastModel, "X")
+        XCTAssertEqual(model.launchModel, "X")
+        XCTAssertNil(model.selectingModel)
     }
 }
 

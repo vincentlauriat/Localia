@@ -60,11 +60,12 @@ struct DisclosureCard<Content: View>: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(iconColor)
                         .frame(width: 22)
-                    Text(title).font(.system(size: 14, weight: .semibold))
-                    Spacer()
+                    Text(title).font(.system(size: 14, weight: .semibold)).layoutPriority(1)
+                    Spacer(minLength: 8)
                     if let value {
+                        // A long value (a model name) truncates; the title keeps its width.
                         Text(value).font(.system(size: 12, weight: .medium)).foregroundStyle(valueColor ?? .secondary)
-                            .monospacedDigit().lineLimit(1)
+                            .monospacedDigit().lineLimit(1).truncationMode(.tail)
                     }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .bold))
