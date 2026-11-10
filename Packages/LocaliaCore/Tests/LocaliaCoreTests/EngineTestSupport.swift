@@ -12,6 +12,7 @@ struct RecordedRequest {
     let method: String
     let path: String
     let body: Data?
+    var query: String? = nil
     var json: NSDictionary? {
         guard let body, let o = try? JSONSerialization.jsonObject(with: body) else { return nil }
         return o as? NSDictionary
@@ -57,7 +58,8 @@ final class EngineStubProtocol: URLProtocol, @unchecked Sendable {
             }
             body = data
         }
-        let rec = RecordedRequest(method: request.httpMethod ?? "GET", path: request.url?.path ?? "", body: body)
+        let rec = RecordedRequest(method: request.httpMethod ?? "GET", path: request.url?.path ?? "", body: body,
+                                  query: request.url?.query)
         Self.lock.lock(); Self._recorded.append(rec); let h = Self._handler; Self.lock.unlock()
         let resp = h?(rec) ?? StubResponse(status: 404)
         let http = HTTPURLResponse(url: request.url!, statusCode: resp.status, httpVersion: "HTTP/1.1", headerFields: nil)!
