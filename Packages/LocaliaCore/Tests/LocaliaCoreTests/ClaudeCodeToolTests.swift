@@ -50,7 +50,7 @@ final class ClaudeCodeToolTests: XCTestCase {
         let t = tool(paths: [bin])
         _ = await t.locate()
         let cfg = dir.appendingPathComponent("claude-config")
-        let c = t.command(target: .local(engine: .ollama, baseURL: base, model: "gemma4-code"),
+        let c = t.command(target: .local(engine: .ollama, baseURL: base, model: "gemma4-code", contextTokens: 32768),
                           profile: .light, configDir: cfg)
         XCTAssertEqual(c.executable, bin)
         XCTAssertEqual(c.arguments, ["--bare", "--strict-mcp-config", "--permission-mode", "default"])
@@ -63,7 +63,7 @@ final class ClaudeCodeToolTests: XCTestCase {
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemma4-code",
             "CLAUDE_CODE_SUBAGENT_MODEL": "gemma4-code",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "65536",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "32768",
             "CLAUDE_CONFIG_DIR": cfg.path,
         ])
         XCTAssertEqual(c.unsetEnvironment, ["ANTHROPIC_AUTH_TOKEN"])
@@ -73,7 +73,7 @@ final class ClaudeCodeToolTests: XCTestCase {
         let bin = try fakeBinary("a")
         let t = tool(paths: [bin])
         _ = await t.locate()
-        let c = t.command(target: .local(engine: .llamaCpp, baseURL: base, model: "m"),
+        let c = t.command(target: .local(engine: .llamaCpp, baseURL: base, model: "m", contextTokens: 65536),
                           profile: .full, configDir: dir)
         XCTAssertEqual(c.arguments, [])
         XCTAssertNil(c.environment["CLAUDE_CONFIG_DIR"])

@@ -54,6 +54,17 @@ public protocol Engine: Sendable {
     /// Preloads the model so the first answer is warm.
     func load(_ modelName: String, contextTokens: Int) async throws
     func unload(_ modelName: String) async throws
+    /// Context window (tokens) the server gives this model: `LocaliaConstants.localContextTokens`, lowered to
+    /// the model's trained length when that is shorter. Unknown length: `localContextTokens`.
+    func contextWindow(_ modelName: String) async -> Int
+}
+
+extension LocaliaConstants {
+    /// `localContextTokens` capped at a trained length, when one is known.
+    public static func servedContext(trained: Int?) -> Int {
+        guard let trained, trained > 0 else { return localContextTokens }
+        return min(localContextTokens, trained)
+    }
 }
 
 /// Handle to a long-running server process that Localia started.

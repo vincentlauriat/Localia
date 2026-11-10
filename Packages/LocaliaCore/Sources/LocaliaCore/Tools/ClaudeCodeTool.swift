@@ -71,8 +71,9 @@ public struct ClaudeCodeTool: CodingTool {
             command = ToolCommand(executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: ["claude"],
                                   environment: [:], unsetEnvironment: [])
         }
-        guard case let .local(_, baseURL, model) = target else { return command }
-        let overlay = Self.localOverlay(baseURL: baseURL, model: model, profile: profile, configDir: configDir)
+        guard case let .local(_, baseURL, model, contextTokens) = target else { return command }
+        let overlay = Self.localOverlay(baseURL: baseURL, model: model, contextTokens: contextTokens,
+                                        profile: profile, configDir: configDir)
         command.environment = overlay.environment
         command.unsetEnvironment = overlay.unsetEnvironment
         command.arguments += overlay.arguments
@@ -90,7 +91,8 @@ public struct LocalOverlay: Equatable, Sendable {
 extension ClaudeCodeTool {
     /// What a local session adds on top of the plain `claude` invocation. Single source of truth for
     /// both `command(...)` and the shell shim's `state.env`.
-    public static func localOverlay(baseURL: URL, model: String, profile: LaunchProfile, configDir: URL?) -> LocalOverlay {
+    public static func localOverlay(baseURL: URL, model: String, contextTokens: Int,
+                                    profile: LaunchProfile, configDir: URL?) -> LocalOverlay {
         var environment = [
             "ANTHROPIC_BASE_URL": baseURL.absoluteString,
             "ANTHROPIC_API_KEY": apiKey,
@@ -100,9 +102,9 @@ extension ClaudeCodeTool {
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": model,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            // Unknown local models are assumed to have a 200k window; the servers run 65536.
-            // Auto-compact must fire inside the real window (it never raises above the model window).
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": String(LocaliaConstants.localContextTokens),
+            // Claude Code assumes a large window for models it does not know, and refuses an auto-compact
+            // window under 100k. Declaring the real window makes it compact before the server overflows.
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": String(contextTokens),
         ]
         var arguments: [String] = []
         if profile == .light {

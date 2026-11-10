@@ -15,7 +15,7 @@ public enum ShellShimError: Error, Equatable {
 public protocol ShellShimming: Sendable {
     func install() throws
     func uninstall() throws
-    func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy,
+    func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID) throws
 }
 
@@ -197,9 +197,10 @@ public struct ShellShim: ShellShimming {
 
     // MARK: - State
 
-    public func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy,
+    public func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                            profile: LaunchProfile, engine: EngineID) throws {
-        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: model, profile: profile,
+        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: model, contextTokens: contextTokens,
+                                                  profile: profile,
                                                   configDir: profile == .light ? configDir : nil)
         let probe = baseURL.appendingPathComponent(Self.healthPath(engine)).absoluteString
         var lines = [

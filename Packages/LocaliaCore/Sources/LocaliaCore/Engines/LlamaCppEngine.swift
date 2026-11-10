@@ -399,8 +399,10 @@ public actor LlamaCppEngine: Engine {
         try await stopServing()   // restarts our own server; a foreign one is never touched
         if await healthy() { throw EngineError.server("Port \(baseURL.port ?? LocaliaConstants.llamaServerPort) is already in use by another server.") }
 
+        // llama-server does not cap -c at the trained length: past it the model degrades, so never ask more.
+        let ctx = min(contextTokens, GGUFMetadata.contextLength(of: file) ?? contextTokens)
         let args = Self.serverArguments(model: file, alias: modelName, mmproj: mmprojFile(near: file),
-                                        contextTokens: contextTokens, port: baseURL.port ?? LocaliaConstants.llamaServerPort)
+                                        contextTokens: ctx, port: baseURL.port ?? LocaliaConstants.llamaServerPort)
         let handle = try launcher.launch(executable: bin, arguments: args, environment: ProcessInfo.processInfo.environment)
         ownServer = handle
         record.write(pid: handle.pid, binary: bin)
@@ -422,6 +424,12 @@ public actor LlamaCppEngine: Engine {
             d = d.deletingLastPathComponent()
         }
         return nil
+    }
+
+    /// `localContextTokens` capped at the GGUF's trained length (what `load` passes as `-c`).
+    public func contextWindow(_ modelName: String) async -> Int {
+        guard let file = try? modelFile(modelName) else { return LocaliaConstants.localContextTokens }
+        return LocaliaConstants.servedContext(trained: GGUFMetadata.contextLength(of: file))
     }
 
     /// Terminates the server, but only one that Localia launched and only while it serves `modelName`:

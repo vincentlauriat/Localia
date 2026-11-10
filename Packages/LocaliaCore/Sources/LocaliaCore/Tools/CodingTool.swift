@@ -2,7 +2,8 @@ import Foundation
 
 public enum LaunchTarget: Sendable {
     case cloud
-    case local(engine: EngineID, baseURL: URL, model: String)
+    /// `contextTokens`: the window the server gives `model` (see `Engine.contextWindow`).
+    case local(engine: EngineID, baseURL: URL, model: String, contextTokens: Int)
 }
 
 public enum LaunchProfile: String, Codable, Sendable { case light, full }

@@ -318,6 +318,39 @@ public actor OllamaEngine: Engine {
         _ = try await send(try post("api/generate", ["model": modelName, "keep_alive": 0]))
     }
 
+    /// Ollama's context when a model sets no `num_ctx` (its documented default).
+    static let defaultContext = 4096
+
+    /// A loaded model: the `context_length` `/api/ps` reports (what Ollama really serves). Otherwise its
+    /// `num_ctx` (the `-localia` variant asks for `localContextTokens`), capped at its trained
+    /// `<arch>.context_length`, as Ollama clamps to it; no `num_ctx` means Ollama's default.
+    public func contextWindow(_ modelName: String) async -> Int {
+        if let ps = try? await getJSON("api/ps"),
+           let m = (ps["models"] as? [[String: Any]])?.first(where: { ($0["name"] as? String) == modelName }),
+           let n = (m["context_length"] as? NSNumber)?.intValue, n > 0 {
+            return min(n, LocaliaConstants.localContextTokens)
+        }
+        guard let data = try? await send(try post("api/show", ["model": modelName], timeout: 10)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return LocaliaConstants.localContextTokens
+        }
+        return Self.contextWindow(show: obj)
+    }
+
+    static func contextWindow(show obj: [String: Any]) -> Int {
+        let info = obj["model_info"] as? [String: Any] ?? [:]
+        let arch = info["general.architecture"] as? String
+        let trained = (arch.flatMap { info["\($0).context_length"] }
+            ?? info.first { $0.key.hasSuffix(".context_length") }?.value) as? NSNumber
+        var numCtx: Int?
+        // `parameters` is Modelfile text, one "name value" per line.
+        for line in ((obj["parameters"] as? String) ?? "").split(whereSeparator: \.isNewline) {
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            if parts.count == 2, parts[0] == "num_ctx", let n = Int(parts[1]), n > 0 { numCtx = n }
+        }
+        return min(LocaliaConstants.servedContext(trained: trained?.intValue), numCtx ?? defaultContext)
+    }
+
     // MARK: - HTTP
 
     private func post(_ path: String, _ body: [String: Any], method: String = "POST",

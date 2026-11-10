@@ -99,7 +99,7 @@ final class ShellShimTests: XCTestCase {
     private func installAndState(on: Bool = true, model: String = "qwen3-coder:30b", policy: EngineDownPolicy = .fail,
                                  profile: LaunchProfile = .light, engine: EngineID = .ollama) throws {
         try shim().install()
-        try shim().writeState(on: on, baseURL: base, model: model, policy: policy, profile: profile, engine: engine)
+        try shim().writeState(on: on, baseURL: base, model: model, contextTokens: 32768, policy: policy, profile: profile, engine: engine)
     }
 
     private func backups(of rc: URL) throws -> [URL] {
@@ -227,7 +227,7 @@ final class ShellShimTests: XCTestCase {
             XCTAssertEqual(claudeLog()?.env["ANTHROPIC_AUTH_TOKEN"], "secret", shell)
 
             // State off.
-            try shim().writeState(on: false, baseURL: base, model: "m", policy: .fail, profile: .light, engine: .ollama)
+            try shim().writeState(on: false, baseURL: base, model: "m", contextTokens: 32768, policy: .fail, profile: .light, engine: .ollama)
             r = try run(shell, ["x"])
             XCTAssertEqual(r.status, 7, shell)
             XCTAssertEqual(claudeLog()?.args, ["x"], shell)
@@ -241,14 +241,15 @@ final class ShellShimTests: XCTestCase {
         let model = "it's a \"model\" $HOME `x`"
         try installAndState(on: true, model: model, profile: .full)
         touch("healthy")
-        let expected = ClaudeCodeTool.localOverlay(baseURL: base, model: model, profile: .full, configDir: nil)
+        let expected = ClaudeCodeTool.localOverlay(baseURL: base, model: model, contextTokens: 32768, profile: .full, configDir: nil)
         for shell in ["zsh", "bash"] {
             let r = try run(shell, ["--resume", "two words"])
             XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
             guard let log = claudeLog() else { return XCTFail("claude not run under \(shell)") }
             for (k, v) in expected.environment { XCTAssertEqual(log.env[k], v, "\(shell) \(k)") }
             XCTAssertEqual(log.env["ANTHROPIC_MODEL"], model, shell)
-            XCTAssertEqual(log.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "65536", shell)
+            XCTAssertEqual(log.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "32768", shell)
+            XCTAssertNil(log.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], shell)
             XCTAssertEqual(log.env["ANTHROPIC_API_KEY"], "localia-local", shell)
             XCTAssertNil(log.env["ANTHROPIC_AUTH_TOKEN"], shell)
             XCTAssertEqual(log.args, ["--resume", "two words"], shell)
