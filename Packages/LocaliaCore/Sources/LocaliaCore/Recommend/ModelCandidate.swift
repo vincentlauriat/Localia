@@ -1,6 +1,7 @@
 import Foundation
 
-public enum Fit: String, Sendable, Equatable { case perfect, good, marginal }
+/// `tooBig` only comes from Hugging Face search results: llmfit candidates always fit.
+public enum Fit: String, Sendable, Equatable { case perfect, good, marginal, tooBig }
 
 public enum EmptyReason: Sendable, Equatable { case nothingFits, allFiltered }
 
@@ -36,6 +37,11 @@ public struct ModelCandidate: Identifiable, Sendable, Equatable {
         self.memoryIsMeasured = memoryIsMeasured; self.speedIsMeasured = speedIsMeasured
         self.quality = quality; self.source = source; self.memoryIsEstimate = memoryIsEstimate
     }
+}
+
+extension ModelCandidate {
+    /// False for a search result too big for this Mac: it must not be downloaded.
+    public var fits: Bool { fit != .tooBig }
 }
 
 public struct Measurements: Codable, Sendable, Equatable {

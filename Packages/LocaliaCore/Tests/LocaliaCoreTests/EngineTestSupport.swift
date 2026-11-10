@@ -4,8 +4,11 @@ import Foundation
 struct StubResponse {
     var status: Int = 200
     var body: Data = Data()
+    /// When set, the request fails with this error instead of answering.
+    var error: URLError? = nil
     init(status: Int = 200, body: Data = Data()) { self.status = status; self.body = body }
     init(status: Int = 200, text: String) { self.init(status: status, body: Data(text.utf8)) }
+    init(error: URLError) { self.error = error }
 }
 
 struct RecordedRequest {
@@ -62,6 +65,10 @@ final class EngineStubProtocol: URLProtocol, @unchecked Sendable {
                                   query: request.url?.query)
         Self.lock.lock(); Self._recorded.append(rec); let h = Self._handler; Self.lock.unlock()
         let resp = h?(rec) ?? StubResponse(status: 404)
+        if let error = resp.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
         let http = HTTPURLResponse(url: request.url!, statusCode: resp.status, httpVersion: "HTTP/1.1", headerFields: nil)!
         client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: resp.body)
