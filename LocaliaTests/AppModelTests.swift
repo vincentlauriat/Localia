@@ -565,13 +565,18 @@ actor FakeEngine: Engine {
     private var holdingStarts = false
     private var heldStarts: [CheckedContinuation<Void, Never>] = []
     private var held: [CheckedContinuation<Void, Never>] = []
+    private var holdingPulls = false
+    private var heldPulls: [CheckedContinuation<Void, Never>] = []
+    private let state: InstallState
 
-    init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false) {
+    init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false,
+         state: InstallState = .installed("1.0", managedByLocalia: false)) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
         self.singleModel = id == .llamaCpp
+        self.state = state
     }
 
-    func installState() async -> InstallState { .installed("1.0", managedByLocalia: false) }
+    func installState() async -> InstallState { state }
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
     func uninstall() async throws {}
     func isServing() async -> Bool { startCount > 0 }
@@ -589,8 +594,15 @@ actor FakeEngine: Engine {
     }
     func loadedModels() async throws -> [LoadedModel] { loaded.sorted().map { LoadedModel(name: $0, memoryGB: 4) } }
     func pull(_ c: ModelCandidate, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> String {
+        if holdingPulls {
+            progress(42, 100)
+            await withCheckedContinuation { heldPulls.append($0) }
+        }
         installed.append(c.id); return c.id
     }
+    /// Until `releasePulls()`, a pull reports 42 % and then suspends (a download in progress).
+    func holdPulls() { holdingPulls = true }
+    func releasePulls() { holdingPulls = false; heldPulls.forEach { $0.resume() }; heldPulls = [] }
     func delete(_ modelName: String) async throws {}
     /// Until `releaseLoads()`, loads are recorded and then suspended (a slow llama-server start).
     func holdLoads() { holding = true }
@@ -609,8 +621,12 @@ final class FakeTool: CodingTool, @unchecked Sendable {
     private let lock = NSLock()
     private var _targets: [LaunchTarget] = []
     var targets: [LaunchTarget] { lock.lock(); defer { lock.unlock() }; return _targets }
+    private let path: URL?
 
-    func locate() async -> URL? { URL(fileURLWithPath: "/usr/bin/true") }
+    /// `path: nil` plays a Mac without Claude Code.
+    init(path: URL? = URL(fileURLWithPath: "/usr/bin/true")) { self.path = path }
+
+    func locate() async -> URL? { path }
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
     func command(target: LaunchTarget, profile: LaunchProfile, configDir: URL?) -> ToolCommand {
         lock.lock(); _targets.append(target); lock.unlock()

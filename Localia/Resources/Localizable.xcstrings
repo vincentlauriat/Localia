@@ -49,6 +49,38 @@
         }
       }
     },
+    "%@ of memory": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ of memory"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ de mémoire"
+          }
+        }
+      }
+    },
+    "%@ on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ on this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sur ce Mac"
+          }
+        }
+      }
+    },
     "%@ tok/s": {
       "localizations": {
         "en": {
@@ -125,22 +157,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ : %@ sur le disque"
-          }
-        }
-      }
-    },
-    "%@: about %@ of memory, %@ on this Mac.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@: about %@ of memory, %@ on this Mac."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ : environ %@ de mémoire, %@ sur ce Mac."
           }
         }
       }
@@ -881,22 +897,6 @@
         }
       }
     },
-    "Download %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Télécharger %@"
-          }
-        }
-      }
-    },
     "Download a model in the Models window first.": {
       "localizations": {
         "en": {
@@ -989,6 +989,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "En téléchargement : %@"
+          }
+        }
+      }
+    },
+    "Downloading…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargement…"
           }
         }
       }
@@ -1233,6 +1249,22 @@
         }
       }
     },
+    "Get Started": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Get Started"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commencer"
+          }
+        }
+      }
+    },
     "Install": {
       "localizations": {
         "en": {
@@ -1293,6 +1325,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Installer un moteur"
+          }
+        }
+      }
+    },
+    "Install an engine first.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install an engine first."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installez d'abord un moteur."
           }
         }
       }
@@ -1393,6 +1441,22 @@
         }
       }
     },
+    "Installing %@…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installing %@…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installation de %@…"
+          }
+        }
+      }
+    },
     "Launch": {
       "localizations": {
         "en": {
@@ -1489,18 +1553,18 @@
         }
       }
     },
-    "Local AI on this Mac, in three steps": {
+    "Local AI coding models, right on this Mac.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Local AI on this Mac, in three steps"
+            "value": "Local AI coding models, right on this Mac."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "L'IA locale sur ce Mac, en trois étapes"
+            "value": "Des modèles d'IA pour coder, directement sur ce Mac."
           }
         }
       }
@@ -1585,6 +1649,22 @@
         }
       }
     },
+    "Localia installs a coding model on your Mac and runs Claude Code on it. In local mode, your code and your prompts never leave it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installs a coding model on your Mac and runs Claude Code on it. In local mode, your code and your prompts never leave it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installe un modèle de code sur votre Mac et y fait tourner Claude Code. En mode local, votre code et vos requêtes ne quittent jamais ce Mac."
+          }
+        }
+      }
+    },
     "Localia sessions only": {
       "localizations": {
         "en": {
@@ -1645,6 +1725,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Localia, mode local activé"
+          }
+        }
+      }
+    },
+    "Looking for Claude Code…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for Claude Code…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche de Claude Code…"
           }
         }
       }
@@ -2161,6 +2257,22 @@
         }
       }
     },
+    "Ready to go": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready to go"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout est prêt"
+          }
+        }
+      }
+    },
     "Recommendations": {
       "localizations": {
         "en": {
@@ -2257,6 +2369,22 @@
         }
       }
     },
+    "Runs on this Mac, free and open source.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs on this Mac, free and open source."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fonctionne sur ce Mac, gratuit et open source."
+          }
+        }
+      }
+    },
     "Set as Default": {
       "localizations": {
         "en": {
@@ -2285,6 +2413,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Réglages…"
+          }
+        }
+      }
+    },
+    "Setup: %lld of 3 done": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setup: %lld of 3 done"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuration : %lld sur 3"
           }
         }
       }
@@ -2365,6 +2509,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Démarrage de %@…"
+          }
+        }
+      }
+    },
+    "Step %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Step %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étape %lld"
           }
         }
       }
@@ -2465,6 +2625,22 @@
         }
       }
     },
+    "The coding assistant Localia opens in your terminal. This runs Anthropic's official installer.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The coding assistant Localia opens in your terminal. This runs Anthropic's official installer."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'assistant de code que Localia ouvre dans votre terminal. Il s'installe avec l'installateur officiel d'Anthropic."
+          }
+        }
+      }
+    },
     "The command failed (status %@). %@": {
       "localizations": {
         "en": {
@@ -2525,6 +2701,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Le moteur n'est pas installé."
+          }
+        }
+      }
+    },
+    "The engine runs the models on this Mac. Ollama is the simplest choice.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The engine runs the models on this Mac. Ollama is the simplest choice."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le moteur fait tourner les modèles sur ce Mac. Ollama est le choix le plus simple."
           }
         }
       }
@@ -2605,22 +2797,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce modèle demande environ %@, et environ %@ sont libres. Le Mac risque de ralentir."
-          }
-        }
-      }
-    },
-    "This runs Anthropic's official installer.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This runs Anthropic's official installer."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cela lance l'installateur officiel d'Anthropic."
           }
         }
       }
@@ -2877,6 +3053,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Si le moteur est arrêté"
+          }
+        }
+      }
+    },
+    "You can change the engine and the model later in Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can change the engine and the model later in Settings."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vous pourrez changer de moteur et de modèle plus tard dans les Réglages."
           }
         }
       }

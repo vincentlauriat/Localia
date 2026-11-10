@@ -20,6 +20,8 @@ enum Theme {
             ? NSColor(hex: 0x4FD1C5).withAlphaComponent(0.18)
             : NSColor(hex: 0x045A54).withAlphaComponent(0.12)
     })
+    /// Text and symbols on an accent fill: white on the dark teal, deep teal on the light teal of dark mode.
+    static let onAccent = adaptive(light: 0xFFFFFF, dark: 0x05302C)
     static let blue = adaptive(light: 0x2A78D6, dark: 0x4D8CE0)
     static let orange = adaptive(light: 0xD9822B, dark: 0xF0A04B)
     static let red = adaptive(light: 0xD93F3F, dark: 0xFF6961)
