@@ -345,7 +345,12 @@ private struct DiscoverPane: View {
     private var list: some View {
         let rows = visible
         return List(selection: $browser.selectedID) {
-            if section == .forThisMac, let r = model.recommendation {
+            if let error = model.recommendationError, section != .newOnHF {
+                // A refresh failed: the list below is the last one read.
+                Notice(text: String(localized: "Could not read recommendations: \(error)"),
+                       symbol: "exclamationmark.triangle", color: Theme.red)
+            }
+            if section != .newOnHF, let r = model.recommendation {
                 if let reason = r.emptyReason {
                     Notice(text: RecommendationMessages.message(reason), symbol: "exclamationmark.triangle", color: Theme.orange)
                 } else if r.allSlow {
@@ -354,7 +359,8 @@ private struct DiscoverPane: View {
             }
             Section {
                 ForEach(rows) { ModelRow(model: model, item: $0, pool: model.profile.usablePoolGB).tag($0.id) }
-                if rows.isEmpty {
+                // With llmfit's own empty reason shown above, "nothing to list" would only repeat it.
+                if rows.isEmpty, !(unfiltered.isEmpty && section != .newOnHF && model.recommendation?.emptyReason != nil) {
                     EmptyFilterRow(browser: $browser, hidden: unfiltered.count)
                 }
                 searchStatus
