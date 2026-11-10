@@ -5,5 +5,14 @@
     <link>https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml</link>
     <description>Localia release feed</description>
     <language>en</language>
+    <item>
+      <title>v1.0.0</title>
+      <pubDate>Tue, 10 Nov 2026 10:28:25 +0100</pubDate>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/vincentlauriat/Localia/releases/tag/v1.0.0</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/vincentlauriat/Localia/releases/download/v1.0.0/Localia-1.0.0.dmg" type="application/octet-stream" sparkle:edSignature="el7Rge28zmrv8wYX8v8YOa9DFr5D47qqm9ffs76xC2jsS2yQJW1ZvtRIXggygoFRK30C385boQC+AWEstJ3KBQ==" length="10758303" />
+    </item>
   </channel>
 </rss>
