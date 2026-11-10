@@ -142,9 +142,11 @@ struct ModelItem: Identifiable, Equatable {
 
     static func llmfit(_ c: ModelCandidate) -> ModelItem { ModelItem(candidate: c, verdict: .fits(c.fit)) }
     static func uncertain(_ c: ModelCandidate) -> ModelItem { ModelItem(candidate: c, verdict: .tight) }
-    static func hf(_ e: HFCatalogEntry, fromSearch: Bool = false) -> ModelItem {
-        ModelItem(candidate: e.candidate, verdict: e.candidate.fits ? .fits(e.candidate.fit) : .doesNotFit,
-                  fromSearch: fromSearch)
+    /// `uncertainIDs`: llmfit's uncertain models, which a search can return as llmfit candidates.
+    static func hf(_ e: HFCatalogEntry, fromSearch: Bool = false, uncertainIDs: Set<String> = []) -> ModelItem {
+        let verdict: Verdict = !e.candidate.fits ? .doesNotFit
+            : uncertainIDs.contains(e.candidate.id) ? .tight : .fits(e.candidate.fit)
+        return ModelItem(candidate: e.candidate, verdict: verdict, fromSearch: fromSearch)
     }
 
     static func dedupe(_ items: [ModelItem]) -> [ModelItem] {
@@ -240,6 +242,9 @@ private struct ModelsSidebar: View {
             }
             if s == .newOnHF, [.loading, .waitingForLlmfit].contains(model.hfRecentState) {
                 ProgressView().controlSize(.mini)
+                    .accessibilityLabel(model.hfRecentState == .loading
+                                        ? String(localized: "Looking for new GGUFs on Hugging Face…")
+                                        : String(localized: "Waiting for llmfit"))
             } else if s == .newOnHF, model.hfRecentState == .unavailable {
                 Image(systemName: "wifi.slash").foregroundStyle(.secondary)
                     .accessibilityLabel(String(localized: "Unavailable offline"))
@@ -276,7 +281,9 @@ private struct DiscoverPane: View {
     @Binding var browser: ModelsBrowserState
 
     private var searchItems: [ModelItem] {
-        browser.activeSearch == nil ? [] : model.hfSearchResults.map { ModelItem.hf($0, fromSearch: true) }
+        guard browser.activeSearch != nil else { return [] }
+        let uncertain = Set((model.recommendation?.uncertain ?? []).map(\.id))
+        return model.hfSearchResults.map { ModelItem.hf($0, fromSearch: true, uncertainIDs: uncertain) }
     }
 
     /// Section items matching the search text, then the Hugging Face results.

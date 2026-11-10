@@ -245,6 +245,10 @@ final class ModelsSnapshotTests: XCTestCase {
         XCTAssertEqual(ids(b), ["big", "hf"])
         XCTAssertFalse(items[2].canDownload, "a model that does not fit is never offered for download")
         XCTAssertEqual(ModelItem.dedupe(items + items).count, items.count)
+        // A search result llmfit lists as uncertain keeps the tight verdict, not "fits, marginal".
+        let found = HFCatalogEntry(candidate: items[0].candidate, createdAt: nil, downloads: 0)
+        XCTAssertEqual(ModelItem.hf(found, fromSearch: true, uncertainIDs: ["fit"]).verdict, .tight)
+        XCTAssertEqual(ModelItem.hf(found, fromSearch: true).verdict, .fits(.good))
     }
 
     // MARK: Rendering
