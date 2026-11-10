@@ -132,7 +132,6 @@ struct ModelItem: Identifiable, Equatable {
     var isHF: Bool { candidate.source == .huggingface }
     /// `AppModel.download` refuses a candidate that does not fit; the button is disabled to match.
     var canDownload: Bool { verdict != .doesNotFit && candidate.fits }
-    var surelyFits: Bool { if case .fits = verdict { true } else { false } }
 
     /// weights + KV cache + overhead = memory, when the model layer knows the split (nil when the memory
     /// is measured or the base config is gated).
@@ -159,10 +158,10 @@ struct ModelItem: Identifiable, Equatable {
         return [candidate.displayName, candidate.id, candidate.ggufRepo].contains { $0.localizedCaseInsensitiveContains(q) }
     }
 
-    /// Filter chips. Fits keeps only sure fits: it hides tight estimates and models too big for this Mac.
+    /// Filter chips. Fits hides only models too big for this Mac: tight estimates stay, with their badge.
     func passes(_ b: ModelsBrowserState) -> Bool {
         if b.toolsOnly, !candidate.supportsTools { return false }
-        if b.fitsOnly, !surelyFits { return false }
+        if b.fitsOnly, verdict == .doesNotFit { return false }
         if b.fastOnly, candidate.slow { return false }
         switch b.source {
         case .all: return true
@@ -569,7 +568,7 @@ private struct DiscoverHeader: View {
             Chip(title: String(localized: "Tools"), symbol: "wrench.and.screwdriver", isOn: $browser.toolsOnly,
                  help: String(localized: "Only models that can call tools: Claude Code needs them to read and edit files."))
             Chip(title: String(localized: "Fits"), symbol: "memorychip", isOn: $browser.fitsOnly,
-                 help: String(localized: "Only models that fit for sure: hides tight estimates and models too big for this Mac."))
+                 help: String(localized: "Hides models too big for this Mac. Tight estimates stay visible."))
             Chip(title: String(localized: "Fast"), symbol: "hare", isOn: $browser.fastOnly,
                  help: String(localized: "Only models at \(LocaliaConstants.speedFloorTPS) tok/s or more."))
             Spacer(minLength: 8)
@@ -893,7 +892,6 @@ private struct ModelDetailPane: View {
                     fact(String(localized: "Source"), Self.source(item))
                     fact(String(localized: "Tools"), c.supportsTools ? String(localized: "Yes") : String(localized: "No"))
                     fact(String(localized: "Speed"), Self.speed(c))
-                    // TODO(model): add a "Context" row once `ModelCandidate.contextLength` (tokens) is exposed.
                     fact(String(localized: "Memory"), Self.estimateKind(c))
                 }
                 .font(.callout)

@@ -214,7 +214,7 @@ final class ModelsSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(ModelsSection.allCases.map(\.rawValue)).count, ModelsSection.allCases.count)
     }
 
-    /// Chips: Fits hides tight estimates and models that do not fit; Tools, Fast and Source filter as named.
+    /// Chips: Fits hides only models that do not fit (tight estimates stay); Tools, Fast and Source filter as named.
     func testFilterChips() {
         func item(_ id: String, verdict: ModelItem.Verdict, tools: Bool = true, slow: Bool = false,
                   source: CandidateSource = .llmfit) -> ModelItem {
@@ -230,7 +230,11 @@ final class ModelsSnapshotTests: XCTestCase {
                      item("slow", verdict: .fits(.good), slow: true), item("hf", verdict: .fits(.good), source: .huggingface)]
         func ids(_ b: ModelsBrowserState) -> [String] { items.filter { $0.passes(b) }.map(\.id) }
         var b = ModelsBrowserState()
-        XCTAssertEqual(ids(b), ["fit", "slow", "hf"], "default: Tools and Fits on")
+        XCTAssertEqual(ids(b), ["fit", "tight", "slow", "hf"], "default: Tools and Fits on")
+        XCTAssertTrue(ids(b).contains("tight"), "a tight estimate stays visible with Fits on")
+        b.toolsOnly = false
+        XCTAssertFalse(ids(b).contains("big"), "Fits hides a model that does not fit")
+        b = ModelsBrowserState()
         b.clearFilters()
         XCTAssertEqual(ids(b).count, items.count)
         b.fastOnly = true

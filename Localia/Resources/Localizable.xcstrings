@@ -1809,6 +1809,22 @@
         }
       }
     },
+    "Hides models too big for this Mac. Tight estimates stay visible.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides models too big for this Mac. Tight estimates stay visible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque les modèles trop gros pour ce Mac. Les estimations justes restent visibles."
+          }
+        }
+      }
+    },
     "Hugging Face is unavailable": {
       "localizations": {
         "en": {
@@ -3229,22 +3245,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Seulement les modèles qui savent appeler des outils : Claude Code en a besoin pour lire et modifier les fichiers."
-          }
-        }
-      }
-    },
-    "Only models that fit for sure: hides tight estimates and models too big for this Mac.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Only models that fit for sure: hides tight estimates and models too big for this Mac."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Seulement les modèles qui tiennent à coup sûr : masque les estimations justes et les modèles trop gros pour ce Mac."
           }
         }
       }
