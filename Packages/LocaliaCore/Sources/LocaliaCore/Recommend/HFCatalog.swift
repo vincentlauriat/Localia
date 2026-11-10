@@ -176,14 +176,16 @@ public struct HFCatalog: Sendable {
 
     private func kvShape(base: String) async -> KVShape? {
         if let cached = await configs.get(base) { return cached }
+        guard let url = URL(string: "https://huggingface.co/\(base)/resolve/main/config.json"),
+              let (data, resp) = try? await session.data(from: url) else {
+            return nil   // no answer (offline, cancelled): not cached, retried next time
+        }
         var shape: KVShape?
-        if let url = URL(string: "https://huggingface.co/\(base)/resolve/main/config.json"),
-           let (data, resp) = try? await session.data(from: url),
-           (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
+        if (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             shape = KVShape(config: obj)
         }
-        // Unreadable (gated, missing) is cached too: it will not become readable during this run.
+        // Answered but unreadable (gated, missing) is cached too: it will not become readable during this run.
         await configs.set(base, shape)
         return shape
     }

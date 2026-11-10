@@ -313,13 +313,11 @@ final class AppModel: ObservableObject {
         guard force || hfRecentState == .idle || hfRecentState == .unavailable, hfRecentState != .loading,
               let ctx = hfContext() else { return }
         hfRecentState = .loading
-        do {
-            hfRecent = try await deps.hfCatalog.recent(ctx)
-            hfRecentState = .loaded
-        } catch {
-            hfRecent = []
-            hfRecentState = .unavailable
-        }
+        let entries = try? await deps.hfCatalog.recent(ctx)
+        // Cancelled (tab switched, window closed): partial estimates are dropped and the next visit reloads.
+        if Task.isCancelled { hfRecentState = .idle; return }
+        hfRecent = entries ?? []
+        hfRecentState = entries == nil ? .unavailable : .loaded
     }
 
     /// Searches Hugging Face GGUFs (any author); an empty query clears the results.
