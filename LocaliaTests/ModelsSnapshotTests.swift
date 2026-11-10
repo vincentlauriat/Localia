@@ -177,6 +177,7 @@ final class ModelsSnapshotTests: XCTestCase {
 
         let shots = [
             Shot(name: "for-this-mac", model: online, section: .forThisMac, browser: forThisMac),
+            Shot(name: "compatible-filters", model: online, section: .compatible),
             Shot(name: "compatible-no-filters", model: online, section: .compatible, browser: compatible),
             Shot(name: "compatible-search", model: online, section: .compatible, browser: search),
             Shot(name: "hf-recent", model: online, section: .newOnHF, browser: recent),
