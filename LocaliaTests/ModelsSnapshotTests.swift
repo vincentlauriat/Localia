@@ -64,13 +64,16 @@ final class ModelsSnapshotTests: XCTestCase {
 
     private static func hf(_ repo: String, mem: Double, tps: Double, verdict: Fit?, tools: Bool = true) -> HFCatalogEntry {
         let name = String(repo.split(separator: "/").last!).replacingOccurrences(of: "-GGUF", with: "")
+        let gated = repo.contains("Granite")
+        let weights = mem * 0.55, overhead = 0.5
         return HFCatalogEntry(
             candidate: ModelCandidate(id: repo, displayName: name, ggufRepo: repo, quant: "Q4_K_M",
-                                      weightsGB: mem * 0.55, memoryGB: mem, estimatedTPS: tps, fit: verdict ?? .marginal,
+                                      weightsGB: weights, memoryGB: mem, estimatedTPS: tps, fit: verdict ?? .marginal,
                                       slow: tps < 15, supportsTools: tools, memoryIsMeasured: false,
                                       speedIsMeasured: false, quality: 0, source: .huggingface,
-                                      memoryIsEstimate: repo.contains("Granite")),
-            verdict: verdict, createdAt: "2026-11-01T00:00:00.000Z", downloads: 1200)
+                                      memoryIsEstimate: gated, fits: verdict != nil,
+                                      kvCacheGB: gated ? nil : mem - weights - overhead, overheadGB: gated ? nil : overhead),
+            createdAt: "2026-11-01T00:00:00.000Z", downloads: 1200)
     }
 
     private static let recent = [
@@ -172,6 +175,8 @@ final class ModelsSnapshotTests: XCTestCase {
         search.selectedID = "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
         var recent = ModelsBrowserState()
         recent.selectedID = "unsloth/Devstral-Small-2-12B-GGUF"
+        var gated = ModelsBrowserState()
+        gated.selectedID = "lmstudio-community/Granite-4.1-7B-GGUF"
         var measured = ModelsBrowserState()
         measured.selectedID = "mistralai/Ministral-8B-Instruct-2410"
 
@@ -181,6 +186,7 @@ final class ModelsSnapshotTests: XCTestCase {
             Shot(name: "compatible-no-filters", model: online, section: .compatible, browser: compatible),
             Shot(name: "compatible-search", model: online, section: .compatible, browser: search),
             Shot(name: "hf-recent", model: online, section: .newOnHF, browser: recent),
+            Shot(name: "hf-gated", model: online, section: .newOnHF, browser: gated),
             Shot(name: "hf-offline", model: offline, section: .newOnHF),
             Shot(name: "installed", model: online, section: .installed),
             Shot(name: "downloads", model: online, section: .downloads),
