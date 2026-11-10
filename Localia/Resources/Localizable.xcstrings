@@ -1505,6 +1505,22 @@
         }
       }
     },
+    "Estimate: %@ of %@ usable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimate: %1$@ of %2$@ usable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation : %1$@ sur %2$@ utilisables"
+          }
+        }
+      }
+    },
     "Estimated": {
       "localizations": {
         "en": {
@@ -1821,6 +1837,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "La recherche Hugging Face est indisponible hors ligne."
+          }
+        }
+      }
+    },
+    "Hugging Face search waits for llmfit, which gives this Mac's speed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face search waits for llmfit, which gives this Mac's speed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La recherche Hugging Face attend llmfit, qui donne la vitesse de ce Mac."
           }
         }
       }
@@ -4321,18 +4353,50 @@
         }
       }
     },
-    "Weights %@ + context and overhead %@": {
+    "Waiting for llmfit": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Weights %1$@ + context and overhead %2$@"
+            "value": "Waiting for llmfit"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Poids %1$@ + contexte et marge %2$@"
+            "value": "En attente de llmfit"
+          }
+        }
+      }
+    },
+    "Waiting for llmfit: Hugging Face models are graded with its speed for this Mac…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for llmfit: Hugging Face models are graded with its speed for this Mac…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente de llmfit : les modèles Hugging Face sont évalués avec sa vitesse pour ce Mac…"
+          }
+        }
+      }
+    },
+    "Weights %@ + context %@ + overhead %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weights %1$@ + context %2$@ + overhead %3$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poids %1$@ + contexte %2$@ + marge %3$@"
           }
         }
       }
@@ -4509,6 +4573,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "llmfit %@ est la dernière version."
+          }
+        }
+      }
+    },
+    "llmfit could not be read, and Hugging Face models are graded with its speed for this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit could not be read, and Hugging Face models are graded with its speed for this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit n’a pas pu être lu, et les modèles Hugging Face sont évalués avec sa vitesse pour ce Mac."
+          }
+        }
+      }
+    },
+    "llmfit returned as many models as Localia asked for: its catalog may be cut, some compatible models may be missing.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit returned as many models as Localia asked for: its catalog may be cut, some compatible models may be missing."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit a renvoyé autant de modèles que Localia en demandait : son catalogue est peut-être tronqué, des modèles compatibles peuvent manquer."
           }
         }
       }

@@ -130,19 +130,22 @@ struct ModelItem: Identifiable, Equatable {
 
     var id: String { candidate.id }
     var isHF: Bool { candidate.source == .huggingface }
-    var canDownload: Bool { verdict != .doesNotFit }
+    /// `AppModel.download` refuses a candidate that does not fit; the button is disabled to match.
+    var canDownload: Bool { verdict != .doesNotFit && candidate.fits }
     var surelyFits: Bool { if case .fits = verdict { true } else { false } }
 
-    /// Context and runtime overhead on top of the weights. Measured totals can undercut the estimated
-    /// weights, hence the clamp.
-    // TODO(model): split into `ModelCandidate.contextGB` (KV cache at the default context) and
-    // `ModelCandidate.overheadGB` once the recommender exposes them; until then they are shown together.
-    var contextAndOverheadGB: Double { max(0, candidate.memoryGB - candidate.weightsGB) }
+    /// weights + KV cache + overhead = memory, when the model layer knows the split (nil when the memory
+    /// is measured or the base config is gated).
+    var breakdown: (weights: Double, kvCache: Double, overhead: Double)? {
+        guard let kv = candidate.kvCacheGB, let overhead = candidate.overheadGB else { return nil }
+        return (candidate.weightsGB, kv, overhead)
+    }
 
     static func llmfit(_ c: ModelCandidate) -> ModelItem { ModelItem(candidate: c, verdict: .fits(c.fit)) }
     static func uncertain(_ c: ModelCandidate) -> ModelItem { ModelItem(candidate: c, verdict: .tight) }
     static func hf(_ e: HFCatalogEntry, fromSearch: Bool = false) -> ModelItem {
-        ModelItem(candidate: e.candidate, verdict: e.verdict.map(Verdict.fits) ?? .doesNotFit, fromSearch: fromSearch)
+        ModelItem(candidate: e.candidate, verdict: e.candidate.fits ? .fits(e.candidate.fit) : .doesNotFit,
+                  fromSearch: fromSearch)
     }
 
     static func dedupe(_ items: [ModelItem]) -> [ModelItem] {
@@ -236,7 +239,7 @@ private struct ModelsSidebar: View {
                 ProgressView(value: f).progressViewStyle(.circular).controlSize(.mini)
                     .accessibilityLabel(String(localized: "Download progress"))
             }
-            if s == .newOnHF, model.hfRecentState == .loading {
+            if s == .newOnHF, [.loading, .waitingForLlmfit].contains(model.hfRecentState) {
                 ProgressView().controlSize(.mini)
             } else if s == .newOnHF, model.hfRecentState == .unavailable {
                 Image(systemName: "wifi.slash").foregroundStyle(.secondary)
@@ -324,9 +327,9 @@ private struct DiscoverPane: View {
     private var hfEmptyState: AnyView? {
         switch model.hfRecentState {
         case .idle, .loading:
-            return AnyView(LoadingView(text: model.recommendation == nil
-                                       ? String(localized: "Asking llmfit what fits this Mac…")
-                                       : String(localized: "Looking for new GGUFs on Hugging Face…")))
+            return AnyView(LoadingView(text: String(localized: "Looking for new GGUFs on Hugging Face…")))
+        case .waitingForLlmfit:
+            return AnyView(waitingForLlmfit)
         case .unavailable:
             return AnyView(ContentUnavailableView {
                 Label(String(localized: "Hugging Face is unavailable"), systemImage: "wifi.slash")
@@ -342,6 +345,28 @@ private struct DiscoverPane: View {
         }
     }
 
+    /// Hugging Face models are graded with this Mac's speed, read from llmfit's rows first.
+    private var waitingForLlmfit: some View {
+        Group {
+            if model.recommendationError != nil {
+                ContentUnavailableView {
+                    Label(String(localized: "Waiting for llmfit"), systemImage: "hourglass")
+                } description: {
+                    Text(String(localized: "llmfit could not be read, and Hugging Face models are graded with its speed for this Mac."))
+                } actions: {
+                    Button(String(localized: "Try Again")) {
+                        Task {
+                            await model.refreshRecommendations()
+                            await model.loadHFRecent(force: true)
+                        }
+                    }
+                }
+            } else {
+                LoadingView(text: String(localized: "Waiting for llmfit: Hugging Face models are graded with its speed for this Mac…"))
+            }
+        }
+    }
+
     private var list: some View {
         let rows = visible
         return List(selection: $browser.selectedID) {
@@ -349,6 +374,10 @@ private struct DiscoverPane: View {
                 // A refresh failed: the list below is the last one read.
                 Notice(text: String(localized: "Could not read recommendations: \(error)"),
                        symbol: "exclamationmark.triangle", color: Theme.red)
+            }
+            if section == .compatible, model.catalogMayBeTruncated {
+                Notice(text: String(localized: "llmfit returned as many models as Localia asked for: its catalog may be cut, some compatible models may be missing."),
+                       symbol: "exclamationmark.triangle", color: Theme.orange)
             }
             if section != .newOnHF, let r = model.recommendation {
                 if let reason = r.emptyReason {
@@ -383,6 +412,10 @@ private struct DiscoverPane: View {
                 .selectionDisabled()
             case .unavailable:
                 Label(String(localized: "Hugging Face search is unavailable offline."), systemImage: "wifi.slash")
+                    .foregroundStyle(.secondary).selectionDisabled()
+            case .waitingForLlmfit:
+                Label(String(localized: "Hugging Face search waits for llmfit, which gives this Mac's speed."),
+                      systemImage: "hourglass")
                     .foregroundStyle(.secondary).selectionDisabled()
             case .loaded where model.hfSearchResults.isEmpty:
                 Label(String(localized: "No GGUF found for “\(q)”."), systemImage: "magnifyingglass")
@@ -939,14 +972,15 @@ private struct MemoryBreakdown: View {
                 let w = g.size.width
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.track)
-                    if c.memoryIsMeasured {
-                        Capsule().fill(color).frame(width: w * min(1, c.memoryGB / scale))
-                    } else {
+                    if let b = item.breakdown {
                         HStack(spacing: 1) {
-                            Rectangle().fill(color).frame(width: w * min(c.weightsGB, c.memoryGB) / scale)
-                            Rectangle().fill(color.opacity(0.45)).frame(width: w * item.contextAndOverheadGB / scale)
+                            Rectangle().fill(color).frame(width: w * b.weights / scale)
+                            Rectangle().fill(color.opacity(0.55)).frame(width: w * b.kvCache / scale)
+                            Rectangle().fill(color.opacity(0.3)).frame(width: w * b.overhead / scale)
                         }
                         .clipShape(Capsule())
+                    } else {
+                        Capsule().fill(color).frame(width: w * min(1, c.memoryGB / scale))
                     }
                     if c.memoryGB > pool {
                         // Where the usable memory ends.
@@ -965,19 +999,18 @@ private struct MemoryBreakdown: View {
         .accessibilityLabel([total(c), parts(c)].compactMap { $0 }.joined(separator: ". "))
     }
 
-    /// "13.2 GB of 16.5 GB usable", or the measured total.
+    /// "13.2 GB of 16.5 GB usable", marked measured or estimate when no split is known.
     private func total(_ c: ModelCandidate) -> String {
         let total = Fmt.gb(c.memoryGB), poolText = Fmt.gb(pool)
-        return c.memoryIsMeasured
-            ? String(localized: "Measured: \(total) of \(poolText) usable")
-            : String(localized: "\(total) of \(poolText) usable")
+        if c.memoryIsMeasured { return String(localized: "Measured: \(total) of \(poolText) usable") }
+        if item.breakdown == nil { return String(localized: "Estimate: \(total) of \(poolText) usable") }
+        return String(localized: "\(total) of \(poolText) usable")
     }
 
-    /// "Weights 4.6 GB + context and overhead 8.6 GB"; nil for a measured total (no split is known).
+    /// "Weights 4.6 GB + context 5.7 GB + overhead 0.5 GB"; nil when the split is unknown.
     private func parts(_ c: ModelCandidate) -> String? {
-        guard !c.memoryIsMeasured else { return nil }
-        let weights = Fmt.gb(min(c.weightsGB, c.memoryGB)), rest = Fmt.gb(item.contextAndOverheadGB)
-        return String(localized: "Weights \(weights) + context and overhead \(rest)")
+        guard let b = item.breakdown else { return nil }
+        return String(localized: "Weights \(Fmt.gb(b.weights)) + context \(Fmt.gb(b.kvCache)) + overhead \(Fmt.gb(b.overhead))")
     }
 }
 
