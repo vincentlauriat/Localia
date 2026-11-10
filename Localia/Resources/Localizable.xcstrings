@@ -913,6 +913,22 @@
         }
       }
     },
+    "Download and manage models…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download and manage models…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Télécharger et gérer les modèles…"
+          }
+        }
+      }
+    },
     "Download failed": {
       "localizations": {
         "en": {
@@ -1629,6 +1645,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Localia, mode local activé"
+          }
+        }
+      }
+    },
+    "Made with ♥ by Vincent Lauriat": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Made with ♥ by Vincent Lauriat"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fait avec ♥ par Vincent Lauriat"
           }
         }
       }

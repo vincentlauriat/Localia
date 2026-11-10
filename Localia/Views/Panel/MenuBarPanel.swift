@@ -217,7 +217,7 @@ struct MenuBarPanel: View {
     private var engineName: String { AppModel.engineName(model.settings.activeEngine) }
 
     private var modelsCard: some View {
-        DisclosureCard(title: String(localized: "Installed models"), icon: "square.stack.3d.up.fill",
+        DisclosureCard(title: String(localized: "Models"), icon: "square.stack.3d.up.fill",
                        iconColor: Theme.blue, value: model.installed.isEmpty ? nil : String(model.installed.count),
                        expanded: $modelsOpen) {
             if model.installed.isEmpty {
@@ -241,6 +241,23 @@ struct MenuBarPanel: View {
                     .padding(.vertical, 5)
                 }
             }
+            Divider().opacity(0.4)
+            Button { show(.models) } label: {
+                HStack(spacing: 6) {
+                    Text(String(localized: "Download and manage models…"))
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+                    Spacer(minLength: 8)
+                    if !model.downloads.isEmpty {
+                        Text(String(localized: "Downloading: \(String(model.downloads.count))"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -350,12 +367,6 @@ struct MenuBarPanel: View {
         return model.displayName(for: m)
     }
 
-    private var modelsSubtitle: String {
-        let installed = String(localized: "Installed: \(String(model.installed.count))")
-        guard !model.downloads.isEmpty else { return installed }
-        return installed + " · " + String(localized: "Downloading: \(String(model.downloads.count))")
-    }
-
     private var localModeBinding: Binding<Bool> {
         Binding(get: { model.isLocalModeOn },
                 set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
@@ -398,13 +409,6 @@ struct MenuBarPanel: View {
             }
             .buttonStyle(PanelRowButtonStyle())
 
-            RowDivider()
-            Button { show(.models) } label: {
-                ListRow(icon: "square.stack.3d.up.fill", title: String(localized: "Models…"), subtitle: modelsSubtitle) {
-                    RowChevron()
-                }
-            }
-            .buttonStyle(PanelRowButtonStyle())
 
 
             RowDivider()

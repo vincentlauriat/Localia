@@ -51,6 +51,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
         LSUIElement: true
+        NSHumanReadableCopyright: "© 2026 Vincent Lauriat"
         SUFeedURL: https://raw.githubusercontent.com/vincentlauriat/Localia/main/appcast.xml
         # EdDSA public key for Sparkle updates. Empty until Vincent generates the key
         # (see README, "Releasing"). Never commit the private key.
