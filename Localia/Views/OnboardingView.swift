@@ -221,7 +221,7 @@ struct OnboardingView: View {
         if let c = pick {
             VStack(alignment: .leading, spacing: 10) {
                 if model.recommendation?.allSlow == true {
-                    Label { Text(RecommendedTab.slowMacMessage) } icon: { Image(systemName: "tortoise.fill") }
+                    Label { Text(RecommendationMessages.slowMacMessage) } icon: { Image(systemName: "tortoise.fill") }
                         .font(.callout)
                         .foregroundStyle(Theme.orange)
                         .fixedSize(horizontal: false, vertical: true)
@@ -265,7 +265,7 @@ struct OnboardingView: View {
                 }
             }
         } else if let reason = model.recommendation?.emptyReason {
-            Text(RecommendedTab.message(reason))
+            Text(RecommendationMessages.message(reason))
                 .foregroundStyle(Theme.orange)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let error = model.recommendationError {

@@ -76,7 +76,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningSessions: [RunningSession] = []
     /// True while local mode is being switched on or off.
     @Published private(set) var switchingLocalMode = false
-    /// Selected tab of the Models window (0 Recommended, 1 Installed, 2 Downloads).
+    /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
+    /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
 
     // Models
