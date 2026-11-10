@@ -110,6 +110,8 @@ final class AppModel: ObservableObject {
     private var rows: [LlmfitRow]?
     /// Query of the Hugging Face search in flight (older results are dropped).
     private var hfSearchQuery: String?
+    /// Query of a search made before llmfit's rows existed: run again once they arrive.
+    private var pendingHFSearch: String?
     /// Models Localia loaded for its own sessions: unloaded when the last session using them ends.
     private var loadedByLocalia: Set<ModelKey> = []
     /// Models loaded for the shell shim (`localia://start`): no session owns them, so a session end never
@@ -284,6 +286,8 @@ final class AppModel: ObservableObject {
             catalogMayBeTruncated = LlmfitClient.mayBeTruncated(fresh)
             recommendationError = nil
             recompute()
+            // A search typed while llmfit was loading can run now.
+            if hfSearchState == .waitingForLlmfit, let q = pendingHFSearch { await searchHF(q) }
         } catch {
             recommendationError = describe(error)
         }
@@ -344,8 +348,10 @@ final class AppModel: ObservableObject {
             hfSearchQuery = nil
             hfSearchResults = []
             hfSearchState = q.isEmpty ? .idle : .waitingForLlmfit
+            pendingHFSearch = q.isEmpty ? nil : q
             return
         }
+        pendingHFSearch = nil
         hfSearchQuery = q
         hfSearchState = .loading
         let results = try? await deps.hfCatalog.search(q, ctx)
@@ -889,7 +895,11 @@ final class AppModel: ObservableObject {
             try await e.delete(row.name)
             loadedByLocalia.remove(ModelKey(engine: row.engine, model: row.name))
             loadedForShim.remove(ModelKey(engine: row.engine, model: row.name))
-            settings.modelIDs[row.name] = nil
+            if let id = settings.modelIDs[row.name] {
+                settings.modelIDs[row.name] = nil
+                // The saved estimate goes with the last served name of that model.
+                if !settings.modelIDs.values.contains(id) { settings.estimatedMemoryGB[id] = nil }
+            }
             if settings.defaultModel == row.name { settings.defaultModel = nil }
             if settings.lastModel == row.name { settings.lastModel = nil }
         } catch {
@@ -1052,6 +1062,8 @@ final class AppModel: ObservableObject {
             try await llmfit.install(release)
             llmfitVersion = await llmfit.version()
             await refreshRecommendations()
+            // A new llmfit changes this Mac's speed constant: re-rate New on Hugging Face.
+            await loadHFRecent(force: true)
         } catch {
             show(error, title: String(localized: "Could not update llmfit"))
         }

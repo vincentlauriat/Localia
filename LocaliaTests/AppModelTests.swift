@@ -375,6 +375,31 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.catalogMayBeTruncated)
     }
 
+    func test_searchBeforeLlmfit_runsOnceRecommendationsArrive() async throws {
+        let hf = FakeHFCatalog(results: [Self.hfEntry("b/Other-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.searchHF("qwen")
+        XCTAssertEqual(model.hfSearchState, .waitingForLlmfit)
+        await model.refreshRecommendations()
+        XCTAssertEqual(hf.queries, ["qwen"], "the waiting search ran once llmfit's rows arrived")
+        XCTAssertEqual(model.hfSearchState, .loaded)
+        XCTAssertEqual(model.hfSearchResults.map(\.candidate.id), ["b/Other-GGUF"])
+        await model.refreshRecommendations()
+        XCTAssertEqual(hf.queries, ["qwen"], "not run again by a later refresh")
+    }
+
+    func test_delete_forgetsTheSavedMemoryEstimate() async throws {
+        let model = makeModel(engine: FakeEngine(installed: ["m-localia"])) {
+            $0.modelIDs = ["m-localia": "Qwen/M00"]
+            $0.estimatedMemoryGB = ["Qwen/M00": 5, "Qwen/M01": 6]
+        }
+        await model.refreshAll()
+        await model.delete(try row(model, "m-localia"))
+        XCTAssertNil(model.alert)
+        XCTAssertNil(model.settings.modelIDs["m-localia"])
+        XCTAssertEqual(model.settings.estimatedMemoryGB, ["Qwen/M01": 6])
+    }
+
     func test_cancelledRecentLoad_keepsNothingAndReloadsNextTime() async throws {
         let hf = FakeHFCatalog(recent: [Self.hfEntry("b/New-GGUF")], delayNanos: 5_000_000_000)
         let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
