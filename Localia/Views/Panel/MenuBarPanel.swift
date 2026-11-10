@@ -98,6 +98,7 @@ struct MenuBarPanel: View {
     private var content: some View {
         VStack(spacing: 8) {
             heroCard
+            localModeCard
             modelsCard
             appsCard
             sessionsCard
@@ -360,6 +361,22 @@ struct MenuBarPanel: View {
                 set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
     }
 
+    /// The local-mode switch, in its own card right under the hero.
+    private var localModeCard: some View {
+        ListRow(icon: "airplane", iconColor: Theme.accent, title: String(localized: "Local mode")) {
+            HStack(spacing: 8) {
+                if model.switchingLocalMode { ProgressView().controlSize(.small) }
+                Toggle(String(localized: "Local mode"), isOn: localModeBinding)
+                    .toggleStyle(PillToggleStyle(onColor: Theme.accent))
+                    .disabled(model.switchingLocalMode)
+            }
+        }
+        .help(model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
+                                  : String(localized: "Claude Code uses Anthropic's cloud"))
+        .padding(.vertical, 4)
+        .card()
+    }
+
     private var listCard: some View {
         VStack(spacing: 0) {
             Button {
@@ -371,18 +388,6 @@ struct MenuBarPanel: View {
             }
             .buttonStyle(PanelRowButtonStyle())
             if launchOpen { launchList }
-
-            RowDivider()
-            ListRow(icon: "airplane", iconColor: Theme.accent, title: String(localized: "Local mode")) {
-                HStack(spacing: 8) {
-                    if model.switchingLocalMode { ProgressView().controlSize(.small) }
-                    Toggle(String(localized: "Local mode"), isOn: localModeBinding)
-                        .toggleStyle(PillToggleStyle(onColor: Theme.accent))
-                        .disabled(model.switchingLocalMode)
-                }
-            }
-            .help(model.isLocalModeOn ? String(localized: "Claude Code runs on this Mac")
-                                      : String(localized: "Claude Code uses Anthropic's cloud"))
 
             RowDivider()
             Button {
