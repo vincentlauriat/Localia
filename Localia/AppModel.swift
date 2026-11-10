@@ -31,6 +31,9 @@ struct DownloadState: Equatable {
 }
 
 /// An installed model as the Models window shows it.
+/// Loading state of a Hugging Face section of the Recommended tab.
+enum HFLoadState: Equatable { case idle, loading, loaded, unavailable }
+
 struct InstalledRow: Identifiable, Equatable {
     var id: String { "\(engine.rawValue)|\(name)" }
     let engine: EngineID
@@ -79,6 +82,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var recommendation: Recommendation?
     @Published private(set) var recommendationError: String?
     @Published private(set) var loadingRecommendations = false
+    /// "New on Hugging Face": recent GGUFs of trusted providers that fit, not already listed from llmfit.
+    @Published private(set) var hfRecent: [HFCatalogEntry] = []
+    @Published private(set) var hfRecentState: HFLoadState = .idle
+    @Published private(set) var hfSearchResults: [HFCatalogEntry] = []
+    @Published private(set) var hfSearchState: HFLoadState = .idle
     @Published private(set) var installed: [InstalledRow] = []
     @Published private(set) var diskUsageGB: [EngineID: Double] = [:]
     @Published private(set) var downloads: [String: DownloadState] = [:]
@@ -96,6 +104,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var availableTerminals: [TerminalApp] = []
 
     private var rows: [LlmfitRow]?
+    /// Query of the Hugging Face search in flight (older results are dropped).
+    private var hfSearchQuery: String?
     /// Models Localia loaded for its own sessions: unloaded when the last session using them ends.
     private var loadedByLocalia: Set<ModelKey> = []
     /// Models loaded for the shell shim (`localia://start`): no session owns them, so a session end never
@@ -286,6 +296,47 @@ final class AppModel: ObservableObject {
         let r = Recommender(maxCandidates: .max, maxUncertain: .max)
             .recommend(rows: rows, profile: profile, measurements: Measurements())
         return Dictionary((r.candidates + r.uncertain).map { ($0.id, $0.estimatedTPS) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    // MARK: - Hugging Face
+
+    /// Grading context for Hugging Face GGUFs; nil until llmfit rows give this Mac's speed constant.
+    private func hfContext() -> HFCatalogContext? {
+        guard let rows, let k = HFCatalog.speedConstant(rows: rows) else { return nil }
+        let listed = (recommendation?.allCompatible ?? []) + (recommendation?.uncertain ?? [])
+        return HFCatalogContext(poolGB: profile.usablePoolGB, speedConstant: k,
+                                speedRatio: settings.measurements.speedRatio, knownRepos: Set(listed.map(\.ggufRepo)))
+    }
+
+    /// Loads "New on Hugging Face" once (again when `force`). Offline only marks that section unavailable.
+    func loadHFRecent(force: Bool = false) async {
+        guard force || hfRecentState == .idle || hfRecentState == .unavailable, hfRecentState != .loading,
+              let ctx = hfContext() else { return }
+        hfRecentState = .loading
+        do {
+            hfRecent = try await deps.hfCatalog.recent(ctx)
+            hfRecentState = .loaded
+        } catch {
+            hfRecent = []
+            hfRecentState = .unavailable
+        }
+    }
+
+    /// Searches Hugging Face GGUFs (any author); an empty query clears the results.
+    func searchHF(_ query: String) async {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, let ctx = hfContext() else {
+            hfSearchQuery = nil
+            hfSearchResults = []
+            hfSearchState = .idle
+            return
+        }
+        hfSearchQuery = q
+        hfSearchState = .loading
+        let results = try? await deps.hfCatalog.search(q, ctx)
+        guard hfSearchQuery == q else { return }   // a newer search started meanwhile
+        hfSearchResults = results ?? []
+        hfSearchState = results == nil ? .unavailable : .loaded
     }
 
     /// Served name of an installed model for this candidate on the active engine, if any.

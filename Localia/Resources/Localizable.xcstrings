@@ -161,6 +161,118 @@
         }
       }
     },
+    "%lld excluded by name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld excluded by name"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld exclus par leur nom"
+          }
+        }
+      }
+    },
+    "%lld from untrusted orgs": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld from untrusted orgs"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld d'organisations non reconnues"
+          }
+        }
+      }
+    },
+    "%lld not runnable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld not runnable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld non exécutables"
+          }
+        }
+      }
+    },
+    "%lld too big": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld too big"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld trop gros"
+          }
+        }
+      }
+    },
+    "%lld without GGUF": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without GGUF"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans GGUF"
+          }
+        }
+      }
+    },
+    "%lld without a trusted GGUF provider": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without a trusted GGUF provider"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans fournisseur GGUF reconnu"
+          }
+        }
+      }
+    },
+    "%lld without speed estimate": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without speed estimate"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans estimation de vitesse"
+          }
+        }
+      }
+    },
     "A Claude Code session is using this engine. Measure the speed once it has ended.": {
       "localizations": {
         "en": {
@@ -253,6 +365,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ajouter le bloc"
+          }
+        }
+      }
+    },
+    "All compatible models (%lld)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All compatible models (%lld)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les modèles compatibles (%lld)"
           }
         }
       }
@@ -1505,6 +1633,22 @@
         }
       }
     },
+    "Left out of llmfit's catalog: %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left out of llmfit's catalog: %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écartés du catalogue llmfit : %@."
+          }
+        }
+      }
+    },
     "Light (fast, no MCP servers or plugins)": {
       "localizations": {
         "en": {
@@ -1921,6 +2065,22 @@
         }
       }
     },
+    "New on Hugging Face": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New on Hugging Face"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouveautés sur Hugging Face"
+          }
+        }
+      }
+    },
     "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode.": {
       "localizations": {
         "en": {
@@ -1933,6 +2093,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucune connexion Claude n'a été trouvée sur ce Mac : Claude Code peut vous demander de vous connecter. Pour travailler sans compte, passez en mode local."
+          }
+        }
+      }
+    },
+    "No GGUF found for “%@”.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No GGUF found for “%@”."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun GGUF trouvé pour « %@ »."
           }
         }
       }
@@ -2177,6 +2353,38 @@
         }
       }
     },
+    "Not rated by llmfit: memory and speed are Localia's estimates.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not rated by llmfit: memory and speed are Localia's estimates."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non évalués par llmfit : mémoire et vitesse estimées par Localia."
+          }
+        }
+      }
+    },
+    "Nothing new on Hugging Face fits this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing new on Hugging Face fits this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune nouveauté Hugging Face ne tient sur ce Mac."
+          }
+        }
+      }
+    },
     "OK": {
       "localizations": {
         "en": {
@@ -2397,6 +2605,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fonctionne sur ce Mac, gratuit et open source."
+          }
+        }
+      }
+    },
+    "Search": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher"
+          }
+        }
+      }
+    },
+    "Search Hugging Face": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Hugging Face"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher sur Hugging Face"
           }
         }
       }
@@ -2641,6 +2881,22 @@
         }
       }
     },
+    "The base model's configuration could not be read: rough estimate.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The base model's configuration could not be read: rough estimate."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuration du modèle de base est illisible : estimation grossière."
+          }
+        }
+      }
+    },
     "The coding assistant Localia opens in your terminal. This runs Anthropic's official installer.": {
       "localizations": {
         "en": {
@@ -2845,6 +3101,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Désactive le mode local et retire le bloc que Localia a ajouté à vos fichiers de démarrage du shell."
+          }
+        }
+      }
+    },
+    "Unavailable offline": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unavailable offline"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Indisponible hors ligne"
           }
         }
       }
@@ -3121,6 +3393,22 @@
         }
       }
     },
+    "fits": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fits"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tient"
+          }
+        }
+      }
+    },
     "good": {
       "localizations": {
         "en": {
@@ -3281,6 +3569,22 @@
         }
       }
     },
+    "not rated by llmfit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not rated by llmfit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "non évalué par llmfit"
+          }
+        }
+      }
+    },
     "perfect": {
       "localizations": {
         "en": {
@@ -3341,6 +3645,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "arrêté"
+          }
+        }
+      }
+    },
+    "tight": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tight"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "juste"
+          }
+        }
+      }
+    },
+    "too big": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "too big"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "trop gros"
           }
         }
       }

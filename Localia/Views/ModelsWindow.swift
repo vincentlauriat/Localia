@@ -24,6 +24,8 @@ struct ModelsWindow: View {
 
 struct RecommendedTab: View {
     @ObservedObject var model: AppModel
+    @State private var showAllCompatible = false
+    @State private var hfQuery = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -32,11 +34,18 @@ struct RecommendedTab: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 if model.loadingRecommendations { ProgressView().controlSize(.small) }
-                Button(String(localized: "Refresh")) { Task { await model.refreshRecommendations() } }
-                    .disabled(model.loadingRecommendations)
+                Button(String(localized: "Refresh")) {
+                    Task {
+                        await model.refreshRecommendations()
+                        await model.loadHFRecent(force: true)
+                    }
+                }
+                .disabled(model.loadingRecommendations)
             }
             content
         }
+        // Hugging Face is read once llmfit's rows exist (they give this Mac's speed constant).
+        .task(id: model.recommendation != nil) { await model.loadHFRecent() }
     }
 
     @ViewBuilder private var content: some View {
@@ -60,11 +69,71 @@ struct RecommendedTab: View {
                         ForEach(r.uncertain) { CandidateRow(model: model, candidate: $0) }
                     }
                 }
+                Section {
+                    DisclosureGroup(isExpanded: $showAllCompatible) {
+                        ForEach(r.allCompatible) { CandidateRow(model: model, candidate: $0) }
+                    } label: {
+                        Text(String(localized: "All compatible models (\(r.allCompatible.count))"))
+                            .font(.callout.weight(.semibold))
+                    }
+                    if let summary = Self.exclusionSummary(r.exclusions) {
+                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    hfStatus(model.hfRecentState, empty: model.hfRecent.isEmpty,
+                             emptyText: String(localized: "Nothing new on Hugging Face fits this Mac."))
+                    ForEach(model.hfRecent) { CandidateRow(model: model, candidate: $0.candidate) }
+                } header: {
+                    HFHeader(title: String(localized: "New on Hugging Face"))
+                }
+                Section {
+                    HStack {
+                        TextField(String(localized: "Search Hugging Face"), text: $hfQuery)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { Task { await model.searchHF(hfQuery) } }
+                        Button(String(localized: "Search")) { Task { await model.searchHF(hfQuery) } }
+                            .disabled(hfQuery.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    hfStatus(model.hfSearchState, empty: model.hfSearchResults.isEmpty,
+                             emptyText: String(localized: "No GGUF found for “\(hfQuery)”."))
+                    ForEach(model.hfSearchResults) {
+                        CandidateRow(model: model, candidate: $0.candidate, verdict: SearchVerdict($0.verdict))
+                    }
+                } header: {
+                    HFHeader(title: String(localized: "Search Hugging Face"))
+                }
             }
         } else {
             HStack { ProgressView(); Text(String(localized: "Asking llmfit what fits this Mac…")) }
             Spacer()
         }
+    }
+
+    /// Progress, "unavailable offline" or "nothing found" line of a Hugging Face section.
+    @ViewBuilder private func hfStatus(_ state: HFLoadState, empty: Bool, emptyText: String) -> some View {
+        switch state {
+        case .loading: ProgressView().controlSize(.small)
+        case .unavailable: Text(String(localized: "Unavailable offline")).foregroundStyle(.secondary)
+        case .loaded where empty: Text(emptyText).foregroundStyle(.secondary)
+        default: EmptyView()
+        }
+    }
+
+    /// One line: how many llmfit models were left out, and why. Nil when none was.
+    static func exclusionSummary(_ e: ExclusionCounts) -> String? {
+        guard e.total > 0 else { return nil }
+        let parts: [(Int, String)] = [
+            (e.notRunnable, String(localized: "\(e.notRunnable) not runnable")),
+            (e.noGGUF, String(localized: "\(e.noGGUF) without GGUF")),
+            (e.untrustedOrg, String(localized: "\(e.untrustedOrg) from untrusted orgs")),
+            (e.excludedName, String(localized: "\(e.excludedName) excluded by name")),
+            (e.noTrustedProvider, String(localized: "\(e.noTrustedProvider) without a trusted GGUF provider")),
+            (e.tooBig, String(localized: "\(e.tooBig) too big")),
+            (e.noSpeedEstimate, String(localized: "\(e.noSpeedEstimate) without speed estimate")),
+        ]
+        let list = parts.filter { $0.0 > 0 }.map(\.1).joined(separator: ", ")
+        return String(localized: "Left out of llmfit's catalog: \(list).")
     }
 
     /// Spec 6.6: every model that fits is below the speed floor.
@@ -87,6 +156,47 @@ private enum Col {
     static let size: CGFloat = 70, memory: CGFloat = 105, speed: CGFloat = 105, fit: CGFloat = 64, action: CGFloat = 140
 }
 
+/// Section header of the Hugging Face sections: these models are graded by Localia, not llmfit.
+private struct HFHeader: View {
+    let title: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+            Text(String(localized: "Not rated by llmfit: memory and speed are Localia's estimates."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Fit verdict of a Hugging Face search result.
+enum SearchVerdict {
+    case fits, tight, tooBig
+
+    init(_ fit: Fit?) {
+        switch fit {
+        case .perfect?, .good?: self = .fits
+        case .marginal?: self = .tight
+        case nil: self = .tooBig
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .fits: String(localized: "fits")
+        case .tight: String(localized: "tight")
+        case .tooBig: String(localized: "too big")
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .fits: .green
+        case .tight: .orange
+        case .tooBig: .red
+        }
+    }
+}
+
 private struct CandidateHeader: View {
     var body: some View {
         HStack(spacing: 12) {
@@ -106,6 +216,8 @@ private struct CandidateHeader: View {
 private struct CandidateRow: View {
     @ObservedObject var model: AppModel
     let candidate: ModelCandidate
+    /// Search results show fits / tight / too big instead of the fit grade.
+    var verdict: SearchVerdict? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -114,6 +226,9 @@ private struct CandidateRow: View {
                     Text(candidate.displayName).font(.body.weight(.medium))
                     if candidate.slow { Badge(text: String(localized: "slow"), color: .orange) }
                     if !candidate.supportsTools { Badge(text: String(localized: "no tools"), color: .gray) }
+                    if candidate.source == .huggingface {
+                        Badge(text: String(localized: "not rated by llmfit"), color: .purple)
+                    }
                 }
                 Text("\(candidate.ggufRepo) · \(candidate.quant)").font(.caption).foregroundStyle(.secondary)
             }
@@ -124,16 +239,24 @@ private struct CandidateRow: View {
                     .frame(width: Col.size, alignment: .trailing)
                 HStack(spacing: 4) {
                     if candidate.memoryIsMeasured { Badge(text: String(localized: "measured"), color: .green) }
-                    Text(Fmt.gb(candidate.memoryGB))
+                    Text(verbatim: (candidate.memoryIsEstimate ? "≈ " : "") + Fmt.gb(candidate.memoryGB))
                 }
+                .help(candidate.memoryIsEstimate
+                      ? String(localized: "The base model's configuration could not be read: rough estimate.") : "")
                 .frame(width: Col.memory, alignment: .trailing)
                 HStack(spacing: 4) {
                     if candidate.speedIsMeasured { Badge(text: String(localized: "measured"), color: .green) }
                     Text(Fmt.tps(candidate.estimatedTPS))
                 }
                 .frame(width: Col.speed, alignment: .trailing)
-                Text(Self.fitName(candidate.fit)).foregroundStyle(Self.fitColor(candidate.fit))
-                    .frame(width: Col.fit, alignment: .leading)
+                Group {
+                    if let verdict {
+                        Text(verdict.name).foregroundStyle(verdict.color)
+                    } else {
+                        Text(Self.fitName(candidate.fit)).foregroundStyle(Self.fitColor(candidate.fit))
+                    }
+                }
+                .frame(width: Col.fit, alignment: .leading)
             }
             .font(.callout.monospacedDigit())
             action.frame(width: Col.action, alignment: .trailing)

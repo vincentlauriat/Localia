@@ -41,7 +41,7 @@ final class PanelSnapshotTests: XCTestCase {
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
             speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { heavyApps }),
-            freeMemoryGB: { 9.6 }, rows: FakeRows(), sizes: FakeSizes(),
+            freeMemoryGB: { 9.6 }, rows: FakeRows(), sizes: FakeSizes(), hfCatalog: FakeHFCatalog(),
             profile: MachineProfile(chip: "Test", totalRAMGB: 24, gpuWorkingSetGB: 18, isAppleSilicon: true),
             appSupportBase: base, claudeConfigDir: base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),

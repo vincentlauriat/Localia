@@ -25,6 +25,10 @@ public struct HFCatalogEntry: Identifiable, Sendable, Equatable {
     public let createdAt: String?
     public let downloads: Int
 
+    public init(candidate: ModelCandidate, verdict: Fit?, createdAt: String?, downloads: Int) {
+        self.candidate = candidate; self.verdict = verdict; self.createdAt = createdAt; self.downloads = downloads
+    }
+
     public var id: String { candidate.id }
 }
 
