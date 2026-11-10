@@ -68,7 +68,7 @@ public final class LocalModeController: ObservableObject {
         self.scope = settings.localModeScope
     }
 
-    private struct Resolved { let engine: EngineID; let baseURL: URL; let model: String }
+    private struct Resolved { let engine: EngineID; let baseURL: URL; let model: String; let contextTokens: Int }
 
     /// The last model used if still installed, else the top-ranked installed model, else the first installed.
     /// A stopped engine (e.g. Ollama not running, so its model list can't be read) is not "no model": the
@@ -80,7 +80,8 @@ public final class LocalModeController: ObservableObject {
             installed = try await engine.installedModels().map(\.name)
         } catch {
             guard let last = settings.lastModel, !last.isEmpty else { throw LocalModeError.engineUnreachable }
-            return Resolved(engine: engine.id, baseURL: engine.baseURL, model: last)
+            return Resolved(engine: engine.id, baseURL: engine.baseURL, model: last,
+                            contextTokens: await engine.contextWindow(last))
         }
         let model: String?
         if let last = settings.lastModel, installed.contains(last) {
@@ -89,18 +90,21 @@ public final class LocalModeController: ObservableObject {
             model = await source.preferredModels().first(where: installed.contains) ?? installed.first
         }
         guard let model else { throw LocalModeError.noModelInstalled }
-        return Resolved(engine: engine.id, baseURL: engine.baseURL, model: model)
+        return Resolved(engine: engine.id, baseURL: engine.baseURL, model: model,
+                        contextTokens: await engine.contextWindow(model))
     }
 
     /// `.cloud` when off. When on it is always `.local`: if nothing resolves (models deleted since), it
     /// still targets the local engine so a session fails visibly instead of silently reaching the cloud.
     public func launchTarget() async -> LaunchTarget {
         guard isOn else { return .cloud }
-        if let r = try? await resolve() { return .local(engine: r.engine, baseURL: r.baseURL, model: r.model) }
+        if let r = try? await resolve() {
+            return .local(engine: r.engine, baseURL: r.baseURL, model: r.model, contextTokens: r.contextTokens)
+        }
         let engine = await source.activeEngine()
         return .local(engine: engine?.id ?? .ollama,
                       baseURL: engine?.baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
-                      model: settings.lastModel ?? "")
+                      model: settings.lastModel ?? "", contextTokens: LocaliaConstants.localContextTokens)
     }
 
     /// Turning on needs an engine and an installed model (or, engine down, a last-used model). Turning off always succeeds in memory, and the
@@ -153,6 +157,7 @@ public final class LocalModeController: ObservableObject {
         try shim.writeState(on: on,
                             baseURL: baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
                             model: r?.model ?? settings.lastModel ?? "",
+                            contextTokens: r?.contextTokens ?? LocaliaConstants.localContextTokens,
                             policy: settings.engineDownPolicy,
                             profile: settings.launchProfile,
                             engine: engine ?? .ollama)

@@ -167,6 +167,22 @@ final class LlamaCppEngineTests: XCTestCase {
         XCTAssertEqual(loaded.map(\.name), ["o/r/a-Q4_K_M.gguf"])
     }
 
+    /// A model trained on 32k gets `-c 32768`, not the 65536 asked: llama-server would not cap it itself.
+    func test_load_capsContextAtTrainedLength_andReportsIt() async throws {
+        try fakeInstall()
+        try makeGGUF(contextLength: 32768, at: Paths.models(base: tmp).appendingPathComponent("gguf/o/r/a-Q4_K_M.gguf"))
+        let launcher = FakeLauncher()
+        let engine = makeEngine(launcher: launcher)
+        let window = await engine.contextWindow("o/r/a-Q4_K_M.gguf")
+        XCTAssertEqual(window, 32768)
+        try await engine.load("o/r/a-Q4_K_M.gguf", contextTokens: 65536)
+        let args = try XCTUnwrap(launcher.spawns.first?.args)
+        let i = try XCTUnwrap(args.firstIndex(of: "-c"))
+        XCTAssertEqual(args[i + 1], "32768")
+        let unknown = await engine.contextWindow("o/r/missing.gguf")
+        XCTAssertEqual(unknown, LocaliaConstants.localContextTokens)
+    }
+
     func test_load_withoutInstall_throws_andUnknownModelThrows() async throws {
         let engine = makeEngine()
         do { try await engine.load("o/r/a.gguf", contextTokens: 1); XCTFail() } catch { XCTAssertEqual(error as? EngineError, .notInstalled) }

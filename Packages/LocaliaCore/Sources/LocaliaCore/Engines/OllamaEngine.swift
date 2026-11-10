@@ -318,6 +318,30 @@ public actor OllamaEngine: Engine {
         _ = try await send(try post("api/generate", ["model": modelName, "keep_alive": 0]))
     }
 
+    /// `num_ctx` of the model (the `-localia` variant asks for `localContextTokens`), capped at its trained
+    /// `<arch>.context_length`: Ollama clamps to it at runtime.
+    public func contextWindow(_ modelName: String) async -> Int {
+        guard let data = try? await send(try post("api/show", ["model": modelName], timeout: 10)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return LocaliaConstants.localContextTokens
+        }
+        return Self.contextWindow(show: obj)
+    }
+
+    static func contextWindow(show obj: [String: Any]) -> Int {
+        let info = obj["model_info"] as? [String: Any] ?? [:]
+        let arch = info["general.architecture"] as? String
+        let trained = (arch.flatMap { info["\($0).context_length"] }
+            ?? info.first { $0.key.hasSuffix(".context_length") }?.value) as? NSNumber
+        var window = LocaliaConstants.servedContext(trained: trained?.intValue)
+        // `parameters` is Modelfile text, one "name value" per line.
+        for line in ((obj["parameters"] as? String) ?? "").split(whereSeparator: \.isNewline) {
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            if parts.count == 2, parts[0] == "num_ctx", let n = Int(parts[1]), n > 0 { window = min(window, n) }
+        }
+        return window
+    }
+
     // MARK: - HTTP
 
     private func post(_ path: String, _ body: [String: Any], method: String = "POST",

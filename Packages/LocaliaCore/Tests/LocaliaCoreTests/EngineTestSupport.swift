@@ -109,3 +109,19 @@ final class FakeInspector: ProcessInspecting, @unchecked Sendable {
         lock.unlock()
     }
 }
+
+/// Minimal GGUF v3 header: `general.architecture`, a string array (to exercise skipping) and
+/// `<arch>.context_length` as uint32, written after the array like real files.
+func makeGGUF(arch: String = "qwen2", contextLength: UInt32?, at url: URL) throws {
+    var d = Data("GGUF".utf8)
+    func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    func u64(_ v: UInt64) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    func str(_ s: String) { u64(UInt64(s.utf8.count)); d.append(contentsOf: Array(s.utf8)) }
+    u32(3); u64(0); u64(contextLength == nil ? 3 : 4)
+    str("general.architecture"); u32(8); str(arch)
+    str("tokenizer.ggml.tokens"); u32(9); u32(8); u64(3); str("a"); str("bc"); str("def")
+    str("general.file_type"); u32(4); u32(15)
+    if let contextLength { str("\(arch).context_length"); u32(4); u32(contextLength) }
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try d.write(to: url)
+}

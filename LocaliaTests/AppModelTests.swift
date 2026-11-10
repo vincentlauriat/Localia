@@ -97,12 +97,13 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.alert)
         let targets = tool.targets
         XCTAssertEqual(targets.count, 2)
-        guard case let .local(engineID, baseURL, served) = targets.last else {
+        guard case let .local(engineID, baseURL, served, window) = targets.last else {
             return XCTFail("expected .local, got \(String(describing: targets.last))")
         }
         XCTAssertEqual(engineID, .ollama)
         XCTAssertEqual(baseURL, engine.baseURL)
         XCTAssertEqual(served, "m1")
+        XCTAssertEqual(window, 32768)   // the fake model's trained window
         let started = await engine.startCount
         let loads = await engine.loads
         XCTAssertGreaterThanOrEqual(started, 1)
@@ -610,6 +611,30 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.launchModel, "X")
         XCTAssertNil(model.selectingModel)
     }
+
+    /// "Start llama.cpp" in the panel: llama-server serves one model, so starting it loads the selected one.
+    func test_startEngine_llama_loadsSelectedModel() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let model = makeModel(engine: llama) { $0.defaultModel = "Y"; $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.startEngine()
+        XCTAssertNil(model.alert)
+        let loads = await llama.loads
+        XCTAssertEqual(loads, ["Y"])
+        XCTAssertNil(model.busyMessage)
+    }
+
+    func test_startEngine_llama_withoutModel_explains() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: [])
+        let model = makeModel(engine: llama) { $0.activeEngine = .llamaCpp }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.startEngine()
+        XCTAssertEqual(model.alert?.title, String(localized: "No llama.cpp model"))
+        let loads = await llama.loads
+        XCTAssertEqual(loads, [])
+    }
 }
 
 // MARK: - Fakes
@@ -678,6 +703,7 @@ actor FakeEngine: Engine {
         if singleModel { loaded = [modelName] } else { loaded.insert(modelName) }
     }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }
+    func contextWindow(_ modelName: String) async -> Int { 32768 }
 }
 
 final class FakeTool: CodingTool, @unchecked Sendable {
@@ -738,7 +764,7 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
-    func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy,
+    func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
         lock.withLock { _states.append(on) }

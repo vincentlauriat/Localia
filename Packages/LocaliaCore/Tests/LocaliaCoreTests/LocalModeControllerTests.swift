@@ -21,6 +21,7 @@ private struct ModelEngine: Engine {
     func delete(_ modelName: String) async throws {}
     func load(_ modelName: String, contextTokens: Int) async throws {}
     func unload(_ modelName: String) async throws {}
+    func contextWindow(_ modelName: String) async -> Int { 32768 }
 }
 
 private struct FakeSource: LocalModelSource {
@@ -31,7 +32,7 @@ private struct FakeSource: LocalModelSource {
 }
 
 private final class FakeShim: ShellShimming, @unchecked Sendable {
-    struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID }
+    struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; var contextTokens = 32768; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID }
     var installs = 0, uninstalls = 0
     var states: [State] = []
     var failInstall = false
@@ -40,8 +41,8 @@ private final class FakeShim: ShellShimming, @unchecked Sendable {
         installs += 1
     }
     func uninstall() throws { uninstalls += 1 }
-    func writeState(on: Bool, baseURL: URL, model: String, policy: EngineDownPolicy, profile: LaunchProfile, engine: EngineID) throws {
-        states.append(State(on: on, baseURL: baseURL, model: model, policy: policy, profile: profile, engine: engine))
+    func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy, profile: LaunchProfile, engine: EngineID) throws {
+        states.append(State(on: on, baseURL: baseURL, model: model, contextTokens: contextTokens, policy: policy, profile: profile, engine: engine))
     }
 }
 
@@ -75,22 +76,23 @@ final class LocalModeControllerTests: XCTestCase {
         let (c, _, s) = make(preferred: ["zzz-not-installed", "c", "b"])
         try await c.setOn(true)
         XCTAssertTrue(c.isOn); XCTAssertTrue(s.localModeOn)
-        guard case let .local(engine, baseURL, model) = await c.launchTarget() else { return XCTFail() }
+        guard case let .local(engine, baseURL, model, window) = await c.launchTarget() else { return XCTFail() }
         XCTAssertEqual(engine, .ollama); XCTAssertEqual(baseURL, url); XCTAssertEqual(model, "c")
+        XCTAssertEqual(window, 32768)   // the engine's window for the model, not the 65536 default
 
         s.lastModel = "b"
-        guard case let .local(_, _, m2) = await c.launchTarget() else { return XCTFail() }
+        guard case let .local(_, _, m2, _) = await c.launchTarget() else { return XCTFail() }
         XCTAssertEqual(m2, "b")
 
         s.lastModel = "deleted-since"
-        guard case let .local(_, _, m3) = await c.launchTarget() else { return XCTFail() }
+        guard case let .local(_, _, m3, _) = await c.launchTarget() else { return XCTFail() }
         XCTAssertEqual(m3, "c")
     }
 
     func test_onWithoutRanking_usesFirstInstalled() async throws {
         let (c, _, _) = make(models: ["x", "y"])
         try await c.setOn(true)
-        guard case let .local(_, _, m) = await c.launchTarget() else { return XCTFail() }
+        guard case let .local(_, _, m, _) = await c.launchTarget() else { return XCTFail() }
         XCTAssertEqual(m, "x")
     }
 
@@ -172,7 +174,7 @@ final class LocalModeControllerTests: XCTestCase {
         try await c.setOn(true)
         XCTAssertTrue(c.isOn)
         XCTAssertEqual(shim.states.last, .init(on: true, baseURL: llamaURL, model: "m", policy: .autoStart, profile: .light, engine: .llamaCpp))
-        guard case let .local(engine, baseURL, model) = await c.launchTarget() else { return XCTFail() }
+        guard case let .local(engine, baseURL, model, _) = await c.launchTarget() else { return XCTFail() }
         XCTAssertEqual(engine, .llamaCpp); XCTAssertEqual(baseURL, llamaURL); XCTAssertEqual(model, "m")
     }
 

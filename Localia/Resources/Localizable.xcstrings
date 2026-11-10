@@ -2017,6 +2017,22 @@
         }
       }
     },
+    "No llama.cpp model": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No llama.cpp model"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle llama.cpp"
+          }
+        }
+      }
+    },
     "No local model": {
       "localizations": {
         "en": {
@@ -3149,6 +3165,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session Claude Code utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
+    "llama.cpp starts with a model. Download one in Models, then start it again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp starts with a model. Download one in Models, then start it again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp démarre avec un modèle. Télécharge-en un dans Modèles, puis relance-le."
           }
         }
       }

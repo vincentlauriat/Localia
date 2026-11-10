@@ -187,7 +187,7 @@ final class AppModel: ObservableObject {
 
     /// Re-resolves the model a launch would use. Not part of the 5 s status poll: it reads the engine's model list.
     func refreshLaunchTarget() async {
-        if case let .local(_, _, m) = await controller.launchTarget(), !m.isEmpty { launchModel = m } else { launchModel = nil }
+        if case let .local(_, _, m, _) = await controller.launchTarget(), !m.isEmpty { launchModel = m } else { launchModel = nil }
     }
 
     /// Used memory in GiB: total RAM minus the free memory of the last refresh.
@@ -384,7 +384,7 @@ final class AppModel: ObservableObject {
         var session: ModelKey?
         /// Set when this launch made Localia load the model, so a later failure can unload it again.
         var loadedNow: ModelKey?
-        if case let .local(engineID, _, model) = target {
+        if case let .local(engineID, _, model, _) = target {
             guard !model.isEmpty, let engine = await registry.engine(engineID) else {
                 alert = AppAlert(title: String(localized: "No local model"),
                                  message: String(localized: "Download a model in the Models window first."))
@@ -657,9 +657,35 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
+    /// Ollama starts its server. llama-server serves exactly one model, so starting llama.cpp loads the
+    /// selected model (as a launch would); without an installed model there is nothing to start.
     func startEngine() async {
         guard let e = await registry.active else { return }
-        do { try await e.startServing() } catch { show(error, title: String(localized: "Could not start the engine")) }
+        do {
+            if e.id == .llamaCpp {
+                guard let m = selectedModel, installed.contains(where: { $0.engine == .llamaCpp && $0.name == m }) else {
+                    alert = AppAlert(title: String(localized: "No llama.cpp model"),
+                                     message: String(localized: "llama.cpp starts with a model. Download one in Models, then start it again."))
+                    await refreshStatus()
+                    return
+                }
+                if let other = await llamaConflict(engine: .llamaCpp, model: m) {
+                    alert = llamaBusyAlert(other)
+                    return
+                }
+                let key = ModelKey(engine: .llamaCpp, model: m)
+                llamaPending.append(key)
+                defer { release(key) }
+                busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
+                _ = try await loadWithMemoryCheck(engine: e, model: m)
+                busyMessage = nil
+            } else {
+                try await e.startServing()
+            }
+        } catch {
+            busyMessage = nil
+            show(error, title: String(localized: "Could not start the engine"))
+        }
         await refreshStatus()
     }
 
@@ -695,7 +721,7 @@ final class AppModel: ObservableObject {
     func handleStart(model: String) async {
         let log = self.log
         var allowed = Set([settings.lastModel].compactMap { $0 })
-        if case let .local(_, _, current) = await controller.launchTarget() { allowed.insert(current) }
+        if case let .local(_, _, current, _) = await controller.launchTarget() { allowed.insert(current) }
         guard !model.isEmpty, allowed.contains(model) else {
             log.notice("localia://start ignored: model is not the current local model")
             return
