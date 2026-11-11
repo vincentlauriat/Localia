@@ -49,6 +49,22 @@
         }
       }
     },
+    "%@ of %@ usable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@ usable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ sur %2$@ utilisables"
+          }
+        }
+      }
+    },
     "%@ of memory": {
       "localizations": {
         "en": {
@@ -93,6 +109,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ tok/s"
+          }
+        }
+      }
+    },
+    "%@ usable by models": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ usable by models"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ utilisables par les modèles"
           }
         }
       }
@@ -145,6 +177,22 @@
         }
       }
     },
+    "%@, measured": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, measured"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, mesuré"
+          }
+        }
+      }
+    },
     "%@: %@ on disk": {
       "localizations": {
         "en": {
@@ -157,6 +205,134 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ : %@ sur le disque"
+          }
+        }
+      }
+    },
+    "%lld excluded by name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld excluded by name"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld exclus par leur nom"
+          }
+        }
+      }
+    },
+    "%lld from untrusted orgs": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld from untrusted orgs"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld d'organisations non reconnues"
+          }
+        }
+      }
+    },
+    "%lld hidden by the filters.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld hidden by the filters."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld masqué(s) par les filtres."
+          }
+        }
+      }
+    },
+    "%lld not runnable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld not runnable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld non exécutables"
+          }
+        }
+      }
+    },
+    "%lld too big": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld too big"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld trop gros"
+          }
+        }
+      }
+    },
+    "%lld without GGUF": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without GGUF"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans GGUF"
+          }
+        }
+      }
+    },
+    "%lld without a trusted GGUF provider": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without a trusted GGUF provider"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans fournisseur GGUF reconnu"
+          }
+        }
+      }
+    },
+    "%lld without speed estimate": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld without speed estimate"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sans estimation de vitesse"
           }
         }
       }
@@ -257,6 +433,70 @@
         }
       }
     },
+    "All": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous"
+          }
+        }
+      }
+    },
+    "All compatible models (%lld)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All compatible models (%lld)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les modèles compatibles (%lld)"
+          }
+        }
+      }
+    },
+    "Among the best for coding here, fits comfortably.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Among the best for coding here, fits comfortably."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parmi les meilleurs pour coder ici, tient à l’aise en mémoire."
+          }
+        }
+      }
+    },
+    "Among the best for coding here, with room to spare in memory.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Among the best for coding here, with room to spare in memory."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parmi les meilleurs pour coder ici, avec de la marge en mémoire."
+          }
+        }
+      }
+    },
     "Applies to": {
       "localizations": {
         "en": {
@@ -337,6 +577,22 @@
         }
       }
     },
+    "Below %lld tok/s: Claude Code will feel slow.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Below %lld tok/s: Claude Code will feel slow."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moins de %lld tok/s : Claude Code paraîtra lent."
+          }
+        }
+      }
+    },
     "Best for coding on this Mac (%@, %@ usable by the GPU), fastest first.": {
       "localizations": {
         "en": {
@@ -365,6 +621,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Annuler"
+          }
+        }
+      }
+    },
+    "Cancel download": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel download"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler le téléchargement"
           }
         }
       }
@@ -513,6 +785,22 @@
         }
       }
     },
+    "Clear Search": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear Search"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effacer la recherche"
+          }
+        }
+      }
+    },
     "Cloud": {
       "localizations": {
         "en": {
@@ -541,6 +829,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Le mode cloud nécessite une connexion Claude"
+          }
+        }
+      }
+    },
+    "Compatible": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatibles"
           }
         }
       }
@@ -705,6 +1009,22 @@
         }
       }
     },
+    "Could not read recommendations": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not read recommendations"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de lire les recommandations"
+          }
+        }
+      }
+    },
     "Could not read recommendations: %@": {
       "localizations": {
         "en": {
@@ -865,6 +1185,38 @@
         }
       }
     },
+    "Discover": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discover"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Découvrir"
+          }
+        }
+      }
+    },
+    "Doesn't fit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Doesn't fit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne tient pas"
+          }
+        }
+      }
+    },
     "Done": {
       "localizations": {
         "en": {
@@ -941,6 +1293,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Échec du téléchargement"
+          }
+        }
+      }
+    },
+    "Download one from For this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download one from For this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargez-en un depuis « Pour ce Mac »."
+          }
+        }
+      }
+    },
+    "Download progress": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download progress"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Progression du téléchargement"
           }
         }
       }
@@ -1105,6 +1489,54 @@
         }
       }
     },
+    "Estimate.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimate."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation."
+          }
+        }
+      }
+    },
+    "Estimate: %@ of %@ usable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimate: %1$@ of %2$@ usable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation : %1$@ sur %2$@ utilisables"
+          }
+        }
+      }
+    },
+    "Estimated": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimée"
+          }
+        }
+      }
+    },
     "Estimated from the model size. The exact size is read when you click Download.": {
       "localizations": {
         "en": {
@@ -1153,6 +1585,22 @@
         }
       }
     },
+    "Every model of llmfit's catalog that fits in %@, best first.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every model of llmfit's catalog that fits in %@, best first."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les modèles du catalogue llmfit qui tiennent dans %@, les meilleurs en premier."
+          }
+        }
+      }
+    },
     "Fall back to the cloud": {
       "localizations": {
         "en": {
@@ -1169,6 +1617,22 @@
         }
       }
     },
+    "Fast": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rapide"
+          }
+        }
+      }
+    },
     "Fit": {
       "localizations": {
         "en": {
@@ -1181,6 +1645,86 @@
           "stringUnit": {
             "state": "translated",
             "value": "Adéquation"
+          }
+        }
+      }
+    },
+    "Fits": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fits"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tient"
+          }
+        }
+      }
+    },
+    "Fits comfortably.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fits comfortably."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tient à l’aise en mémoire."
+          }
+        }
+      }
+    },
+    "Fits with room to spare.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fits with room to spare."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tient avec de la marge."
+          }
+        }
+      }
+    },
+    "Fits, but tight: close memory-hungry apps before using it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fits, but tight: close memory-hungry apps before using it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tient, mais de justesse : fermez les apps gourmandes en mémoire avant de l’utiliser."
+          }
+        }
+      }
+    },
+    "For this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pour ce Mac"
           }
         }
       }
@@ -1261,6 +1805,86 @@
           "stringUnit": {
             "state": "translated",
             "value": "Commencer"
+          }
+        }
+      }
+    },
+    "Hides models too big for this Mac. Tight estimates stay visible.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides models too big for this Mac. Tight estimates stay visible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque les modèles trop gros pour ce Mac. Les estimations justes restent visibles."
+          }
+        }
+      }
+    },
+    "Hugging Face is unavailable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face is unavailable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face est indisponible"
+          }
+        }
+      }
+    },
+    "Hugging Face search is unavailable offline.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face search is unavailable offline."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La recherche Hugging Face est indisponible hors ligne."
+          }
+        }
+      }
+    },
+    "Hugging Face search waits for llmfit, which gives this Mac's speed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face search waits for llmfit, which gives this Mac's speed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La recherche Hugging Face attend llmfit, qui donne la vitesse de ce Mac."
+          }
+        }
+      }
+    },
+    "Hugging Face, not rated by llmfit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face, not rated by llmfit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face, non évalué par llmfit"
           }
         }
       }
@@ -1425,6 +2049,22 @@
         }
       }
     },
+    "Installed. Make it the default model.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed. Make it the default model."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installé. En faire le modèle par défaut."
+          }
+        }
+      }
+    },
     "Installed: %@": {
       "localizations": {
         "en": {
@@ -1501,6 +2141,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Profil de lancement"
+          }
+        }
+      }
+    },
+    "Left out of llmfit's catalog: %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left out of llmfit's catalog: %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écartés du catalogue llmfit : %@."
           }
         }
       }
@@ -1665,6 +2321,22 @@
         }
       }
     },
+    "Localia is offline or the Hub did not answer. The llmfit lists still work.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia is offline or the Hub did not answer. The llmfit lists still work."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia est hors ligne ou le Hub n’a pas répondu. Les listes llmfit fonctionnent toujours."
+          }
+        }
+      }
+    },
     "Localia sessions only": {
       "localizations": {
         "en": {
@@ -1745,6 +2417,22 @@
         }
       }
     },
+    "Looking for new GGUFs on Hugging Face…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for new GGUFs on Hugging Face…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche de nouveaux GGUF sur Hugging Face…"
+          }
+        }
+      }
+    },
     "Made with ♥ by Vincent Lauriat": {
       "localizations": {
         "en": {
@@ -1773,6 +2461,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mesurer la vitesse"
+          }
+        }
+      }
+    },
+    "Measured on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured on this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mesurée sur ce Mac"
+          }
+        }
+      }
+    },
+    "Measured on this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured on this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mesuré sur ce Mac."
+          }
+        }
+      }
+    },
+    "Measured: %@ of %@ usable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured: %1$@ of %2$@ usable"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mesuré : %1$@ sur %2$@ utilisables"
           }
         }
       }
@@ -1857,6 +2593,22 @@
         }
       }
     },
+    "Memory: %@ of %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory: %1$@ of %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoire : %1$@ sur %2$@"
+          }
+        }
+      }
+    },
     "Model": {
       "localizations": {
         "en": {
@@ -1905,6 +2657,38 @@
         }
       }
     },
+    "Models being downloaded. They move to Installed when done.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models being downloaded. They move to Installed when done."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèles en cours de téléchargement. Ils passent dans Installés une fois terminés."
+          }
+        }
+      }
+    },
+    "Models on this Mac, by engine. Local mode uses the default one.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models on this Mac, by engine. Local mode uses the default one."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèles présents sur ce Mac, par moteur. Le mode local utilise celui par défaut."
+          }
+        }
+      }
+    },
     "Models…": {
       "localizations": {
         "en": {
@@ -1921,6 +2705,86 @@
         }
       }
     },
+    "My models": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "My models"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mes modèles"
+          }
+        }
+      }
+    },
+    "Needs about %@, more than this Mac can give a model. Localia does not download it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs about %@, more than this Mac can give a model. Localia does not download it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Demande environ %@, plus que ce que ce Mac peut donner à un modèle. Localia ne le télécharge pas."
+          }
+        }
+      }
+    },
+    "New on HF": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New on HF"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouveautés HF"
+          }
+        }
+      }
+    },
+    "New on Hugging Face": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New on Hugging Face"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouveautés sur Hugging Face"
+          }
+        }
+      }
+    },
+    "No": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non"
+          }
+        }
+      }
+    },
     "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode.": {
       "localizations": {
         "en": {
@@ -1933,6 +2797,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucune connexion Claude n'a été trouvée sur ce Mac : Claude Code peut vous demander de vous connecter. Pour travailler sans compte, passez en mode local."
+          }
+        }
+      }
+    },
+    "No GGUF found for “%@”.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No GGUF found for “%@”."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun GGUF trouvé pour « %@ »."
           }
         }
       }
@@ -2049,6 +2929,22 @@
         }
       }
     },
+    "No model installed yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model installed yet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle installé"
+          }
+        }
+      }
+    },
     "No model installed yet. Download one from the Recommended tab.": {
       "localizations": {
         "en": {
@@ -2081,6 +2977,38 @@
         }
       }
     },
+    "No model matches these filters (%lld hidden).": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model matches these filters (%lld hidden)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle ne correspond à ces filtres (%lld masqué(s))."
+          }
+        }
+      }
+    },
+    "No model matches “%@”. Press Return to search Hugging Face.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model matches “%@”. Press Return to search Hugging Face."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle ne correspond à « %@ ». Appuyez sur Retour pour chercher sur Hugging Face."
+          }
+        }
+      }
+    },
     "No model yet": {
       "localizations": {
         "en": {
@@ -2109,6 +3037,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucune session lancée par Localia n’est en cours."
+          }
+        }
+      }
+    },
+    "No tool use: Claude Code cannot read or edit files with it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No tool use: Claude Code cannot read or edit files with it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas d’appel d’outils : Claude Code ne peut ni lire ni modifier de fichiers avec lui."
           }
         }
       }
@@ -2177,6 +3121,54 @@
         }
       }
     },
+    "Not rated by llmfit: memory and speed are Localia's estimates.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not rated by llmfit: memory and speed are Localia's estimates."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non évalués par llmfit : mémoire et vitesse estimées par Localia."
+          }
+        }
+      }
+    },
+    "Nothing new on Hugging Face fits this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing new on Hugging Face fits this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune nouveauté Hugging Face ne tient sur ce Mac."
+          }
+        }
+      }
+    },
+    "Nothing to list yet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to list yet."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rien à afficher pour l’instant."
+          }
+        }
+      }
+    },
     "OK": {
       "localizations": {
         "en": {
@@ -2209,6 +3201,22 @@
         }
       }
     },
+    "Only models at %lld tok/s or more.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only models at %lld tok/s or more."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seulement les modèles à %lld tok/s ou plus."
+          }
+        }
+      }
+    },
     "Only models downloaded by Localia can be deleted here.": {
       "localizations": {
         "en": {
@@ -2221,6 +3229,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Seuls les modèles téléchargés par Localia peuvent être supprimés ici."
+          }
+        }
+      }
+    },
+    "Only models that can call tools: Claude Code needs them to read and edit files.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only models that can call tools: Claude Code needs them to read and edit files."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seulement les modèles qui savent appeler des outils : Claude Code en a besoin pour lire et modifier les fichiers."
           }
         }
       }
@@ -2369,6 +3393,22 @@
         }
       }
     },
+    "Rough estimate": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rough estimate"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation grossière"
+          }
+        }
+      }
+    },
     "Running sessions": {
       "localizations": {
         "en": {
@@ -2397,6 +3437,102 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fonctionne sur ce Mac, gratuit et open source."
+          }
+        }
+      }
+    },
+    "Search": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher"
+          }
+        }
+      }
+    },
+    "Search Hugging Face": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Hugging Face"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher sur Hugging Face"
+          }
+        }
+      }
+    },
+    "Search models": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search models"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher des modèles"
+          }
+        }
+      }
+    },
+    "Search models — press Return to search Hugging Face too": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search models — press Return to search Hugging Face too"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher des modèles — Retour cherche aussi sur Hugging Face"
+          }
+        }
+      }
+    },
+    "Searching Hugging Face for “%@”…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Searching Hugging Face for “%@”…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche de « %@ » sur Hugging Face…"
+          }
+        }
+      }
+    },
+    "Select a model to see how its memory adds up and why it is listed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a model to see how its memory adds up and why it is listed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélectionnez un modèle pour voir le détail de sa mémoire et pourquoi il est proposé."
           }
         }
       }
@@ -2449,6 +3585,38 @@
         }
       }
     },
+    "Show All": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show All"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout afficher"
+          }
+        }
+      }
+    },
+    "Show For this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show For this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher « Pour ce Mac »"
+          }
+        }
+      }
+    },
     "Skip for Now": {
       "localizations": {
         "en": {
@@ -2461,6 +3629,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Plus tard"
+          }
+        }
+      }
+    },
+    "Source": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source"
+          }
+        }
+      }
+    },
+    "Source: llmfit's rated catalog, Hugging Face (rated by Localia), or both.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source: llmfit's rated catalog, Hugging Face (rated by Localia), or both."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source : le catalogue évalué par llmfit, Hugging Face (évalué par Localia), ou les deux."
           }
         }
       }
@@ -2637,6 +3837,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Terminal"
+          }
+        }
+      }
+    },
+    "The base model's configuration could not be read: rough estimate.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The base model's configuration could not be read: rough estimate."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuration du modèle de base est illisible : estimation grossière."
           }
         }
       }
@@ -2833,6 +4049,54 @@
         }
       }
     },
+    "Too big for this Mac's memory: Localia does not download it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too big for this Mac's memory: Localia does not download it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trop gros pour la mémoire de ce Mac : Localia ne le télécharge pas."
+          }
+        }
+      }
+    },
+    "Tools": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tools"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Outils"
+          }
+        }
+      }
+    },
+    "Try Again": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try Again"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réessayer"
+          }
+        }
+      }
+    },
     "Turns local mode off and removes the block Localia added to your shell startup files.": {
       "localizations": {
         "en": {
@@ -2845,6 +4109,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Désactive le mode local et retire le bloc que Localia a ajouté à vos fichiers de démarrage du shell."
+          }
+        }
+      }
+    },
+    "Unavailable offline": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unavailable offline"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Indisponible hors ligne"
           }
         }
       }
@@ -2993,6 +4273,22 @@
         }
       }
     },
+    "Use": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser"
+          }
+        }
+      }
+    },
     "Use %@": {
       "localizations": {
         "en": {
@@ -3057,6 +4353,54 @@
         }
       }
     },
+    "Waiting for llmfit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for llmfit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente de llmfit"
+          }
+        }
+      }
+    },
+    "Waiting for llmfit: Hugging Face models are graded with its speed for this Mac…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for llmfit: Hugging Face models are graded with its speed for this Mac…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente de llmfit : les modèles Hugging Face sont évalués avec sa vitesse pour ce Mac…"
+          }
+        }
+      }
+    },
+    "Weights %@ + context %@ + overhead %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weights %1$@ + context %2$@ + overhead %3$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poids %1$@ + contexte %2$@ + marge %3$@"
+          }
+        }
+      }
+    },
     "Welcome to Localia": {
       "localizations": {
         "en": {
@@ -3089,6 +4433,22 @@
         }
       }
     },
+    "Yes": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yes"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oui"
+          }
+        }
+      }
+    },
     "You can change the engine and the model later in Settings.": {
       "localizations": {
         "en": {
@@ -3117,6 +4477,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "par défaut"
+          }
+        }
+      }
+    },
+    "fits": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fits"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tient"
           }
         }
       }
@@ -3201,6 +4577,38 @@
         }
       }
     },
+    "llmfit could not be read, and Hugging Face models are graded with its speed for this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit could not be read, and Hugging Face models are graded with its speed for this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit n’a pas pu être lu, et les modèles Hugging Face sont évalués avec sa vitesse pour ce Mac."
+          }
+        }
+      }
+    },
+    "llmfit returned as many models as Localia asked for: its catalog may be cut, some compatible models may be missing.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit returned as many models as Localia asked for: its catalog may be cut, some compatible models may be missing."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit a renvoyé autant de modèles que Localia en demandait : son catalogue est peut-être tronqué, des modèles compatibles peuvent manquer."
+          }
+        }
+      }
+    },
     "llmfit version": {
       "localizations": {
         "en": {
@@ -3213,6 +4621,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Version de llmfit"
+          }
+        }
+      }
+    },
+    "llmfit's estimate is above this Mac's memory, but the weights alone leave room. Try it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit's estimate is above this Mac's memory, but the weights alone leave room. Try it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’estimation de llmfit dépasse la mémoire de ce Mac, mais les poids seuls laissent de la place. À essayer."
+          }
+        }
+      }
+    },
+    "llmfit's estimate is over this Mac's memory, but the weights leave room: it may fit with a shorter context.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit's estimate is over this Mac's memory, but the weights leave room: it may fit with a shorter context."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’estimation de llmfit dépasse la mémoire de ce Mac, mais les poids laissent de la place : il peut tenir avec un contexte plus court."
+          }
+        }
+      }
+    },
+    "llmfit, quality %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit, quality %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llmfit, qualité %@"
           }
         }
       }
@@ -3281,6 +4737,22 @@
         }
       }
     },
+    "not rated by llmfit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not rated by llmfit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "non évalué par llmfit"
+          }
+        }
+      }
+    },
     "perfect": {
       "localizations": {
         "en": {
@@ -3329,6 +4801,22 @@
         }
       }
     },
+    "status.installed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installé"
+          }
+        }
+      }
+    },
     "stopped": {
       "localizations": {
         "en": {
@@ -3341,6 +4829,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "arrêté"
+          }
+        }
+      }
+    },
+    "tight": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tight"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "juste"
+          }
+        }
+      }
+    },
+    "tight estimate": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tight estimate"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "estimation juste"
+          }
+        }
+      }
+    },
+    "too big": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "too big"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "trop gros"
           }
         }
       }
@@ -3389,6 +4925,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "×%@"
+          }
+        }
+      }
+    },
+    "≈ %@, estimated": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@, estimated"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@, estimée"
           }
         }
       }

@@ -138,4 +138,83 @@ final class RecommenderTests: XCTestCase {
         XCTAssertEqual(r.emptyReason, .allFiltered)
         XCTAssertTrue(r.candidates.isEmpty)
     }
+
+    // MARK: - Whole catalog (1.0.2)
+
+    /// A small, fast, tool-capable model from a trusted org, as llmfit would emit it.
+    private func syntheticRow(_ name: String, repo: String) throws -> LlmfitRow {
+        let obj: [String: Any] = ["name": name, "provider": "Qwen", "params_b": 4.0, "fit_level": "Perfect",
+            "score_components": ["quality": 99.0], "best_quant": "Q4_K_M", "memory_required_gb": 4.0,
+            "estimated_tps": 40.0, "gguf_sources": [["provider": "unsloth", "repo": repo]],
+            "capabilities": ["Tool Use"], "category": "Coding", "runnable": true]
+        let data = try JSONSerialization.data(withJSONObject: ["models": [obj]])
+        return try XCTUnwrap(LlmfitClient.decodeRows(data).first)
+    }
+
+    func test_modelPastRow2000_reachesCandidates() throws {
+        var all = try rows()
+        XCTAssertGreaterThan(all.count, 2100)
+        all.insert(try syntheticRow("Qwen/Late-4B", repo: "unsloth/Late-4B-GGUF"), at: 2100)
+        let r = Recommender().recommend(rows: all, profile: m5)
+        let c = try XCTUnwrap(r.candidates.first { $0.id == "Qwen/Late-4B" }, "a top model past row 2000 must surface")
+        XCTAssertEqual(c.ggufRepo, "unsloth/Late-4B-GGUF")
+        XCTAssertEqual(c.source, .llmfit)
+        XCTAssertEqual(r.candidates.first?.id, "Qwen/Late-4B", "highest quality, fast, tools: ranked first")
+    }
+
+    func test_memoryBreakdown_weightsKVAndOverheadSumToMemory() throws {
+        for c in try rec(m5, limit: 100_000).allCompatible where !c.memoryIsMeasured {
+            XCTAssertTrue(c.fits)
+            XCTAssertEqual(c.overheadGB ?? -1, 0.5, accuracy: 1e-9, c.id)
+            XCTAssertEqual(c.weightsGB + (c.kvCacheGB ?? 0) + (c.overheadGB ?? 0), c.memoryGB, accuracy: 1e-9, c.id)
+        }
+        let measured = try rec(m5, Measurements(tps: [:], memoryGB: [gemma12: 11], speedRatio: nil), limit: 5000)
+        let c = try XCTUnwrap(measured.candidates.first { $0.id == gemma12 })
+        XCTAssertNil(c.kvCacheGB, "measured memory has no breakdown")
+    }
+
+    func test_allCompatible_isEveryFittingModelRankedLikeCandidates() throws {
+        let r = try rec(m5)
+        XCTAssertEqual(r.candidates.count, 12)
+        XCTAssertGreaterThan(r.allCompatible.count, r.candidates.count)
+        XCTAssertEqual(Array(r.allCompatible.prefix(12)).map(\.id), r.candidates.map(\.id))
+        let uncapped = try rec(m5, limit: 100_000)
+        XCTAssertEqual(uncapped.candidates.map(\.id), r.allCompatible.map(\.id))
+        XCTAssertEqual(Set(r.allCompatible.map(\.id)).count, r.allCompatible.count, "no duplicates")
+    }
+
+    func test_exclusionCounts_byReason() throws {
+        func row(_ name: String, runnable: Bool = true, sources: [[String: String]] = [["provider": "unsloth", "repo": "unsloth/x-GGUF"]],
+                 params: Double? = 4, tps: Double? = 40, mem: Double = 4) -> [String: Any] {
+            var o: [String: Any] = ["name": name, "provider": "x", "fit_level": "Perfect", "score_components": ["quality": 50.0],
+                                    "best_quant": "Q4_K_M", "memory_required_gb": mem, "gguf_sources": sources,
+                                    "capabilities": ["Tool Use"], "category": "Coding", "runnable": runnable]
+            if let params { o["params_b"] = params }
+            if let tps { o["estimated_tps"] = tps }
+            return o
+        }
+        let objs = [
+            row("Qwen/A", runnable: false),
+            row("Qwen/B", sources: []),
+            row("someone/C"),
+            row("Qwen/C-abliterated"),
+            row("Qwen/D", sources: [["provider": "randomuser", "repo": "randomuser/D-GGUF"]]),
+            row("Qwen/E", params: 200, mem: 130),
+            row("Qwen/F", tps: nil),
+            row("Qwen/G", params: nil),
+            row("Qwen/OK"),
+        ]
+        let rows = try LlmfitClient.decodeRows(JSONSerialization.data(withJSONObject: ["models": objs]))
+        let r = Recommender().recommend(rows: rows, profile: m5)
+        let e = r.exclusions
+        XCTAssertEqual(e.notRunnable, 1)
+        XCTAssertEqual(e.noGGUF, 1)
+        XCTAssertEqual(e.untrustedOrg, 1)
+        XCTAssertEqual(e.excludedName, 1)
+        XCTAssertEqual(e.noTrustedProvider, 1)
+        XCTAssertEqual(e.tooBig, 1)
+        XCTAssertEqual(e.noSpeedEstimate, 2)
+        XCTAssertEqual(e.total, 8)
+        XCTAssertEqual(r.allCompatible.map(\.id), ["Qwen/OK"])
+    }
 }

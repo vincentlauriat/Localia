@@ -23,7 +23,7 @@ final class AppModelTests: XCTestCase {
     private func makeModel(engine: FakeEngine, others: [FakeEngine] = [], tool: FakeTool = FakeTool(),
                            terminal: FakeTerminal = FakeTerminal(),
                            meter: FakeSpeedMeter = FakeSpeedMeter(), shim: FakeShim = FakeShim(),
-                           rows: [LlmfitRow] = [], sizes: FakeSizes = FakeSizes(),
+                           rows: [LlmfitRow] = [], sizes: FakeSizes = FakeSizes(), hf: FakeHFCatalog = FakeHFCatalog(),
                            availableGB: Double = 100, heavyApps: [String] = [], claudeConfigDir: URL? = nil,
                            cloudLogin: Bool = true,
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
@@ -44,6 +44,7 @@ final class AppModelTests: XCTestCase {
             freeMemoryGB: { 10 },
             rows: FakeRows(rows: rows),
             sizes: sizes,
+            hfCatalog: hf,
             profile: MachineProfile(chip: "Test", totalRAMGB: 24, gpuWorkingSetGB: 18, isAppleSilicon: true),
             appSupportBase: base,
             claudeConfigDir: claudeConfigDir ?? base.appendingPathComponent("claude-config"),
@@ -250,6 +251,166 @@ final class AppModelTests: XCTestCase {
         for _ in 0..<100 where !model.downloads.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertEqual(sizes.calls, 1)
         XCTAssertEqual(model.settings.modelIDs[c.id], c.id)
+    }
+
+    // MARK: - Hugging Face (1.0.2)
+
+    static func hfEntry(_ repo: String, verdict: Fit? = .good, memoryGB: Double = 8) -> HFCatalogEntry {
+        HFCatalogEntry(candidate: ModelCandidate(id: repo, displayName: repo, ggufRepo: repo, quant: "Q4_K_M",
+                                                 weightsGB: 4, memoryGB: memoryGB, estimatedTPS: 22,
+                                                 fit: verdict ?? .marginal, slow: false, supportsTools: true,
+                                                 memoryIsMeasured: false, speedIsMeasured: false, quality: 0,
+                                                 source: .huggingface, fits: verdict != nil),
+                       createdAt: "2026-11-01T00:00:00.000Z", downloads: 10)
+    }
+
+    func test_hfRecent_gradedWithLlmfitSpeedConstantAndDedupedAgainstLlmfit() async throws {
+        let hf = FakeHFCatalog(recent: [Self.hfEntry("bartowski/New-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.loadHFRecent()
+        XCTAssertTrue(hf.contexts.isEmpty, "no llmfit rows yet: no speed constant, no request")
+        XCTAssertEqual(model.hfRecentState, .waitingForLlmfit, "said, not a silent empty section")
+        await model.refreshRecommendations()
+        await model.loadHFRecent()
+        let ctx = try XCTUnwrap(hf.contexts.first)
+        XCTAssertEqual(ctx.speedConstant, 40 * 3 * 0.58, accuracy: 1e-9, "tps x weights GB, from llmfit rows")
+        XCTAssertEqual(ctx.poolGB, model.profile.usablePoolGB)
+        XCTAssertTrue(ctx.knownRepos.contains("unsloth/m00-gguf"))
+        XCTAssertTrue(ctx.knownBases.contains("qwen/m00"))
+        XCTAssertEqual(model.hfRecentState, .loaded)
+        XCTAssertEqual(model.hfRecent.map(\.id), ["bartowski/New-GGUF"])
+        await model.loadHFRecent()
+        XCTAssertEqual(hf.contexts.count, 1, "loaded once; Refresh forces a reload")
+        await model.loadHFRecent(force: true)
+        XCTAssertEqual(hf.contexts.count, 2)
+    }
+
+    func test_hfOffline_onlyHFSectionsUnavailable() async throws {
+        let hf = FakeHFCatalog(offline: true)
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.refreshRecommendations()
+        await model.loadHFRecent()
+        await model.searchHF("qwen")
+        XCTAssertEqual(model.hfRecentState, .unavailable)
+        XCTAssertEqual(model.hfSearchState, .unavailable)
+        XCTAssertNil(model.recommendationError)
+        XCTAssertEqual(model.recommendation?.candidates.count, 3)
+        XCTAssertNil(model.alert)
+    }
+
+    func test_hfSearch_trimsAndClearsOnEmptyQuery() async throws {
+        let hf = FakeHFCatalog(results: [Self.hfEntry("a/Big-GGUF", verdict: nil), Self.hfEntry("b/Small-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.refreshRecommendations()
+        await model.searchHF("  qwen 8b ")
+        XCTAssertEqual(hf.queries, ["qwen 8b"])
+        XCTAssertEqual(model.hfSearchState, .loaded)
+        XCTAssertEqual(model.hfSearchResults.map(\.id), ["a/Big-GGUF", "b/Small-GGUF"])
+        await model.searchHF("   ")
+        XCTAssertEqual(hf.queries.count, 1)
+        XCTAssertEqual(model.hfSearchState, .idle)
+        XCTAssertTrue(model.hfSearchResults.isEmpty)
+    }
+
+    func test_downloadHFEntry_usesTheExistingPath() async throws {
+        let engine = FakeEngine(installed: [])
+        let model = makeModel(engine: engine, rows: try Self.rows(3))
+        await model.refreshAll()
+        let c = Self.hfEntry("bartowski/New-GGUF").candidate
+        model.download(c)
+        for _ in 0..<100 where !model.downloads.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        let served = try XCTUnwrap(model.settings.modelIDs.first { $0.value == c.id }?.key)
+        XCTAssertEqual(model.installedName(for: c), served)
+    }
+
+    func test_download_refusesAModelThatDoesNotFit() async throws {
+        let engine = FakeEngine(installed: [])
+        let model = makeModel(engine: engine, rows: try Self.rows(3))
+        await model.refreshAll()
+        let big = Self.hfEntry("unsloth/Huge-72B-GGUF", verdict: nil).candidate
+        XCTAssertFalse(big.fits)
+        model.download(big)
+        XCTAssertTrue(model.downloads.isEmpty)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(model.settings.defaultModel, "a too-big model never becomes the default")
+        XCTAssertTrue(model.settings.modelIDs.isEmpty)
+    }
+
+    func test_memoryGuard_usesHFEstimate_thenTheOneSavedAtDownload() async throws {
+        let entry = Self.hfEntry("bartowski/New-8B-GGUF", memoryGB: 10.4)
+        let hf = FakeHFCatalog(results: [entry])
+        let engine = FakeEngine(installed: [])
+        let model = makeModel(engine: engine, rows: try Self.rows(3), hf: hf)
+        await model.refreshAll()
+        await model.refreshRecommendations()
+        await model.searchHF("new")
+        model.download(entry.candidate)
+        for _ in 0..<100 where !model.downloads.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        let served = try XCTUnwrap(model.settings.modelIDs.first { $0.value == entry.id }?.key)
+        XCTAssertEqual(model.requiredGB(for: served, engine: .ollama), 10.4, accuracy: 1e-9)
+        XCTAssertEqual(model.wordsPerSecond(for: served)?.value ?? 0, 22 * 0.75, accuracy: 1e-9)
+        await model.searchHF("")
+        XCTAssertNil(model.knownCandidate(entry.id))
+        XCTAssertEqual(model.requiredGB(for: served, engine: .ollama, fileSizeGB: 4.8), 10.4, accuracy: 1e-9,
+                       "not the file size x 1.15 once the search is cleared")
+        XCTAssertEqual(model.settings.estimatedMemoryGB[entry.id], 10.4)
+    }
+
+    func test_search_showsLlmfitRatedCandidateForAKnownRepo() async throws {
+        let hf = FakeHFCatalog(results: [Self.hfEntry("UNSLOTH/M00-GGUF"), Self.hfEntry("b/Other-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.refreshRecommendations()
+        await model.searchHF("m00")
+        XCTAssertEqual(model.hfSearchResults.map(\.candidate.source), [.llmfit, .huggingface])
+        XCTAssertEqual(model.hfSearchResults.first?.candidate.id, "Qwen/M00")
+        XCTAssertEqual(model.hfSearchResults.first?.downloads, 10)
+    }
+
+    func test_searchBeforeLlmfit_saysItIsWaiting() async throws {
+        let hf = FakeHFCatalog(results: [Self.hfEntry("b/Other-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.searchHF("qwen")
+        XCTAssertEqual(model.hfSearchState, .waitingForLlmfit)
+        XCTAssertTrue(hf.queries.isEmpty)
+        XCTAssertFalse(model.catalogMayBeTruncated)
+    }
+
+    func test_searchBeforeLlmfit_runsOnceRecommendationsArrive() async throws {
+        let hf = FakeHFCatalog(results: [Self.hfEntry("b/Other-GGUF")])
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.searchHF("qwen")
+        XCTAssertEqual(model.hfSearchState, .waitingForLlmfit)
+        await model.refreshRecommendations()
+        XCTAssertEqual(hf.queries, ["qwen"], "the waiting search ran once llmfit's rows arrived")
+        XCTAssertEqual(model.hfSearchState, .loaded)
+        XCTAssertEqual(model.hfSearchResults.map(\.candidate.id), ["b/Other-GGUF"])
+        await model.refreshRecommendations()
+        XCTAssertEqual(hf.queries, ["qwen"], "not run again by a later refresh")
+    }
+
+    func test_delete_forgetsTheSavedMemoryEstimate() async throws {
+        let model = makeModel(engine: FakeEngine(installed: ["m-localia"])) {
+            $0.modelIDs = ["m-localia": "Qwen/M00"]
+            $0.estimatedMemoryGB = ["Qwen/M00": 5, "Qwen/M01": 6]
+        }
+        await model.refreshAll()
+        await model.delete(try row(model, "m-localia"))
+        XCTAssertNil(model.alert)
+        XCTAssertNil(model.settings.modelIDs["m-localia"])
+        XCTAssertEqual(model.settings.estimatedMemoryGB, ["Qwen/M01": 6])
+    }
+
+    func test_cancelledRecentLoad_keepsNothingAndReloadsNextTime() async throws {
+        let hf = FakeHFCatalog(recent: [Self.hfEntry("b/New-GGUF")], delayNanos: 5_000_000_000)
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(3), hf: hf)
+        await model.refreshRecommendations()
+        let load = Task { await model.loadHFRecent() }
+        for _ in 0..<200 where model.hfRecentState != .loading { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertEqual(model.hfRecentState, .loading)
+        load.cancel()
+        await load.value
+        XCTAssertEqual(model.hfRecentState, .idle, "not 'unavailable offline' after a tab switch")
+        XCTAssertTrue(model.hfRecent.isEmpty)
     }
 
     /// A stopped engine is not "nothing installed": onboarding does not come back.
@@ -774,6 +935,33 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
 struct FakeRows: RecommendationRowsProviding {
     var rows: [LlmfitRow] = []
     func rows(profile: MachineProfile) async throws -> [LlmfitRow] { rows }
+}
+
+/// Returns `recent` / `results`, or throws `URLError(.notConnectedToInternet)` when `offline`; records contexts.
+final class FakeHFCatalog: HFCataloging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _contexts: [HFCatalogContext] = []
+    private var _queries: [String] = []
+    var contexts: [HFCatalogContext] { lock.withLock { _contexts } }
+    var queries: [String] { lock.withLock { _queries } }
+    let recent: [HFCatalogEntry]
+    let results: [HFCatalogEntry]
+    let offline: Bool
+    let delayNanos: UInt64
+    init(recent: [HFCatalogEntry] = [], results: [HFCatalogEntry] = [], offline: Bool = false, delayNanos: UInt64 = 0) {
+        self.recent = recent; self.results = results; self.offline = offline; self.delayNanos = delayNanos
+    }
+    func recent(_ ctx: HFCatalogContext) async throws -> [HFCatalogEntry] {
+        lock.withLock { _contexts.append(ctx) }
+        if delayNanos > 0 { try await Task.sleep(nanoseconds: delayNanos) }
+        if offline { throw URLError(.notConnectedToInternet) }
+        return recent
+    }
+    func search(_ query: String, _ ctx: HFCatalogContext) async throws -> [HFCatalogEntry] {
+        lock.withLock { _contexts.append(ctx); _queries.append(query) }
+        if offline { throw URLError(.notConnectedToInternet) }
+        return results
+    }
 }
 
 final class FakeSizes: DownloadSizing, @unchecked Sendable {

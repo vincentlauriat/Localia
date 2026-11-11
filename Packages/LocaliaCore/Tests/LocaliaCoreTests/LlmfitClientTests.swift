@@ -47,6 +47,25 @@ final class LlmfitClientTests: XCTestCase {
                                            "--memory", "48.0G", "--max-context", "65536", "--json"])
     }
 
+    func test_recommend_defaultRequestsTheWholeCatalog() async throws {
+        let runner = FakeRunner(result: ProcessResult(status: 0, stdout: try fixtureData(), stderr: ""))
+        _ = try await LlmfitClient(binary: URL(fileURLWithPath: "/x/llmfit"), runner: runner)
+            .recommend(poolGB: 48, contextTokens: 65536)
+        let args = try XCTUnwrap(runner.calls.first?.1)
+        let n = try XCTUnwrap(args.firstIndex(of: "-n").flatMap { Int(args[$0 + 1]) })
+        XCTAssertGreaterThanOrEqual(n, 100_000, "llmfit sorts by its own score: any cap drops small fast models")
+    }
+
+    func test_rowsReachingTheLimit_mayBeTruncated() async throws {
+        let runner = FakeRunner(result: ProcessResult(status: 0, stdout: try fixtureData(), stderr: ""))
+        let rows = try await LlmfitClient(binary: URL(fileURLWithPath: "/x/llmfit"), runner: runner)
+            .recommend(poolGB: 48, contextTokens: 65536, limit: 3000)
+        XCTAssertEqual(rows.count, 3000)
+        XCTAssertTrue(LlmfitClient.mayBeTruncated(rows, limit: 3000))
+        XCTAssertFalse(LlmfitClient.mayBeTruncated(rows, limit: 3001))
+        XCTAssertFalse(LlmfitClient.mayBeTruncated(rows), "the default limit is far above the 13.7k-row catalog")
+    }
+
     func test_memoryFormat_roundsUpToOneDecimal() {
         XCTAssertEqual(LlmfitClient.formatPool(16.26), "16.3G")
         XCTAssertEqual(LlmfitClient.formatPool(48), "48.0G")

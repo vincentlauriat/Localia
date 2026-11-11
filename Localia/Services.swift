@@ -41,6 +41,14 @@ protocol DownloadSizing: Sendable {
 
 extension HFManifest: DownloadSizing {}
 
+/// Hugging Face GGUF listings (recent from trusted providers, search), so tests never hit the network.
+protocol HFCataloging: Sendable {
+    func recent(_ ctx: HFCatalogContext) async throws -> [HFCatalogEntry]
+    func search(_ query: String, _ ctx: HFCatalogContext) async throws -> [HFCatalogEntry]
+}
+
+extension HFCatalog: HFCataloging {}
+
 /// Everything AppModel composes. `live()` wires the real core types; tests pass fakes.
 struct AppDependencies {
     var settings: SettingsStore
@@ -58,6 +66,7 @@ struct AppDependencies {
     var freeMemoryGB: @Sendable () -> Double
     var rows: any RecommendationRowsProviding
     var sizes: any DownloadSizing
+    var hfCatalog: any HFCataloging
     var profile: MachineProfile
     /// Replaces `~/Library/Application Support` (sessions, scripts); nil in the app.
     var appSupportBase: URL?
@@ -89,6 +98,7 @@ struct AppDependencies {
             freeMemoryGB: MemoryGuard.systemAvailableGB,
             rows: LlmfitRowsProvider(binary: { llmfit.binary }),
             sizes: HFManifest(),
+            hfCatalog: HFCatalog(),
             profile: .current(),
             appSupportBase: nil,
             claudeConfigDir: Paths.claudeConfig(),

@@ -52,7 +52,7 @@ final class OnboardingSnapshotTests: XCTestCase {
             tool: FakeTool(path: claude ? URL(fileURLWithPath: "/usr/bin/true") : nil), shim: FakeShim(),
             terminal: FakeTerminal(), availableTerminals: { [.terminal] }, speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { [] }),
-            freeMemoryGB: { 9.6 }, rows: FakeRows(rows: rows), sizes: FakeSizes(),
+            freeMemoryGB: { 9.6 }, rows: FakeRows(rows: rows), sizes: FakeSizes(), hfCatalog: FakeHFCatalog(),
             profile: MachineProfile(chip: "Test", totalRAMGB: 24, gpuWorkingSetGB: 18, isAppleSilicon: true),
             appSupportBase: base, claudeConfigDir: base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
