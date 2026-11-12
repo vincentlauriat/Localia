@@ -9,7 +9,7 @@ import SwiftUI
 struct MenuBarPanel: View {
     @ObservedObject var model: AppModel
     let windows: WindowManager
-    let updater: Updater
+    @ObservedObject var updater: Updater
     /// `false` renders the content without a scroll container: used by `PanelSizer` and snapshots.
     var scrolls = true
     /// Where the open/closed state of the cards is kept (standard defaults in the app, a scratch suite in tests).
@@ -480,7 +480,7 @@ struct MenuBarPanel: View {
                 ListRow(icon: "arrow.triangle.2.circlepath", title: String(localized: "Check for Updates…"))
             }
             .buttonStyle(PanelRowButtonStyle())
-            .disabled(!updater.isAvailable)
+            .disabled(!updater.canCheckNow)
             .help(updater.isAvailable ? "" : String(localized: "Updates Unavailable in This Build"))
 
             RowDivider()
