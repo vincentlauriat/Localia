@@ -44,6 +44,8 @@ final class HFCatalogTests: XCTestCase {
             XCTAssertEqual(e.candidate.source, .huggingface)
             XCTAssertEqual(e.candidate.quant, "Q4_K_M")
             XCTAssertTrue(e.candidate.fits)
+            XCTAssertNotNil(e.candidate.paramsB, e.candidate.ggufRepo)
+            XCTAssertTrue(e.candidate.simpleTasksOnly, "every fixture is 4-8B")
         }
         let paths = EngineStubProtocol.recorded.filter { $0.path == "/api/models" }.compactMap(\.query)
         XCTAssertEqual(paths.count, 4)

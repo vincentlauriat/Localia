@@ -184,7 +184,7 @@ public struct HFCatalog: Sendable {
             supportsTools: m.gguf?.chatTemplate?.contains("tools") ?? false,
             memoryIsMeasured: false, speedIsMeasured: false, quality: 0,
             source: .huggingface, memoryIsEstimate: shape == nil, fits: verdict != nil,
-            kvCacheGB: kv, overheadGB: kv == nil ? nil : overhead)
+            kvCacheGB: kv, overheadGB: kv == nil ? nil : overhead, paramsB: paramsB)
         return HFCatalogEntry(candidate: candidate, createdAt: m.createdAt, downloads: m.downloads ?? 0)
     }
 

@@ -32,18 +32,28 @@ public struct ModelCandidate: Identifiable, Sendable, Equatable {
     /// kvCacheGB + overheadGB when both are set. Overhead = runtime buffers, plus the vision projector.
     public let kvCacheGB: Double?
     public let overheadGB: Double?
+    /// Total parameters in billions, nil when unknown.
+    public let paramsB: Double?
+
+    /// Models under `LocaliaConstants.claudeCodeMinParamsB` handle small fixes but are unreliable on
+    /// multi-file Claude Code work (tested 2026-11: 4B and 8B mis-edited files and claimed success).
+    public var simpleTasksOnly: Bool {
+        guard let p = paramsB else { return false }
+        return p < LocaliaConstants.claudeCodeMinParamsB
+    }
 
     public init(id: String, displayName: String, ggufRepo: String, quant: String, weightsGB: Double,
                 memoryGB: Double, estimatedTPS: Double, fit: Fit, slow: Bool, supportsTools: Bool,
                 memoryIsMeasured: Bool, speedIsMeasured: Bool, quality: Double,
                 source: CandidateSource = .llmfit, memoryIsEstimate: Bool = false, fits: Bool = true,
-                kvCacheGB: Double? = nil, overheadGB: Double? = nil) {
+                kvCacheGB: Double? = nil, overheadGB: Double? = nil, paramsB: Double? = nil) {
         self.id = id; self.displayName = displayName; self.ggufRepo = ggufRepo; self.quant = quant
         self.weightsGB = weightsGB; self.memoryGB = memoryGB; self.estimatedTPS = estimatedTPS
         self.fit = fit; self.slow = slow; self.supportsTools = supportsTools
         self.memoryIsMeasured = memoryIsMeasured; self.speedIsMeasured = speedIsMeasured
         self.quality = quality; self.source = source; self.memoryIsEstimate = memoryIsEstimate
         self.fits = fits; self.kvCacheGB = kvCacheGB; self.overheadGB = overheadGB
+        self.paramsB = paramsB
     }
 }
 
