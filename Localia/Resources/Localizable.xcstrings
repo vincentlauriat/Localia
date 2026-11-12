@@ -33,6 +33,22 @@
         }
       }
     },
+    "%@ is not installed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is not installed"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ n’est pas installé"
+          }
+        }
+      }
+    },
     "%@ is ready.": {
       "localizations": {
         "en": {
@@ -93,6 +109,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ sur ce Mac"
+          }
+        }
+      }
+    },
+    "%@ runs only with a local model. Turn on local mode, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ runs only with a local model. Turn on local mode, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ne fonctionne qu’avec un modèle local. Activez le mode local, puis réessayez."
           }
         }
       }
@@ -689,6 +721,22 @@
         }
       }
     },
+    "Choose the folder %@ works in.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the folder %@ works in."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez le dossier dans lequel %@ travaille."
+          }
+        }
+      }
+    },
     "Choose the folder Claude Code works in.": {
       "localizations": {
         "en": {
@@ -1133,6 +1181,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Impossible de mettre à jour le mode local pour chaque claude"
+          }
+        }
+      }
+    },
+    "Could not write the %@ settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not write the %@ settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’écrire les réglages de %@"
           }
         }
       }
@@ -1985,6 +2049,22 @@
         }
       }
     },
+    "Install it from its website, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install it from its website, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installez-le depuis son site, puis réessayez."
+          }
+        }
+      }
+    },
     "Install it from the welcome window or Settings, then try again.": {
       "localizations": {
         "en": {
@@ -2113,6 +2193,22 @@
         }
       }
     },
+    "Install…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer…"
+          }
+        }
+      }
+    },
     "Launch": {
       "localizations": {
         "en": {
@@ -2125,6 +2221,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Lancer"
+          }
+        }
+      }
+    },
+    "Launch %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer %@"
           }
         }
       }
@@ -2269,6 +2381,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mode local"
+          }
+        }
+      }
+    },
+    "Local mode is off": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local mode is off"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode local est désactivé"
           }
         }
       }
@@ -4333,6 +4461,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Utiliser %@"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
           }
         }
       }

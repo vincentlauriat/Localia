@@ -35,6 +35,16 @@ struct DownloadState: Equatable {
 /// `waitingForLlmfit`: the speed constant comes from llmfit's rows, not read yet (or llmfit failed).
 enum HFLoadState: Equatable { case idle, waitingForLlmfit, loading, loaded, unavailable }
 
+/// A local-only coding tool (Codex, OpenCode, Pi) as the panel shows it.
+struct LocalToolRow: Identifiable, Equatable {
+    let id: String
+    let displayName: String
+    let installPage: URL
+    /// nil when the tool is not installed.
+    var path: URL?
+    var version: String?
+}
+
 struct InstalledRow: Identifiable, Equatable {
     var id: String { "\(engine.rawValue)|\(name)" }
     let engine: EngineID
@@ -106,6 +116,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var llmfitVersion: String?
     @Published private(set) var updatingLlmfit = false
     @Published private(set) var availableTerminals: [TerminalApp] = []
+    /// Codex, OpenCode and Pi, installed or not, in `deps.localTools` order.
+    @Published private(set) var localTools: [LocalToolRow] = []
 
     private var rows: [LlmfitRow]?
     /// Query of the Hugging Face search in flight (older results are dropped).
@@ -195,6 +207,7 @@ final class AppModel: ObservableObject {
         for e in await registry.all { engineStates[e.id] = await e.installState() }
         claudePath = await deps.tool.locate()
         claudeChecked = true
+        await refreshLocalTools()
         await refreshInstalled()
         await refreshStatus()
         await refreshLaunchTarget()
@@ -446,14 +459,43 @@ final class AppModel: ObservableObject {
 
     func modelsInUse() async -> Set<ModelKey> { await tracker.modelsStillInUse() }
 
-    func launch(folder: URL) async {
-        guard await deps.tool.locate() != nil else {
-            claudePath = nil
-            alert = AppAlert(title: String(localized: "Claude Code is not installed"),
-                             message: String(localized: "Install it from the welcome window or Settings, then try again."))
+    /// Finds Codex, OpenCode and Pi and reads their versions. The version is read again only when the
+    /// binary moved.
+    func refreshLocalTools() async {
+        var rows: [LocalToolRow] = []
+        for tool in deps.localTools {
+            let path = await tool.locate()
+            let old = localTools.first { $0.id == tool.id }
+            var version = old?.path == path ? old?.version : nil
+            if path != nil, version == nil { version = await tool.version() }
+            rows.append(LocalToolRow(id: tool.id, displayName: tool.displayName, installPage: tool.installPage,
+                                     path: path, version: version))
+        }
+        localTools = rows
+    }
+
+    /// `toolID` nil launches Claude Code; otherwise one of `deps.localTools`, which run in local mode only.
+    func launch(folder: URL, toolID: String? = nil) async {
+        let localTool = toolID.flatMap { id in deps.localTools.first { $0.id == id } }
+        let tool: any CodingTool = localTool ?? deps.tool
+        guard await tool.locate() != nil else {
+            if let localTool {
+                await refreshLocalTools()
+                alert = AppAlert(title: String(localized: "\(localTool.displayName) is not installed"),
+                                 message: String(localized: "Install it from its website, then try again."))
+            } else {
+                claudePath = nil
+                alert = AppAlert(title: String(localized: "Claude Code is not installed"),
+                                 message: String(localized: "Install it from the welcome window or Settings, then try again."))
+            }
             return
         }
         var target = await controller.launchTarget()
+        if let localTool, case .cloud = target {
+            alert = AppAlert(title: String(localized: "Local mode is off"),
+                             message: String(localized: "\(localTool.displayName) runs only with a local model. Turn on local mode, then try again."))
+            return
+        }
         let sessionID = UUID()
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
@@ -478,7 +520,7 @@ final class AppModel: ObservableObject {
                 let outcome = try await prepareLocal(engine: engine, model: model)
                 guard outcome != .cancelled else { return }
                 if outcome == .loadedByLocalia { loadedNow = key }
-                if settings.launchProfile == .light {
+                if localTool == nil, settings.launchProfile == .light {
                     configDir = try ClaudeConfigIsolation(dir: deps.claudeConfigDir)
                         .prepare(apiKey: ClaudeCodeTool.apiKey, trustedFolder: folder)
                 }
@@ -494,8 +536,19 @@ final class AppModel: ObservableObject {
             if case let .local(id, baseURL, m, _) = target {
                 target = .local(engine: id, baseURL: baseURL, model: m, contextTokens: await engine.contextWindow(m))
             }
+            if let localTool {
+                do {
+                    configDir = try localTool.prepareConfig(target: target, folder: folder,
+                                                            dir: Paths.tool(localTool.id, base: deps.appSupportBase))
+                } catch {
+                    busyMessage = nil
+                    await undoLoad(loadedNow)
+                    show(error, title: String(localized: "Could not write the \(localTool.displayName) settings"))
+                    return
+                }
+            }
         }
-        let command = deps.tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
+        let command = tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
         do {
             let url: URL
             do {
@@ -516,7 +569,7 @@ final class AppModel: ObservableObject {
             }
             recent.add(folder)
             if session != nil { startPolling() }
-            if case .cloud = target, !(await deps.hasCloudLogin()) { alert = noCloudLoginAlert() }
+            if localTool == nil, case .cloud = target, !(await deps.hasCloudLogin()) { alert = noCloudLoginAlert() }
         } catch {
             show(error, title: String(localized: "Could not open the terminal"))
         }

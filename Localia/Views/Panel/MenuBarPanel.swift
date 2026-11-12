@@ -19,12 +19,16 @@ struct MenuBarPanel: View {
     @AppStorage private var appsOpen: Bool
     @AppStorage private var sessionsOpen: Bool
     @AppStorage private var engineOpen: Bool
-    /// The inline folder list under "Launch Claude Code": not persisted, it is a submenu.
-    @State private var launchOpen: Bool
+    /// The tool whose inline folder list is open (`claudeCode`, or a local tool's id): not persisted, it is
+    /// a submenu.
+    @State private var launchOpen: String?
     @State private var freeing = false
     /// The panel's natural height, measured through AppKit (see `remeasure`).
     @State private var contentHeight: CGFloat = 0
     @State private var host = PanelHost()
+
+    /// `launchOpen` value of the Claude Code row.
+    static let claudeCode = "claude-code"
 
     enum Key {
         static let models = "panel.modelsOpen"
@@ -34,7 +38,7 @@ struct MenuBarPanel: View {
     }
 
     init(model: AppModel, windows: WindowManager, updater: Updater, scrolls: Bool = true,
-         store: UserDefaults = .standard, launchOpen: Bool = false) {
+         store: UserDefaults = .standard, launchOpen: String? = nil) {
         self.model = model
         self.windows = windows
         self.updater = updater
@@ -66,11 +70,11 @@ struct MenuBarPanel: View {
     /// Everything that changes how tall the panel wants to be. Text that merely gets longer is absorbed
     /// by the scroll view.
     private var layoutSignature: String {
-        let flags = [modelsOpen, appsOpen, sessionsOpen, engineOpen, launchOpen, model.isLocalModeOn, isBusy,
-                     model.launchModel != nil]
+        let flags = [modelsOpen, appsOpen, sessionsOpen, engineOpen, model.isLocalModeOn, isBusy,
+                     model.launchModel != nil] + model.localTools.map { $0.path != nil }
         let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
-                      model.recentFolders().count]
-        return "\(flags)|\(counts)"
+                      model.recentFolders().count, model.localTools.count]
+        return "\(flags)|\(counts)|\(launchOpen ?? "")"
     }
 
     // MARK: Body
@@ -433,15 +437,21 @@ struct MenuBarPanel: View {
 
     private var listCard: some View {
         VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { launchOpen.toggle() }
-            } label: {
+            Button { toggleLaunch(Self.claudeCode) } label: {
                 ListRow(icon: "terminal.fill", title: String(localized: "Launch Claude Code"), subtitle: launchSubtitle) {
-                    RowChevron(expanded: launchOpen)
+                    RowChevron(expanded: launchOpen == Self.claudeCode)
                 }
             }
             .buttonStyle(PanelRowButtonStyle())
-            if launchOpen { launchList }
+            if launchOpen == Self.claudeCode { launchList(tool: nil) }
+
+            // Codex, OpenCode, Pi only make sense against a local model: hidden outside local mode.
+            if model.isLocalModeOn {
+                ForEach(model.localTools) { tool in
+                    RowDivider()
+                    localToolRow(tool)
+                }
+            }
 
             RowDivider()
             Button {
@@ -506,18 +516,49 @@ struct MenuBarPanel: View {
         .card()
     }
 
-    /// Recent folders, then "Choose a Folder…", indented under the launch row.
-    private var launchList: some View {
+    /// An installed tool opens its folder list, like Claude Code; a missing one links to its install page.
+    @ViewBuilder
+    private func localToolRow(_ tool: LocalToolRow) -> some View {
+        if tool.path != nil {
+            Button { toggleLaunch(tool.id) } label: {
+                ListRow(icon: "chevron.left.forwardslash.chevron.right",
+                        title: String(localized: "Launch \(tool.displayName)"), subtitle: launchSubtitle) {
+                    RowChevron(expanded: launchOpen == tool.id)
+                }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .help([tool.path?.path, tool.version.map { String(localized: "Version \($0)") }]
+                .compactMap { $0 }.joined(separator: " · "))
+            if launchOpen == tool.id { launchList(tool: tool) }
+        } else {
+            Button { dismiss(); NSWorkspace.shared.open(tool.installPage) } label: {
+                ListRow(icon: "chevron.left.forwardslash.chevron.right", iconColor: .secondary, title: tool.displayName,
+                        subtitle: String(localized: "Not installed")) {
+                    Text(String(localized: "Install…")).font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+            .help(tool.installPage.absoluteString)
+        }
+    }
+
+    private func toggleLaunch(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.18)) { launchOpen = launchOpen == id ? nil : id }
+    }
+
+    /// Recent folders, then "Choose a Folder…", indented under the launch row. `tool` nil is Claude Code.
+    private func launchList(tool: LocalToolRow?) -> some View {
         VStack(spacing: 0) {
             ForEach(model.recentFolders(), id: \.self) { folder in
-                Button { launch(folder) } label: {
+                Button { launch(folder, toolID: tool?.id) } label: {
                     folderRow(icon: "folder", title: folder.lastPathComponent,
                               subtitle: (folder.path as NSString).abbreviatingWithTildeInPath)
                 }
                 .buttonStyle(PanelRowButtonStyle())
                 .help(folder.path)
             }
-            Button { chooseFolder() } label: {
+            Button { chooseFolder(tool: tool) } label: {
                 folderRow(icon: "folder.badge.plus", title: String(localized: "Choose a Folder…"), subtitle: nil)
             }
             .buttonStyle(PanelRowButtonStyle())
@@ -552,6 +593,7 @@ struct MenuBarPanel: View {
         Task {
             await model.refreshStatus()
             await model.refreshLaunchTarget()
+            await model.refreshLocalTools()
         }
     }
 
@@ -563,15 +605,15 @@ struct MenuBarPanel: View {
         DispatchQueue.main.async { windows.show(kind) }
     }
 
-    private func launch(_ folder: URL) {
+    private func launch(_ folder: URL, toolID: String?) {
         dismiss()
         Task {
-            await model.launch(folder: folder)
+            await model.launch(folder: folder, toolID: toolID)
             presentAlertIfNeeded()
         }
     }
 
-    private func chooseFolder() {
+    private func chooseFolder(tool: LocalToolRow?) {
         dismiss()
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
@@ -580,9 +622,10 @@ struct MenuBarPanel: View {
             panel.canChooseFiles = false
             panel.allowsMultipleSelection = false
             panel.prompt = String(localized: "Launch")
-            panel.message = String(localized: "Choose the folder Claude Code works in.")
+            panel.message = tool.map { String(localized: "Choose the folder \($0.displayName) works in.") }
+                ?? String(localized: "Choose the folder Claude Code works in.")
             guard panel.runModal() == .OK, let url = panel.url else { return }
-            launch(url)
+            launch(url, toolID: tool?.id)
         }
     }
 

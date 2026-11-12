@@ -77,6 +77,8 @@ struct AppDependencies {
     var hasCloudLogin: @Sendable () async -> Bool
     /// Shows an alert raised by background work (no window to attach it to).
     var notify: @MainActor (AppAlert) -> Void
+    /// Codex, OpenCode, Pi: offered in local mode only.
+    var localTools: [any LocalCodingTool] = []
 
     @MainActor
     static func live() -> AppDependencies {
@@ -119,7 +121,8 @@ struct AppDependencies {
                 alert.informativeText = a.message
                 NSApp.activate(ignoringOtherApps: true)
                 alert.runModal()
-            })
+            },
+            localTools: [CodexTool(), OpenCodeTool(), PiTool()])
     }
 }
 
