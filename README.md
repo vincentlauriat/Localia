@@ -2,9 +2,10 @@
 
 Localia is a macOS menu-bar app that finds the local LLMs that run well on your Mac, downloads and runs them, and opens Claude Code on them. It is for any Mac user: nothing needs to be installed beforehand (no Homebrew, Ollama, Python or Claude Code).
 
-- **Recommendations that fit.** Models ranked for your hardware by [llmfit](https://github.com/AlexsJones/llmfit), speed first, with a clear warning when your Mac will be slow.
+- **Recommendations that fit.** Models ranked for your hardware by [llmfit](https://github.com/AlexsJones/llmfit), speed first, with a clear warning when your Mac will be slow. The whole llmfit catalog is read, and every compatible model is listed with the reason others were set aside.
+- **Hugging Face.** Recent GGUF releases from trusted providers and a free search, each with its memory breakdown and a fits / tight / doesn't-fit verdict for this Mac.
 - **Model management.** Download with progress, cancel, see what is installed and loaded, unload, delete.
-- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model.
+- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Tested end to end on llama.cpp; 7–8B models are recommended for multi-file work.
 - **Local mode switch.** An airplane-mode-style toggle that sends AI work to the local models.
 - **Engines.** Ollama (default) and llama.cpp, installed, updated and removed from the app.
 
