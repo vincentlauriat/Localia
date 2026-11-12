@@ -107,6 +107,41 @@ final class ShellShimTests: XCTestCase {
             .filter { $0.lastPathComponent.hasPrefix(rc.lastPathComponent + ".localia-backup-") }
     }
 
+    // MARK: session registration
+
+    /// The shim writes a record into the sessions dir while `claude` runs and removes it afterwards.
+    func test_shim_registersSessionWhileClaudeRuns_thenRemovesIt() throws {
+        // Fake claude that copies the sessions dir listing and the record content as it sees them.
+        try exe("claude", """
+        for f in "$HOME"/Library/Application\\ Support/Localia/sessions/*.session; do cat "$f" > "$HOME/seen.session"; done
+        exit 7
+        """)
+        touch("healthy")
+        try installAndState(model: "qwen3-coder:30b", engine: .ollama)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("seen.session"))
+            let r = try run(shell)
+            XCTAssertEqual(r.status, 7, shell)
+            let seen = try XCTUnwrap(read("seen.session"), "\(shell): no record while claude ran")
+            XCTAssertTrue(seen.contains("engine=ollama\n"), seen)
+            XCTAssertTrue(seen.contains("model=qwen3-coder:30b\n"), seen)
+            XCTAssertTrue(seen.contains("/\(home.lastPathComponent)\n"), seen)   // /private/var vs /var
+            XCTAssertTrue(seen.contains("pid="), seen)
+            let left = (try? FileManager.default.contentsOfDirectory(atPath: shim().sessionsDir.path)) ?? []
+            XCTAssertEqual(left, [], "\(shell): record must be gone after claude exits")
+        }
+    }
+
+    func test_shim_cloudRun_registersNoSession() throws {
+        try exe("claude", """
+        ls "$HOME"/Library/Application\\ Support/Localia/sessions 2>/dev/null > "$HOME/seen.list"
+        exit 0
+        """)
+        try installAndState(on: false)
+        _ = try run("zsh")
+        XCTAssertEqual(read("seen.list") ?? "", "")
+    }
+
     // MARK: install / uninstall
 
     func test_install_isIdempotentAndBacksUp() throws {
