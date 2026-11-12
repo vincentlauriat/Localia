@@ -89,13 +89,30 @@ enum MemoryAlert {
 
 /// Number formatting shared by the views. Sizes are GiB (bytes / 1024^3), shown with the "GB" unit.
 enum Fmt {
-    static func gb(_ v: Double) -> String {
-        String(localized: "\(v.formatted(.number.precision(.fractionLength(1)))) GB")
+    /// The language the app UI is shown in (en or fr), as a locale. `Locale.current` follows the Mac's
+    /// *region*, so an English UI on a French-region Mac would print "10,9 GB"; the separator has to
+    /// agree with the unit words, which follow the UI language.
+    static var appLocale: Locale {
+        language(Bundle.main.preferredLocalizations.first ?? Locale.current.identifier)
+    }
+
+    /// Locale of a bare language ("en_FR" -> "en"): a region would bring its own separators back.
+    static func language(_ identifier: String) -> Locale {
+        Locale(identifier: Locale.Language(identifier: identifier).languageCode?.identifier ?? identifier)
+    }
+
+    /// `v` with `fractionDigits` decimals and the separator of `locale`.
+    static func number(_ v: Double, fractionDigits: Int, locale: Locale = appLocale) -> String {
+        v.formatted(.number.precision(.fractionLength(fractionDigits)).locale(locale))
+    }
+
+    static func gb(_ v: Double, locale: Locale = appLocale) -> String {
+        String(localized: "\(number(v, fractionDigits: 1, locale: locale)) GB")
     }
 
     static func bytes(_ b: Int64) -> String { gb(Double(b) / 1_073_741_824) }
 
     static func tps(_ v: Double) -> String {
-        String(localized: "\(v.formatted(.number.precision(.fractionLength(0)))) tok/s")
+        String(localized: "\(number(v, fractionDigits: 0)) tok/s")
     }
 }
