@@ -1,7 +1,10 @@
 import Foundation
 
 public enum EngineID: String, Sendable, Codable, CaseIterable {
-    case ollama, llamaCpp
+    case ollama, llamaCpp, mlx
+
+    /// The engine runs one model at a time: loading another one replaces the model a session uses.
+    public var servesOneModel: Bool { self != .ollama }
 }
 
 public enum InstallState: Sendable, Equatable {

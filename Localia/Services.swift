@@ -49,6 +49,13 @@ protocol HFCataloging: Sendable {
 
 extension HFCatalog: HFCataloging {}
 
+/// Whether an MLX repo exists on the Hub (nil: could not ask), so tests never hit the network.
+protocol MLXRepoChecking: Sendable {
+    func exists(_ repo: String) async -> Bool?
+}
+
+extension MLXRepoResolver: MLXRepoChecking {}
+
 /// Everything AppModel composes. `live()` wires the real core types; tests pass fakes.
 struct AppDependencies {
     var settings: SettingsStore
@@ -79,6 +86,8 @@ struct AppDependencies {
     var notify: @MainActor (AppAlert) -> Void
     /// Codex, OpenCode, Pi: offered in local mode only.
     var localTools: [any LocalCodingTool] = []
+    /// MLX candidates map to `mlx-community` repos; this says which exist.
+    var mlxRepos: any MLXRepoChecking = MLXRepoResolver()
 
     @MainActor
     static func live() -> AppDependencies {
@@ -88,7 +97,7 @@ struct AppDependencies {
         let launcher = TerminalLauncher()
         return AppDependencies(
             settings: settings,
-            engines: [OllamaEngine(), LlamaCppEngine()],
+            engines: [OllamaEngine(), LlamaCppEngine(), MLXEngine()],
             registryDefaults: .standard,
             appDefaults: .standard,
             tool: ClaudeCodeTool(),

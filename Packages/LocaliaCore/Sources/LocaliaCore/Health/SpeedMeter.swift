@@ -28,6 +28,7 @@ public struct SpeedMeter: Sendable {
         switch engine.id {
         case .ollama: return try await measureOllama(engine, model, keepAlive: loadedByLocalia)
         case .llamaCpp: return try await measureLlama(engine, model)
+        case .mlx: return try await measureMLX(engine)
         }
     }
 
@@ -69,6 +70,48 @@ public struct SpeedMeter: Sendable {
         guard let llama = engine as? LlamaCppEngine else { throw SpeedMeterError.unsupportedEngine }
         guard let pid = await llama.serverPID(), let rss = rssProvider(pid) else {
             throw SpeedMeterError.badResponse("llama-server pid / RSS unavailable")
+        }
+        return (tps, rss / Self.gib)
+    }
+
+    /// `mlx_lm.server` reports no timings: stream the probe and time from the first to the last token, so the
+    /// prompt's prefill is not counted.
+    private func measureMLX(_ engine: any Engine) async throws -> (Double, Double) {
+        guard let mlx = engine as? MLXEngine else { throw SpeedMeterError.unsupportedEngine }
+        var req = URLRequest(url: mlx.upstreamURL.appendingPathComponent("v1/chat/completions"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": "default_model", "stream": true, "stream_options": ["include_usage": true],
+            "max_tokens": Self.probeTokens, "temperature": 0,
+            "messages": [["role": "user", "content": Self.probePrompt]]] as [String: Any])
+        let (bytes, resp) = try await session.bytes(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw EngineError.http(status) }
+        var first: Date?, last: Date?
+        var chunks = 0
+        var completion: Int?
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:"), let obj = try? JSONSerialization.jsonObject(
+                with: Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)) as? [String: Any] else { continue }
+            if let u = obj["usage"] as? [String: Any], let c = AnthropicTranslation.nonNegativeInt(u["completion_tokens"]) {
+                completion = c
+            }
+            guard let delta = ((obj["choices"] as? [Any])?.first as? [String: Any])?["delta"] as? [String: Any],
+                  delta["content"] != nil || delta["reasoning"] != nil else { continue }
+            let now = Date()
+            if first == nil { first = now }
+            last = now
+            chunks += 1
+        }
+        let tokens = completion ?? chunks
+        guard let first, let last, tokens > 1, last > first else {
+            throw SpeedMeterError.badResponse("too few tokens streamed")
+        }
+        let tps = Double(tokens - 1) / last.timeIntervalSince(first)
+        guard let pid = await mlx.serverPID(), let rss = rssProvider(pid) else {
+            throw SpeedMeterError.badResponse("mlx_lm.server pid / RSS unavailable")
         }
         return (tps, rss / Self.gib)
     }

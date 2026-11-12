@@ -49,6 +49,22 @@
         }
       }
     },
+    "%@ is busy": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is busy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ est occupé"
+          }
+        }
+      }
+    },
     "%@ is not installed": {
       "localizations": {
         "en": {
@@ -129,6 +145,38 @@
         }
       }
     },
+    "%@ runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ runs one model at a time, and a %2$@ session is using %3$@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ ne fait tourner qu'un modèle à la fois, et une session %2$@ utilise %3$@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
+    "%@ runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ runs one model at a time, and another session is using %2$@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ ne fait tourner qu'un modèle à la fois, et une autre session utilise %2$@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
     "%@ runs only with a local model. Turn on local mode, then try again.": {
       "localizations": {
         "en": {
@@ -141,6 +189,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ ne fonctionne qu’avec un modèle local. Activez le mode local, puis réessayez."
+          }
+        }
+      }
+    },
+    "%@ starts with a model. Download one in Models, then start it again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ starts with a model. Download one in Models, then start it again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ démarre avec un modèle. Télécharge-en un dans Modèles, puis relance-le."
           }
         }
       }
@@ -2609,6 +2673,22 @@
         }
       }
     },
+    "Looking for an MLX version on Hugging Face…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for an MLX version on Hugging Face…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche d'une version MLX sur Hugging Face…"
+          }
+        }
+      }
+    },
     "Looking for new GGUFs on Hugging Face…": {
       "localizations": {
         "en": {
@@ -2977,6 +3057,22 @@
         }
       }
     },
+    "No %@ model": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No %@ model"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle %@"
+          }
+        }
+      }
+    },
     "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode.": {
       "localizations": {
         "en": {
@@ -3005,6 +3101,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucun GGUF trouvé pour « %@ »."
+          }
+        }
+      }
+    },
+    "No MLX version": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No MLX version"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas de version MLX"
           }
         }
       }
@@ -3085,22 +3197,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucun moteur n'est installé."
-          }
-        }
-      }
-    },
-    "No llama.cpp model": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No llama.cpp model"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun modèle llama.cpp"
           }
         }
       }
@@ -4737,86 +4833,6 @@
         }
       }
     },
-    "llama.cpp is busy": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp is busy"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp est occupé"
-          }
-        }
-      }
-    },
-    "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session %@ utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
-          }
-        }
-      }
-    },
-    "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session Claude Code utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
-          }
-        }
-      }
-    },
-    "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une autre session utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
-          }
-        }
-      }
-    },
-    "llama.cpp starts with a model. Download one in Models, then start it again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp starts with a model. Download one in Models, then start it again."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "llama.cpp démarre avec un modèle. Télécharge-en un dans Modèles, puis relance-le."
-          }
-        }
-      }
-    },
     "llmfit %@ is the latest version.": {
       "localizations": {
         "en": {
@@ -4973,6 +4989,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "mesuré"
+          }
+        }
+      }
+    },
+    "mlx-community has no 4-bit MLX conversion of this model. Switch to llama.cpp or Ollama to download it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "mlx-community has no 4-bit MLX conversion of this model. Switch to llama.cpp or Ollama to download it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "mlx-community ne propose pas de conversion MLX 4 bits de ce modèle. Passez à llama.cpp ou Ollama pour le télécharger."
           }
         }
       }

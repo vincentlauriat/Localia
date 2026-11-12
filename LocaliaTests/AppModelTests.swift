@@ -548,7 +548,7 @@ final class AppModelTests: XCTestCase {
         // Selecting Y is already refused (see test_setDefault_refusedDuringLlamaSession); force it to reach
         // the launch-time guard as well.
         await model.setDefault(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
-        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        XCTAssertEqual(model.alert?.title, String(localized: "\(AppModel.engineName(.llamaCpp)) is busy"))
         model.alert = nil
         model.settings.defaultModel = "Y"
         model.settings.lastModel = "Y"
@@ -856,7 +856,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.runningSessions.map(\.model), ["X"])
 
         await model.setDefault(try row(model, "Y"))
-        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        XCTAssertEqual(model.alert?.title, String(localized: "\(AppModel.engineName(.llamaCpp)) is busy"))
         XCTAssertEqual(model.settings.defaultModel, "X")
         XCTAssertEqual(model.settings.lastModel, "X")
         XCTAssertEqual(model.launchModel, "X")
@@ -882,7 +882,7 @@ final class AppModelTests: XCTestCase {
         await model.setActiveEngine(.llamaCpp)
         await model.refreshAll()
         await model.startEngine()
-        XCTAssertEqual(model.alert?.title, String(localized: "No llama.cpp model"))
+        XCTAssertEqual(model.alert?.title, String(localized: "No \(AppModel.engineName(.llamaCpp)) model"))
         let loads = await llama.loads
         XCTAssertEqual(loads, [])
     }

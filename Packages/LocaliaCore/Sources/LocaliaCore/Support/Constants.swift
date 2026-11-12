@@ -12,4 +12,8 @@ public enum LocaliaConstants {
     public static let gpuHeadroomGB = 1.5
     public static let ollamaPort = 11434
     public static let llamaServerPort = 11435
+    /// Anthropic gateway in front of `mlx_lm.server` (what Claude Code talks to).
+    public static let mlxGatewayPort = 11436
+    /// `mlx_lm.server` itself, reached only through the gateway.
+    public static let mlxServerPort = 11437
 }
