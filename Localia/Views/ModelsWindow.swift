@@ -729,6 +729,10 @@ private struct ModelBadges: View {
             }
             if !item.candidate.supportsTools { Badge(text: String(localized: "no tools"), color: .gray) }
             if item.candidate.slow { Badge(text: String(localized: "slow"), color: Theme.orange) }
+            if item.candidate.supportsTools, item.candidate.simpleTasksOnly {
+                Badge(text: String(localized: "simple tasks"), color: .gray)
+                    .help(String(localized: "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more."))
+            }
         }
         .fixedSize()
     }
@@ -957,6 +961,9 @@ private struct ModelDetailPane: View {
         }
         if !c.supportsTools { parts.append(String(localized: "No tool use: Claude Code cannot read or edit files with it.")) }
         if c.slow { parts.append(String(localized: "Below \(LocaliaConstants.speedFloorTPS) tok/s: Claude Code will feel slow.")) }
+        if c.supportsTools, c.simpleTasksOnly {
+            parts.append(String(localized: "Simple tasks: good for small fixes with Claude Code, unreliable on changes across several files, and it may report success when the task failed."))
+        }
         return parts.joined(separator: " ")
     }
 }

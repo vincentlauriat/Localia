@@ -66,13 +66,16 @@ final class ModelsSnapshotTests: XCTestCase {
         let name = String(repo.split(separator: "/").last!).replacingOccurrences(of: "-GGUF", with: "")
         let gated = repo.contains("Granite")
         let weights = mem * 0.55, overhead = 0.5
+        let params = name.range(of: #"(\d+(\.\d+)?)B"#, options: .regularExpression)
+            .flatMap { Double(name[$0].dropLast()) }
         return HFCatalogEntry(
             candidate: ModelCandidate(id: repo, displayName: name, ggufRepo: repo, quant: "Q4_K_M",
                                       weightsGB: weights, memoryGB: mem, estimatedTPS: tps, fit: verdict ?? .marginal,
                                       slow: tps < 15, supportsTools: tools, memoryIsMeasured: false,
                                       speedIsMeasured: false, quality: 0, source: .huggingface,
                                       memoryIsEstimate: gated, fits: verdict != nil,
-                                      kvCacheGB: gated ? nil : mem - weights - overhead, overheadGB: gated ? nil : overhead),
+                                      kvCacheGB: gated ? nil : mem - weights - overhead, overheadGB: gated ? nil : overhead,
+                                      paramsB: params),
             createdAt: "2026-11-01T00:00:00.000Z", downloads: 1200)
     }
 

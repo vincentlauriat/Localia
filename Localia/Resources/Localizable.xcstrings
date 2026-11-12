@@ -1633,6 +1633,22 @@
         }
       }
     },
+    "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convient aux petites corrections avec Claude Code. Pour un travail sur plusieurs fichiers, préférez un modèle de 14B paramètres ou plus."
+          }
+        }
+      }
+    },
     "Fit": {
       "localizations": {
         "en": {
@@ -3617,6 +3633,22 @@
         }
       }
     },
+    "Simple tasks: good for small fixes with Claude Code, unreliable on changes across several files, and it may report success when the task failed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simple tasks: good for small fixes with Claude Code, unreliable on changes across several files, and it may report success when the task failed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tâches simples : bien pour les petites corrections avec Claude Code, peu fiable sur des changements touchant plusieurs fichiers, et il peut annoncer une réussite alors que la tâche a échoué."
+          }
+        }
+      }
+    },
     "Skip for Now": {
       "localizations": {
         "en": {
@@ -4781,6 +4813,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "en marche"
+          }
+        }
+      }
+    },
+    "simple tasks": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "simple tasks"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tâches simples"
           }
         }
       }

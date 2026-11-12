@@ -173,6 +173,21 @@ final class RecommenderTests: XCTestCase {
         XCTAssertNil(c.kvCacheGB, "measured memory has no breakdown")
     }
 
+    func test_simpleTasksOnly_followsTheParameterCount() throws {
+        let all = try rec(pool(60), limit: 100_000).allCompatible
+        XCTAssertFalse(all.isEmpty)
+        for c in all {
+            let p = try XCTUnwrap(c.paramsB, c.id)
+            XCTAssertEqual(c.simpleTasksOnly, p < LocaliaConstants.claudeCodeMinParamsB, c.id)
+        }
+        XCTAssertTrue(all.contains { $0.simpleTasksOnly }, "small models are marked")
+        XCTAssertTrue(all.contains { !$0.simpleTasksOnly }, "14B and up are not")
+        let unknown = ModelCandidate(id: "x", displayName: "x", ggufRepo: "x", quant: "Q4_K_M", weightsGB: 1,
+                                     memoryGB: 2, estimatedTPS: 30, fit: .good, slow: false, supportsTools: true,
+                                     memoryIsMeasured: false, speedIsMeasured: false, quality: 1)
+        XCTAssertFalse(unknown.simpleTasksOnly, "no parameter count: no claim")
+    }
+
     func test_allCompatible_isEveryFittingModelRankedLikeCandidates() throws {
         let r = try rec(m5)
         XCTAssertEqual(r.candidates.count, 12)

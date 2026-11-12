@@ -68,7 +68,8 @@ public struct Recommender: Sendable {
                                memoryIsMeasured: measuredMem != nil, speedIsMeasured: measuredTPS != nil,
                                quality: row.quality,
                                kvCacheGB: measuredMem == nil ? max(0, contextGB - Self.runtimeOverheadGB) : nil,
-                               overheadGB: measuredMem == nil ? min(contextGB, Self.runtimeOverheadGB) : nil)
+                               overheadGB: measuredMem == nil ? min(contextGB, Self.runtimeOverheadGB) : nil,
+                               paramsB: paramsB)
             }
             if let g = grade {
                 seen.insert(id); fit.append(make(g))
