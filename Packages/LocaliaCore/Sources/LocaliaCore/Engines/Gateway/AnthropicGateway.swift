@@ -23,6 +23,8 @@ public final class AnthropicGateway: @unchecked Sendable {
     private let lock = NSLock()
     private var listener: NWListener?
     private var activeConnections = 0
+    /// Refusals (503) being written; past `maxConnections` of them a connection is simply closed.
+    private var rejecting = 0
 
     /// - Parameters:
     ///   - upstream: root of the OpenAI-style server (its `/v1/chat/completions` and `/health`).
@@ -85,6 +87,15 @@ public final class AnthropicGateway: @unchecked Sendable {
 
     private func releaseSlot() { lock.lock(); activeConnections -= 1; lock.unlock() }
 
+    private func reserveRejection() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard rejecting < maxConnections else { return false }
+        rejecting += 1
+        return true
+    }
+
+    private func releaseRejection() { lock.lock(); rejecting -= 1; lock.unlock() }
+
     private func accept(_ c: NWConnection) {
         let conn = Connection(c)
         c.stateUpdateHandler = { state in
@@ -95,6 +106,7 @@ public final class AnthropicGateway: @unchecked Sendable {
         }
         c.start(queue: queue)
         guard reserveSlot() else {
+            guard reserveRejection() else { conn.cancel(); return }
             // Read what the client sent (closing on unread data would reset the connection before it sees
             // the answer), then refuse. The deadline still bounds a client that sends nothing.
             queue.asyncAfter(deadline: .now() + readTimeout) { conn.cancel() }
@@ -102,6 +114,7 @@ public final class AnthropicGateway: @unchecked Sendable {
                 _ = try? await conn.receive(max: 64 << 10)
                 await self?.sendJSON(conn, status: 503, AnthropicTranslation.errorBody(type: "overloaded_error", message: "Too many connections"))
                 conn.cancel()
+                self?.releaseRejection()
             }
             return
         }

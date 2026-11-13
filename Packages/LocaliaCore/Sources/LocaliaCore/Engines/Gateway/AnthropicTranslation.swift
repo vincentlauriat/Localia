@@ -187,9 +187,16 @@ public enum AnthropicTranslation {
     public static func newMessageID() -> String { "msg_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
     static func newToolID() -> String { "toolu_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
 
-    /// Earliest occurrence of any of `stops` in `text`: the sequence and where it starts.
+    /// The stop sequence that completes first in `text` (earliest end; on a tie, the longer one), and where it
+    /// starts. "First to complete" is what a token stream sees, so streamed and whole answers agree.
     static func firstStop(in text: String, _ stops: [String]) -> (seq: String, at: String.Index)? {
-        stops.compactMap { seq in text.range(of: seq).map { (seq, $0.lowerBound) } }.min { $0.1 < $1.1 }
+        var best: (seq: String, range: Range<String.Index>)?
+        for seq in stops {
+            guard let r = text.range(of: seq) else { continue }
+            if let b = best, (b.range.upperBound, b.range.lowerBound) <= (r.upperBound, r.lowerBound) { continue }
+            best = (seq, r)
+        }
+        return best.map { ($0.seq, $0.range.lowerBound) }
     }
 
     /// A non-streamed chat completion as an Anthropic message. Text is cut at the first stop sequence.
@@ -318,7 +325,7 @@ public struct AnthropicStreamEncoder {
             if case .thinking(let i) = open {
                 out.append(thinkingDelta(i, thought))
             } else {
-                out += closeOpen()
+                out += flushHeld() + closeOpen()
                 let i = nextIndex; nextIndex += 1
                 open = .thinking(i)
                 out.append(Self.event("content_block_start", ["index": i, "content_block": ["type": "thinking", "thinking": ""]]))
@@ -335,7 +342,7 @@ public struct AnthropicStreamEncoder {
             let f = call["function"] as? [String: Any] ?? [:]
             if toolBlocks[oi] == nil {
                 guard let name = AnthropicTranslation.nonEmpty(f["name"] as? String) else { continue }
-                out += closeOpen()
+                out += flushHeld() + closeOpen()
                 let i = nextIndex; nextIndex += 1
                 toolBlocks[oi] = i
                 open = .tool(i, openAIIndex: oi, hasInput: false)
@@ -376,6 +383,14 @@ public struct AnthropicStreamEncoder {
         }
         held = String(pending.suffix(keep))
         return pushText(String(pending.dropLast(keep)))
+    }
+
+    /// Releases text held as a possible stop-sequence start: another block opens, so it can no longer match.
+    private mutating func flushHeld() -> [Data] {
+        guard matchedStop == nil, !held.isEmpty else { return [] }
+        let h = held
+        held = ""
+        return pushText(h)
     }
 
     /// Text into the open text block, or a new one. Whitespace with no text block open (Qwen's "\n\n" after
@@ -421,8 +436,7 @@ public struct AnthropicStreamEncoder {
         guard !finished else { return [] }
         finished = true
         var out = start()
-        if matchedStop == nil, !held.isEmpty { out += pushText(held); held = "" }
-        out += closeOpen()
+        out += flushHeld() + closeOpen()
         let stop: String
         if matchedStop != nil { stop = "stop_sequence" }
         else if toolBlocks.isEmpty { stop = AnthropicTranslation.stopReason(finishReason) }

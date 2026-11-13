@@ -162,6 +162,28 @@ final class AnthropicGatewayTests: XCTestCase {
         XCTAssertTrue(ok.hasPrefix("HTTP/1.1 200"), ok)
     }
 
+    func test_refusalsAreCappedToo() async throws {
+        gateway.stop()
+        port = UInt16.random(in: 30000...50000)
+        gateway = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!,
+                                   session: EngineStubProtocol.session(), readTimeout: 2, maxConnections: 1)
+        try await gateway.start()
+        func open() -> (NWConnection, Connection) {
+            let c = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+            c.start(queue: .global())
+            return (c, Connection(c))
+        }
+        let (served, _) = open()          // holds the only slot, sends nothing
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let (refusing, _) = open()        // holds the only refusal, sends nothing
+        try await Task.sleep(nanoseconds: 100_000_000)
+        defer { served.cancel(); refusing.cancel() }
+        let start = Date()
+        let third = try? await raw(Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n".utf8))
+        XCTAssertEqual(third ?? "", "", "beyond the refusal cap a connection is closed without an answer")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.5, "closed at once, not after the read deadline")
+    }
+
     func test_truncatedUpstreamStream_endsWithError_notEndTurn() async throws {
         let cut = Data("data: {\"choices\":[{\"delta\":{\"content\":\"Hal\"}}]}\n\n".utf8)
         EngineStubProtocol.handler = { _ in StubResponse(body: cut) }

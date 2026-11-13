@@ -249,6 +249,39 @@ final class AnthropicTranslationTests: XCTestCase {
         XCTAssertTrue(enc.sawFinishReason)
     }
 
+    func test_stream_heldPrefixGoesBeforeAToolCall() {
+        var enc = AnthropicStreamEncoder(model: "m", estimatedInputTokens: 1, stopSequences: ["STOP"])
+        var out = enc.start()
+        out += enc.consume(["choices": [["delta": ["content": "Done ST"]]]])
+        out += enc.consume(["choices": [["delta": ["tool_calls": [["index": 0, "id": "t1", "function": ["name": "Read", "arguments": "{}"]]]]]]])
+        out += enc.consume(["choices": [["delta": [:], "finish_reason": "tool_calls"]]])
+        let ev = events(out + enc.finish())
+        XCTAssertEqual(ev.map(\.0), ["message_start", "ping", "content_block_start", "content_block_delta", "content_block_delta",
+                                     "content_block_stop", "content_block_start", "content_block_delta", "content_block_stop",
+                                     "message_delta", "message_stop"])
+        let text = ev[3...4].compactMap { ($0.1["delta"] as? [String: Any])?["text"] as? String }.joined()
+        XCTAssertEqual(text, "Done ST", "the held 'ST' lands in the text block, before the tool call")
+        XCTAssertEqual((ev[6].1["content_block"] as? [String: Any])?["type"] as? String, "tool_use")
+    }
+
+    func test_stopSequence_firstToComplete_sameInStreamAndWhole() throws {
+        let stops = ["abcd", "c"]
+        let whole = try AnthropicTranslation.message(
+            fromChatCompletion: json(#"{"choices":[{"finish_reason":"stop","message":{"content":"xabcdy"}}]}"#),
+            clientModel: "m", stopSequences: stops)
+        XCTAssertEqual(whole["stop_sequence"] as? String, "c")
+        XCTAssertEqual((whole["content"] as? [[String: Any]])?.first?["text"] as? String, "xab")
+        for chunks in [["xabcdy"], ["x", "a", "b", "c", "d", "y"], ["xab", "cdy"]] {
+            var enc = AnthropicStreamEncoder(model: "m", estimatedInputTokens: 1, stopSequences: stops)
+            var out = enc.start()
+            for t in chunks { out += enc.consume(["choices": [["delta": ["content": t]]]]) }
+            XCTAssertEqual(enc.matchedStop, "c", "\(chunks)")
+            let text = events(out + enc.finish()).filter { $0.0 == "content_block_delta" }
+                .compactMap { ($0.1["delta"] as? [String: Any])?["text"] as? String }.joined()
+            XCTAssertEqual(text, "xab", "\(chunks)")
+        }
+    }
+
     func test_nonStream_stopSequenceCutsText() throws {
         let data = json(#"{"choices":[{"finish_reason":"stop","message":{"content":"abc END def"}}]}"#)
         let m = try AnthropicTranslation.message(fromChatCompletion: data, clientModel: "m", stopSequences: ["END"])
