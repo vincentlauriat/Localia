@@ -38,6 +38,9 @@ public struct LaunchScriptBuilder: Sendable {
         for name in command.unsetEnvironment.sorted() {
             lines.append("unset \(name)")
         }
+        if !command.pathPrefix.isEmpty {
+            lines.append("export PATH=\(q(command.pathPrefix.joined(separator: ":"))):\"$PATH\"")
+        }
         for (name, value) in command.environment.sorted(by: { $0.key < $1.key }) {
             lines.append("export \(name)=\(q(value))")
         }

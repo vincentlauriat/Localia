@@ -45,7 +45,10 @@ final class PanelSnapshotTests: XCTestCase {
             profile: MachineProfile(chip: "Test", totalRAMGB: 24, gpuWorkingSetGB: 18, isAppleSilicon: true),
             appSupportBase: base, claudeConfigDir: base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
-            hasCloudLogin: { true }, notify: { _ in })
+            hasCloudLogin: { true }, notify: { _ in },
+            // One installed tool and one missing, so local mode shows both rows.
+            localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
+                         PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())])
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -74,6 +77,7 @@ final class PanelSnapshotTests: XCTestCase {
             let model = makeModel(heavyApps: v.heavy, installed: v.empty ? [] : [Self.served, "gemma3:12b"])
             await model.startEngine()
             await model.refreshAll()
+            await model.refreshLocalTools(refresh: true)
             if v.on { await model.setLocalMode(true) }
             if v.expanded {
                 // A real launch through the fakes, so the sessions card has something to list.
@@ -106,7 +110,7 @@ final class PanelSnapshotTests: XCTestCase {
                 let url = dir.appendingPathComponent("panel-\(v.name)-\(suffix)-\(lang).png")
                 let size = render(MenuBarPanel(model: model, windows: WindowManager(model: model),
                                                updater: Updater(enabled: false), scrolls: false,
-                                               store: cards, launchOpen: v.expanded),
+                                               store: cards, launchOpen: v.expanded ? MenuBarPanel.claudeCode : nil),
                                   appearance: appearance, to: url)
                 XCTAssertGreaterThan(size.height, 300, url.lastPathComponent)
                 let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0

@@ -33,6 +33,38 @@
         }
       }
     },
+    "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ dispose d’une fenêtre de contexte de %lld tokens. %@ en demande au moins %lld pour ses instructions et ses outils : il échouerait. Choisissez un modèle téléchargé par Localia, qui fixe une fenêtre plus grande, ou lancez quand même."
+          }
+        }
+      }
+    },
+    "%@ is not installed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is not installed"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ n’est pas installé"
+          }
+        }
+      }
+    },
     "%@ is ready.": {
       "localizations": {
         "en": {
@@ -93,6 +125,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ sur ce Mac"
+          }
+        }
+      }
+    },
+    "%@ runs only with a local model. Turn on local mode, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ runs only with a local model. Turn on local mode, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ne fonctionne qu’avec un modèle local. Activez le mode local, puis réessayez."
           }
         }
       }
@@ -689,6 +737,22 @@
         }
       }
     },
+    "Choose the folder %@ works in.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the folder %@ works in."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez le dossier dans lequel %@ travaille."
+          }
+        }
+      }
+    },
     "Choose the folder Claude Code works in.": {
       "localizations": {
         "en": {
@@ -845,6 +909,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Compatibles"
+          }
+        }
+      }
+    },
+    "Context window too small": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context window too small"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre de contexte trop petite"
           }
         }
       }
@@ -1133,6 +1213,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Impossible de mettre à jour le mode local pour chaque claude"
+          }
+        }
+      }
+    },
+    "Could not write the %@ settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not write the %@ settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’écrire les réglages de %@"
           }
         }
       }
@@ -1985,6 +2081,22 @@
         }
       }
     },
+    "Install it from its website, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install it from its website, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installez-le depuis son site, puis réessayez."
+          }
+        }
+      }
+    },
     "Install it from the welcome window or Settings, then try again.": {
       "localizations": {
         "en": {
@@ -2113,6 +2225,22 @@
         }
       }
     },
+    "Install…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer…"
+          }
+        }
+      }
+    },
     "Launch": {
       "localizations": {
         "en": {
@@ -2125,6 +2253,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Lancer"
+          }
+        }
+      }
+    },
+    "Launch %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer %@"
+          }
+        }
+      }
+    },
+    "Launch Anyway": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch Anyway"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer quand même"
           }
         }
       }
@@ -2269,6 +2429,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mode local"
+          }
+        }
+      }
+    },
+    "Local mode is off": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local mode is off"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode local est désactivé"
           }
         }
       }
@@ -4337,6 +4513,22 @@
         }
       }
     },
+    "Version %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        }
+      }
+    },
     "Version %@ (%@)": {
       "localizations": {
         "en": {
@@ -4561,6 +4753,22 @@
         }
       }
     },
+    "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session %@ utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
     "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again.": {
       "localizations": {
         "en": {
@@ -4573,6 +4781,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session Claude Code utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
+    "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une autre session utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
           }
         }
       }

@@ -15,17 +15,21 @@ public struct ToolCommand: Equatable, Sendable {
     public var arguments: [String]
     public var environment: [String: String]
     public var unsetEnvironment: [String]
+    /// Directories put in front of the inherited PATH.
+    public var pathPrefix: [String]
 
-    public init(executable: URL, arguments: [String], environment: [String: String], unsetEnvironment: [String]) {
+    public init(executable: URL, arguments: [String], environment: [String: String], unsetEnvironment: [String],
+                pathPrefix: [String] = []) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.unsetEnvironment = unsetEnvironment
+        self.pathPrefix = pathPrefix
     }
 }
 
 public protocol CodingTool: Sendable {
-    /// "claude-code" (later "codex", "opencode", "pi").
+    /// "claude-code", "codex", "opencode", "pi".
     var id: String { get }
     var displayName: String { get }
     /// Path of the tool's binary, or nil when it is not installed.

@@ -25,7 +25,7 @@ final class AppModelTests: XCTestCase {
                            meter: FakeSpeedMeter = FakeSpeedMeter(), shim: FakeShim = FakeShim(),
                            rows: [LlmfitRow] = [], sizes: FakeSizes = FakeSizes(), hf: FakeHFCatalog = FakeHFCatalog(),
                            availableGB: Double = 100, heavyApps: [String] = [], claudeConfigDir: URL? = nil,
-                           cloudLogin: Bool = true,
+                           cloudLogin: Bool = true, localTools: [any LocalCodingTool] = [],
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -50,7 +50,8 @@ final class AppModelTests: XCTestCase {
             claudeConfigDir: claudeConfigDir ?? base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
             hasCloudLogin: { cloudLogin },
-            notify: { [weak self] in self?.notified.append($0) })
+            notify: { [weak self] in self?.notified.append($0) },
+            localTools: localTools)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -120,6 +121,95 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotNil(projects[folder.standardizedFileURL.path], "\(projects.keys)")
         let inUse = await model.modelsInUse()
         XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
+    }
+
+    func test_localTool_writesItsConfigAndLaunchesOnTheLocalModel() async throws {
+        let engine = FakeEngine(installed: ["m1"])
+        let terminal = FakeTerminal()
+        let codex = CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])
+        let model = makeModel(engine: engine, terminal: terminal, localTools: [codex])
+        let folder = try folder()
+        await model.refreshLocalTools()
+        XCTAssertEqual(model.localTools.map(\.id), ["codex"])
+        XCTAssertEqual(model.localTools.first?.path?.path, "/usr/bin/true")
+
+        // Outside local mode the tool is refused: it has no cloud meaning.
+        await model.launch(folder: folder, toolID: "codex")
+        XCTAssertEqual(model.alert?.title, String(localized: "Local mode is off"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        model.alert = nil
+
+        await model.setLocalMode(true)
+        await model.launch(folder: folder, toolID: "codex")
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+        let home = Paths.tool("codex", base: base)
+        let toml = try String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8)
+        XCTAssertTrue(toml.contains(#"model = "m1""#), toml)
+        XCTAssertTrue(toml.contains("base_url = \"\(engine.baseURL.absoluteString)/v1\""), toml)
+        XCTAssertTrue(toml.contains("model_context_window = 32768"), toml)
+        let script = try String(contentsOf: terminal.opened[0].url, encoding: .utf8)
+        XCTAssertTrue(script.contains("export CODEX_HOME='\(home.path)'"), script)
+        XCTAssertFalse(script.contains("ANTHROPIC"), script)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: base.appendingPathComponent("claude-config/.claude.json").path))
+        let inUse = await model.modelsInUse()
+        XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
+    }
+
+    func test_localTool_refusedOutsideLocalMode() async throws {
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), terminal: terminal,
+                              localTools: [OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])])
+        XCTAssertFalse(model.isLocalModeOn)
+        await model.launch(folder: try folder(), toolID: "opencode")
+        XCTAssertEqual(model.alert?.title, String(localized: "Local mode is off"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Paths.tool("opencode", base: base)
+            .appendingPathComponent("opencode.json").path))
+    }
+
+    func test_localTool_smallContext_warnsThenLaunchesAnyway() async throws {
+        let engine = FakeEngine(installed: ["m1"], contextWindow: 4096)
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: engine, terminal: terminal,
+                              localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])])
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "codex")
+        let alert = try XCTUnwrap(model.alert)
+        XCTAssertEqual(alert.title, String(localized: "Context window too small"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        let unloads = await engine.unloads
+        XCTAssertEqual(unloads, ["m1"], "the model loaded for the refused launch is unloaded")
+        model.alert = nil
+        await alert.action?.run()
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+    }
+
+    func test_llamaBusy_namesTheRunningTool() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["X", "Y"])
+        let model = makeModel(engine: llama, configure: { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp })
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.runningSessions.first?.tool, "Fake")
+        await model.setDefault(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
+        XCTAssertTrue(model.alert?.message.contains("Fake") == true, model.alert?.message ?? "")
+    }
+
+    func test_localTool_notInstalled_alertsAndLaunchesNothing() async throws {
+        let engine = FakeEngine(installed: ["m1"])
+        let terminal = FakeTerminal()
+        let pi = PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())
+        let model = makeModel(engine: engine, terminal: terminal, localTools: [pi])
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "pi")
+        XCTAssertEqual(model.alert?.title, String(localized: "\("Pi") is not installed"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        XCTAssertNil(model.localTools.first?.path)
+        XCTAssertEqual(model.localTools.first?.installPage, pi.installPage)
     }
 
     func test_firstLoadMeasuresSpeedOnce_underCandidateID() async throws {
@@ -820,9 +910,12 @@ actor FakeEngine: Engine {
     private var heldPulls: [CheckedContinuation<Void, Never>] = []
     private let state: InstallState
 
+    private let window: Int
+
     init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false,
-         state: InstallState = .installed("1.0", managedByLocalia: false)) {
+         state: InstallState = .installed("1.0", managedByLocalia: false), contextWindow: Int = 32768) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
+        self.window = contextWindow
         self.singleModel = id == .llamaCpp
         self.state = state
     }
@@ -864,7 +957,14 @@ actor FakeEngine: Engine {
         if singleModel { loaded = [modelName] } else { loaded.insert(modelName) }
     }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }
-    func contextWindow(_ modelName: String) async -> Int { 32768 }
+    func contextWindow(_ modelName: String) async -> Int { window }
+}
+
+/// A login shell that finds nothing.
+final class FailingRunner: ProcessRunning, @unchecked Sendable {
+    func run(_ exe: URL, _ args: [String], env: [String: String]?, timeout: TimeInterval) async throws -> ProcessResult {
+        ProcessResult(status: 1, stdout: Data(), stderr: "")
+    }
 }
 
 final class FakeTool: CodingTool, @unchecked Sendable {

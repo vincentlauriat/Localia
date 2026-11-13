@@ -127,7 +127,7 @@ extension ClaudeCodeTool {
     }
 }
 
-private final class LocatedBinary: @unchecked Sendable {
+final class LocatedBinary: @unchecked Sendable {
     private let lock = NSLock()
     private var url: URL?
     func get() -> URL? { lock.lock(); defer { lock.unlock() }; return url }
