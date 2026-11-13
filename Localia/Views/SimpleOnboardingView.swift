@@ -12,7 +12,7 @@ struct SimpleOnboardingView: View {
     /// "Hide" while the setup runs: the window closes, the setup goes on (the panel shows it).
     var onHide: () -> Void = {}
 
-    static let windowSize = NSSize(width: 560, height: 600)
+    static let windowSize = NSSize(width: 560, height: 540)
 
     enum Screen: Int { case welcome, preparing, ready }
 

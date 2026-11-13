@@ -139,8 +139,10 @@ private struct PickCard: View {
                     WordPill(text: speed.title, symbol: speed.symbol, tint: speed.tint)
                     let memory = model.memoryBucket(for: candidate)
                     WordPill(text: memory.title, tint: memory.tint)
-                    Text(String(localized: "\(Fmt.gb(candidate.weightsGB)) download"))
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    if row == nil {
+                        Text(String(localized: "\(Fmt.gb(candidate.weightsGB)) download"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -170,7 +172,7 @@ private struct PickCard: View {
             }
         } else if let row {
             if model.isSelected(row) {
-                Label(String(localized: "Installed"), systemImage: "checkmark.circle.fill")
+                Text(String(localized: "Installed ✓"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .accessibilityLabel(Text(String(localized: "\(name) is installed and in use")))

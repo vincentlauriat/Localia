@@ -49,6 +49,22 @@
         }
       }
     },
+    "%@ download": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ download"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ à télécharger"
+          }
+        }
+      }
+    },
     "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway.": {
       "localizations": {
         "en": {
@@ -77,6 +93,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ est occupé"
+          }
+        }
+      }
+    },
+    "%@ is installed and in use": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is installed and in use"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ est installé et utilisé"
           }
         }
       }
@@ -173,6 +205,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ sur ce Mac"
+          }
+        }
+      }
+    },
+    "%@ runs on this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ runs on this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ tourne sur ce Mac."
           }
         }
       }
@@ -577,6 +625,38 @@
         }
       }
     },
+    "Advanced": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Advanced"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avancé"
+          }
+        }
+      }
+    },
+    "Advanced mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Advanced mode"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode avancé"
+          }
+        }
+      }
+    },
     "All": {
       "localizations": {
         "en": {
@@ -737,6 +817,22 @@
         }
       }
     },
+    "Best choice": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Best choice"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meilleur choix"
+          }
+        }
+      }
+    },
     "Best for coding on this Mac (%@, %@ usable by the GPU), fastest first.": {
       "localizations": {
         "en": {
@@ -817,6 +913,22 @@
         }
       }
     },
+    "Check your internet connection, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check your internet connection, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifiez votre connexion internet, puis réessayez."
+          }
+        }
+      }
+    },
     "Choose a Folder…": {
       "localizations": {
         "en": {
@@ -829,6 +941,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Choisir un dossier…"
+          }
+        }
+      }
+    },
+    "Choose a Model": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a Model"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisir un modèle"
+          }
+        }
+      }
+    },
+    "Choose a lighter model.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a lighter model."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez un modèle plus léger."
           }
         }
       }
@@ -861,6 +1005,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Choisissez le dossier dans lequel Claude Code travaille."
+          }
+        }
+      }
+    },
+    "Choose the folder Claude works in.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the folder Claude works in."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez le dossier dans lequel Claude travaille."
+          }
+        }
+      }
+    },
+    "Choosing the best model for this Mac…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choosing the best model for this Mac…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choix du meilleur modèle pour ce Mac…"
           }
         }
       }
@@ -945,6 +1121,102 @@
         }
       }
     },
+    "Claude can still use Anthropic's cloud: leave Local mode off.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude can still use Anthropic's cloud: leave Local mode off."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude peut toujours utiliser le cloud d’Anthropic : laissez le mode local désactivé."
+          }
+        }
+      }
+    },
+    "Claude is not installed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude is not installed"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude n’est pas installé"
+          }
+        }
+      }
+    },
+    "Claude may ask you to sign in": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude may ask you to sign in"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude peut vous demander de vous connecter"
+          }
+        }
+      }
+    },
+    "Claude opened from Localia": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude opened from Localia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude ouvert depuis Localia"
+          }
+        }
+      }
+    },
+    "Claude uses Anthropic's cloud": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude uses Anthropic's cloud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude utilise le cloud d’Anthropic"
+          }
+        }
+      }
+    },
+    "Claude uses the AI on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude uses the AI on this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude utilise l’IA de ce Mac"
+          }
+        }
+      }
+    },
     "Clear Search": {
       "localizations": {
         "en": {
@@ -957,6 +1229,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Effacer la recherche"
+          }
+        }
+      }
+    },
+    "Click Set Up to get your AI ready.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click Set Up to get your AI ready."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquez sur Installer pour préparer votre IA."
+          }
+        }
+      }
+    },
+    "Click Set Up to install Claude.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click Set Up to install Claude."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquez sur Installer pour installer Claude."
+          }
+        }
+      }
+    },
+    "Close the other Claude window, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close the other Claude window, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermez l’autre fenêtre Claude, puis réessayez."
           }
         }
       }
@@ -1117,6 +1437,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Impossible d'installer Claude Code"
+          }
+        }
+      }
+    },
+    "Could not list the models": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not list the models"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de lister les modèles"
           }
         }
       }
@@ -1553,6 +1889,22 @@
         }
       }
     },
+    "Downloading %@…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %@…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargement de %@…"
+          }
+        }
+      }
+    },
     "Downloading: %@": {
       "localizations": {
         "en": {
@@ -1581,6 +1933,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Téléchargement…"
+          }
+        }
+      }
+    },
+    "Downloading… %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading… %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargement… %@"
           }
         }
       }
@@ -1661,6 +2029,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Moteurs"
+          }
+        }
+      }
+    },
+    "Enough memory": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enough memory"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoire suffisante"
           }
         }
       }
@@ -1761,6 +2145,22 @@
         }
       }
     },
+    "Every Claude, in any terminal": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every Claude, in any terminal"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chaque Claude, dans tout terminal"
+          }
+        }
+      }
+    },
     "Every claude in any terminal": {
       "localizations": {
         "en": {
@@ -1789,6 +2189,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tous les modèles du catalogue llmfit qui tiennent dans %@, les meilleurs en premier."
+          }
+        }
+      }
+    },
+    "Every model will be slow on this Mac. The fastest one is first.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every model will be slow on this Mac. The fastest one is first."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les modèles seront lents sur ce Mac. Le plus rapide est en premier."
           }
         }
       }
@@ -2017,6 +2433,54 @@
         }
       }
     },
+    "Getting things ready…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Getting things ready…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation…"
+          }
+        }
+      }
+    },
+    "Help": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Help"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aide"
+          }
+        }
+      }
+    },
+    "Hide": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer"
+          }
+        }
+      }
+    },
     "Hides models too big for this Mac. Tight estimates stay visible.": {
       "localizations": {
         "en": {
@@ -2109,6 +2573,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Installer"
+          }
+        }
+      }
+    },
+    "Install %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer %@"
           }
         }
       }
@@ -2257,6 +2737,22 @@
         }
       }
     },
+    "Installed ✓": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed ✓"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installé ✓"
+          }
+        }
+      }
+    },
     "Installed.": {
       "localizations": {
         "en": {
@@ -2317,6 +2813,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Installation de %@…"
+          }
+        }
+      }
+    },
+    "Installing Claude…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installing Claude…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installation de Claude…"
           }
         }
       }
@@ -2449,6 +2961,22 @@
         }
       }
     },
+    "Lighter, faster": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lighter, faster"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plus léger, plus rapide"
+          }
+        }
+      }
+    },
     "Loading %@…": {
       "localizations": {
         "en": {
@@ -2529,6 +3057,22 @@
         }
       }
     },
+    "Local mode applies to": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local mode applies to"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode local s’applique à"
+          }
+        }
+      }
+    },
     "Local mode is off": {
       "localizations": {
         "en": {
@@ -2541,6 +3085,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Le mode local est désactivé"
+          }
+        }
+      }
+    },
+    "Local mode is on: Claude uses the AI on this Mac. You can switch it off in the menu bar.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local mode is on: Claude uses the AI on this Mac. You can switch it off in the menu bar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le mode local est activé : Claude utilise l’IA de ce Mac. Vous pouvez le désactiver depuis la barre des menus."
           }
         }
       }
@@ -2593,6 +3153,38 @@
         }
       }
     },
+    "Localia installs Claude and an AI model that runs on this Mac. In local mode, your files and your questions stay here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installs Claude and an AI model that runs on this Mac. In local mode, your files and your questions stay here."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installe Claude et un modèle d’IA qui tourne sur ce Mac. En mode local, vos fichiers et vos questions restent ici."
+          }
+        }
+      }
+    },
+    "Localia installs Claude and an AI model that runs on this Mac. It takes a few minutes.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installs Claude and an AI model that runs on this Mac. It takes a few minutes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia installe Claude et un modèle d’IA qui tourne sur ce Mac. Cela prend quelques minutes."
+          }
+        }
+      }
+    },
     "Localia installs a coding model on your Mac and runs Claude Code on it. In local mode, your code and your prompts never leave it.": {
       "localizations": {
         "en": {
@@ -2609,6 +3201,22 @@
         }
       }
     },
+    "Localia is choosing the best model for this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia is choosing the best model for this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia choisit le meilleur modèle pour ce Mac."
+          }
+        }
+      }
+    },
     "Localia is offline or the Hub did not answer. The llmfit lists still work.": {
       "localizations": {
         "en": {
@@ -2621,6 +3229,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Localia est hors ligne ou le Hub n’a pas répondu. Les listes llmfit fonctionnent toujours."
+          }
+        }
+      }
+    },
+    "Localia picked %@ for this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia picked %@ for this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia a choisi %@ pour ce Mac."
+          }
+        }
+      }
+    },
+    "Localia picked these for this Mac's memory and speed. You can change models at any time.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia picked these for this Mac's memory and speed. You can change models at any time."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia les a choisis selon la mémoire et la vitesse de ce Mac. Vous pouvez changer de modèle à tout moment."
+          }
+        }
+      }
+    },
+    "Localia picks the model that suits this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia picks the model that suits this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia choisit le modèle qui convient à ce Mac."
           }
         }
       }
@@ -2733,6 +3389,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Recherche de nouveaux GGUF sur Hugging Face…"
+          }
+        }
+      }
+    },
+    "Looking for the models that suit this Mac…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for the models that suit this Mac…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche des modèles qui conviennent à ce Mac…"
           }
         }
       }
@@ -2897,6 +3569,22 @@
         }
       }
     },
+    "Memory is tight": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory is tight"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoire juste"
+          }
+        }
+      }
+    },
     "Memory used": {
       "localizations": {
         "en": {
@@ -3041,6 +3729,38 @@
         }
       }
     },
+    "More capable, slower": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More capable, slower"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plus capable, plus lent"
+          }
+        }
+      }
+    },
+    "More models…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More models…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autres modèles…"
+          }
+        }
+      }
+    },
     "My models": {
       "localizations": {
         "en": {
@@ -3069,6 +3789,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Demande environ %@, plus que ce que ce Mac peut donner à un modèle. Localia ne le télécharge pas."
+          }
+        }
+      }
+    },
+    "Needs attention": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs attention"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À vérifier"
           }
         }
       }
@@ -3149,6 +3885,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucun modèle %@"
+          }
+        }
+      }
+    },
+    "No AI model fits this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No AI model fits this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle d’IA ne tient sur ce Mac"
           }
         }
       }
@@ -3441,6 +4193,70 @@
         }
       }
     },
+    "None yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None yet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun pour l’instant"
+          }
+        }
+      }
+    },
+    "Not Now": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not Now"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plus tard"
+          }
+        }
+      }
+    },
+    "Not enough free memory": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enough free memory"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas assez de mémoire libre"
+          }
+        }
+      }
+    },
+    "Not enough memory": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enough memory"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoire insuffisante"
+          }
+        }
+      }
+    },
     "Not found: %@": {
       "localizations": {
         "en": {
@@ -3501,6 +4317,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Non évalués par llmfit : mémoire et vitesse estimées par Localia."
+          }
+        }
+      }
+    },
+    "Not set up yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not set up yet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas encore installé"
           }
         }
       }
@@ -3569,6 +4401,38 @@
         }
       }
     },
+    "One download of about %@, then a few minutes of setup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One download of about %@, then a few minutes of setup."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un téléchargement d’environ %@, puis quelques minutes d’installation."
+          }
+        }
+      }
+    },
+    "One download, then a few minutes of setup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One download, then a few minutes of setup."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un téléchargement, puis quelques minutes d’installation."
+          }
+        }
+      }
+    },
     "Only models at %lld tok/s or more.": {
       "localizations": {
         "en": {
@@ -3633,6 +4497,118 @@
         }
       }
     },
+    "Open Claude in %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Claude in %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir Claude dans %@"
+          }
+        }
+      }
+    },
+    "Open Claude in a folder…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Claude in a folder…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir Claude dans un dossier…"
+          }
+        }
+      }
+    },
+    "Private: in local mode, nothing leaves this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Private: in local mode, nothing leaves this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privé : en mode local, rien ne quitte ce Mac."
+          }
+        }
+      }
+    },
+    "Progress": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Progress"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Progression"
+          }
+        }
+      }
+    },
+    "Quit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter"
+          }
+        }
+      }
+    },
+    "Quit %@ to free memory, or continue anyway.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit %@ to free memory, or continue anyway."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quittez %@ pour libérer de la mémoire, ou continuez quand même."
+          }
+        }
+      }
+    },
+    "Quit %@ to free memory, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit %@ to free memory, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quittez %@ pour libérer de la mémoire, puis réessayez."
+          }
+        }
+      }
+    },
     "Quit Localia": {
       "localizations": {
         "en": {
@@ -3645,6 +4621,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Quitter Localia"
+          }
+        }
+      }
+    },
+    "Quit some apps to free memory, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit some apps to free memory, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quittez quelques apps pour libérer de la mémoire, puis réessayez."
           }
         }
       }
@@ -3681,6 +4673,22 @@
         }
       }
     },
+    "Recent": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recent"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Récents"
+          }
+        }
+      }
+    },
     "Recommendations": {
       "localizations": {
         "en": {
@@ -3709,6 +4717,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Recommandés"
+          }
+        }
+      }
+    },
+    "Recommended for your Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommended for your Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommandés pour votre Mac"
           }
         }
       }
@@ -3889,6 +4913,22 @@
         }
       }
     },
+    "See all models…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See all models…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voir tous les modèles…"
+          }
+        }
+      }
+    },
     "Select a model to see how its memory adds up and why it is listed.": {
       "localizations": {
         "en": {
@@ -3905,6 +4945,38 @@
         }
       }
     },
+    "Set Up": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set Up"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer"
+          }
+        }
+      }
+    },
+    "Set Up My AI": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set Up My AI"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer mon IA"
+          }
+        }
+      }
+    },
     "Set as Default": {
       "localizations": {
         "en": {
@@ -3917,6 +4989,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Définir par défaut"
+          }
+        }
+      }
+    },
+    "Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réglages"
           }
         }
       }
@@ -3985,6 +5073,38 @@
         }
       }
     },
+    "Shows every model, with search and filters.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows every model, with search and filters."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affiche tous les modèles, avec recherche et filtres."
+          }
+        }
+      }
+    },
+    "Shows every option: the full model catalog, other coding tools, and all settings in an Advanced tab.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows every option: the full model catalog, other coding tools, and all settings in an Advanced tab."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affiche toutes les options : le catalogue complet des modèles, les autres outils de code et tous les réglages dans un onglet Avancé."
+          }
+        }
+      }
+    },
     "Simple tasks: good for small fixes with Claude Code, unreliable on changes across several files, and it may report success when the task failed.": {
       "localizations": {
         "en": {
@@ -4013,6 +5133,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Plus tard"
+          }
+        }
+      }
+    },
+    "Slow": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Slow"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lent"
+          }
+        }
+      }
+    },
+    "Something went wrong": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something went wrong"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un problème est survenu"
           }
         }
       }
@@ -4113,6 +5265,22 @@
         }
       }
     },
+    "Starting…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Démarrage…"
+          }
+        }
+      }
+    },
     "Step %lld": {
       "localizations": {
         "en": {
@@ -4125,6 +5293,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Étape %lld"
+          }
+        }
+      }
+    },
+    "Step %lld of 3": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Step %lld of 3"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étape %lld sur 3"
           }
         }
       }
@@ -4273,6 +5457,22 @@
         }
       }
     },
+    "The download did not finish": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The download did not finish"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le téléchargement n’a pas abouti"
+          }
+        }
+      }
+    },
     "The engine did not start in time.": {
       "localizations": {
         "en": {
@@ -4401,6 +5601,22 @@
         }
       }
     },
+    "This model is too big for now": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model is too big for now"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce modèle est trop gros pour l’instant"
+          }
+        }
+      }
+    },
     "This model needs about %@, and about %@ is free. The Mac may slow down.": {
       "localizations": {
         "en": {
@@ -4429,6 +5645,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce serveur n'a pas été démarré par Localia, il a donc été laissé en marche."
+          }
+        }
+      }
+    },
+    "To work without an account, turn on Local mode.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To work without an account, turn on Local mode."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pour travailler sans compte, activez le mode local."
           }
         }
       }
@@ -4477,6 +5709,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Réessayer"
+          }
+        }
+      }
+    },
+    "Try again in a moment.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try again in a moment."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réessayez dans un instant."
           }
         }
       }
@@ -4785,6 +6033,22 @@
         }
       }
     },
+    "We're preparing your AI": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "We're preparing your AI"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nous préparons votre IA"
+          }
+        }
+      }
+    },
     "Weights %@ + context %@ + overhead %@": {
       "localizations": {
         "en": {
@@ -4813,6 +6077,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bienvenue dans Localia"
+          }
+        }
+      }
+    },
+    "When local mode is on, every Claude you start uses the AI on this Mac, even outside Localia.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When local mode is on, every Claude you start uses the AI on this Mac, even outside Localia."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quand le mode local est activé, chaque Claude que vous lancez utilise l’IA de ce Mac, même en dehors de Localia."
+          }
+        }
+      }
+    },
+    "When local mode is on, the Claude windows Localia opens use the AI on this Mac. Others keep using Anthropic's cloud.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When local mode is on, the Claude windows Localia opens use the AI on this Mac. Others keep using Anthropic's cloud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quand le mode local est activé, les fenêtres Claude ouvertes par Localia utilisent l’IA de ce Mac. Les autres continuent d’utiliser le cloud d’Anthropic."
           }
         }
       }
@@ -4861,6 +6157,102 @@
           "stringUnit": {
             "state": "translated",
             "value": "Vous pourrez changer de moteur et de modèle plus tard dans les Réglages."
+          }
+        }
+      }
+    },
+    "You can close this window: setup goes on, and the menu bar shows its progress.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can close this window: setup goes on, and the menu bar shows its progress."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vous pouvez fermer cette fenêtre : l’installation continue, et la barre des menus affiche sa progression."
+          }
+        }
+      }
+    },
+    "Your AI is busy": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your AI is busy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre IA est occupée"
+          }
+        }
+      }
+    },
+    "Your AI is ready": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your AI is ready"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre IA est prête"
+          }
+        }
+      }
+    },
+    "Your AI may be slow. Quit some apps to free memory, or continue anyway.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your AI may be slow. Quit some apps to free memory, or continue anyway."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre IA risque d’être lente. Quittez quelques apps pour libérer de la mémoire, ou continuez quand même."
+          }
+        }
+      }
+    },
+    "Your local AI is ready": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your local AI is ready"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre IA locale est prête"
+          }
+        }
+      }
+    },
+    "Your own AI, right on this Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your own AI, right on this Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre propre IA, directement sur ce Mac."
           }
         }
       }

@@ -187,14 +187,18 @@ struct WordPill: View {
     }
 }
 
-/// Simple mode's main button: full width, filled teal, generous height.
+/// Simple mode's main button: full width, generous height, filled teal (or a quiet fill when another
+/// button is the one to press).
 struct PrimaryWideButtonStyle: ButtonStyle {
+    var prominent = true
+
     func makeBody(configuration: Configuration) -> some View {
-        WideLabel(configuration: configuration)
+        WideLabel(configuration: configuration, prominent: prominent)
     }
 
     private struct WideLabel: View {
         let configuration: ButtonStyleConfiguration
+        let prominent: Bool
         @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
 
@@ -203,8 +207,9 @@ struct PrimaryWideButtonStyle: ButtonStyle {
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 38)
-                .foregroundStyle(Theme.onAccent)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent))
+                .foregroundStyle(prominent ? Theme.onAccent : Color.primary)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(prominent ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.primary.opacity(0.08))))
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.black.opacity(configuration.isPressed ? 0.14 : (hovering && isEnabled ? 0.06 : 0))))
                 .opacity(isEnabled ? 1 : 0.45)

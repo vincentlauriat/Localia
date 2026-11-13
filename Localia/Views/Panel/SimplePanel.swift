@@ -49,7 +49,8 @@ extension MenuBarPanel {
             Button { chooseFolder(tool: nil) } label: {
                 Label(String(localized: "Open Claude in a folder…"), systemImage: "folder.fill")
             }
-            .buttonStyle(PrimaryWideButtonStyle())
+            // Quiet while "Set Up" is the button to press.
+            .buttonStyle(PrimaryWideButtonStyle(prominent: launchIsTheMainAction))
             .padding(12)
             .accessibilityHint(Text(String(localized: "Choose the folder Claude works in.")))
 
@@ -71,6 +72,14 @@ extension MenuBarPanel {
             }
         }
         .card()
+    }
+
+    private var launchIsTheMainAction: Bool {
+        switch model.simpleStatus {
+        case .notSetUp: false
+        case .downloading: model.simpleSetupStep == nil
+        default: true
+        }
     }
 
     private func recentRow(_ folder: URL) -> some View {
@@ -118,14 +127,14 @@ extension MenuBarPanel {
                     }
                     RowDivider()
                     Button { show(.models) } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Image(systemName: "plus.circle").font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(Theme.accent).frame(width: 18)
+                                .foregroundStyle(Theme.accent).frame(width: 28)
                             Text(String(localized: "More models…"))
                                 .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             Spacer(minLength: 0)
                         }
-                        .padding(.leading, 54).padding(.trailing, 14)
+                        .padding(.leading, 14).padding(.trailing, 14)
                         .frame(minHeight: 36)
                     }
                     .buttonStyle(PanelRowButtonStyle())
@@ -148,7 +157,7 @@ extension MenuBarPanel {
                 presentAlertIfNeeded()
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ZStack {
                     if model.selectingModel == row.id {
                         ProgressView().controlSize(.mini)
@@ -156,15 +165,17 @@ extension MenuBarPanel {
                         Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.accent)
                     }
                 }
-                .frame(width: 18)
+                .frame(width: 28)
                 Text(name)
                     .font(.system(size: 13, weight: selected ? .semibold : .medium))
                     .foregroundStyle(selected ? Theme.accent : Color.primary)
                     .lineLimit(1).truncationMode(.middle)
+                    .layoutPriority(1)
                 Spacer(minLength: 8)
                 if let speed { WordPill(text: speed.title, tint: speed.tint) }
             }
-            .padding(.leading, 54).padding(.trailing, 14)
+            // The check sits in the icon column, the name under "Model".
+            .padding(.leading, 14).padding(.trailing, 14)
             .frame(minHeight: 36)
         }
         .buttonStyle(PanelRowButtonStyle())

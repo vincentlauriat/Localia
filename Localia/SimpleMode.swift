@@ -212,7 +212,10 @@ extension AppModel {
     /// progress, Claude missing, memory, then ready.
     var simpleStatus: SimpleStatus {
         switch simpleSetup {
-        case .running: return .downloading(fraction: simpleSetupFraction, detail: simpleSetupDetail)
+        case .running:
+            // The title already says "Downloading…": the model's name alone once it is known.
+            let detail = simpleSetupStep == .model ? simpleSetupPick.map(friendlyName(for:)) : nil
+            return .downloading(fraction: simpleSetupFraction, detail: detail ?? simpleSetupDetail)
         case let .failed(issue): return .needsAttention(issue)
         case .idle, .done: break
         }
