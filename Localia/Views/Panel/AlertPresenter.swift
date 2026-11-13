@@ -5,8 +5,10 @@ import SwiftUI
 @MainActor
 enum AlertPresenter {
     static func present(_ model: AppModel) {
-        guard let a = model.alert else { return }
+        guard let raw = model.alert else { return }
         model.alert = nil
+        // Simple mode: one plain sentence instead of the technical message.
+        let a = model.isSimpleMode ? raw.simplified(heavyApps: model.heavyApps) : raw
         let alert = NSAlert()
         alert.messageText = a.title
         alert.informativeText = a.message

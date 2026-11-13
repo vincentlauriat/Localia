@@ -143,3 +143,78 @@ struct PillToggleStyle: ToggleStyle {
         .accessibilityRepresentation { Toggle(isOn: configuration.$isOn) { configuration.label } }
     }
 }
+
+/// A thin teal progress bar (a system bar turns grey whenever its window is not key). `value` nil: the bar
+/// shows an empty track.
+struct TealProgressBar: View {
+    let value: Double?
+    var height: CGFloat = 6
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.track)
+                if let value {
+                    Capsule().fill(Theme.accent)
+                        .frame(width: max(height, geo.size.width * min(1, max(0, value))))
+                }
+            }
+        }
+        .frame(height: height)
+        .accessibilityElement()
+        .accessibilityLabel(Text(String(localized: "Progress")))
+        .accessibilityValue(Text(value.map { $0.formatted(.percent.precision(.fractionLength(0)).locale(Fmt.appLocale)) } ?? ""))
+    }
+}
+
+/// A word with an SF Symbol in a soft capsule of its colour: "Fast", "Memory is tight".
+struct WordPill: View {
+    let text: String
+    var symbol: String? = nil
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let symbol { Image(systemName: symbol).font(.system(size: 9, weight: .bold)) }
+            Text(text).font(.system(size: 11, weight: .semibold))
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.14), in: Capsule())
+    }
+}
+
+/// Simple mode's main button: full width, generous height, filled teal (or a quiet fill when another
+/// button is the one to press).
+struct PrimaryWideButtonStyle: ButtonStyle {
+    var prominent = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        WideLabel(configuration: configuration, prominent: prominent)
+    }
+
+    private struct WideLabel: View {
+        let configuration: ButtonStyleConfiguration
+        let prominent: Bool
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 38)
+                .foregroundStyle(prominent ? Theme.onAccent : Color.primary)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(prominent ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.primary.opacity(0.08))))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.black.opacity(configuration.isPressed ? 0.14 : (hovering && isEnabled ? 0.06 : 0))))
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .onHover { hovering = $0 }
+        }
+    }
+}

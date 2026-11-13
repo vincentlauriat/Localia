@@ -10,6 +10,8 @@ Localia is a macOS menu-bar app that finds the local LLMs that run well on your 
 - **Other coding tools.** In local mode, Codex, OpenCode and Pi launch the same way, each with its own config written by Localia (your `~/.codex`, `~/.config/opencode` and `~/.pi` are never touched). Localia warns when the model's context window is too small for them.
 - **Engines.** Ollama (default), llama.cpp and MLX, installed, updated and removed from the app. MLX runs `mlx-lm` in a private Python made with `uv`, behind an in-app gateway that speaks the Anthropic API to Claude Code (Codex needs Ollama or llama.cpp).
 
+**Simple by default.** Out of the box Localia shows only what you need: a status line in plain words, the Local mode switch, "Open Claude in a folder…" and the model in use. The first run picks the best model for your Mac and installs everything with one progress bar. Turn on **Settings › Advanced mode** to see engines, sessions, memory-hungry apps, Codex/OpenCode/Pi and the full Models window.
+
 Requires macOS 14 or later. Recommendations are tuned for Apple Silicon.
 
 ## Install

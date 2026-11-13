@@ -19,6 +19,9 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     @Published public var launchProfile: LaunchProfile { didSet { defaults.set(launchProfile.rawValue, forKey: "launchProfile") } }
     @Published public var localModeOn: Bool { didSet { defaults.set(localModeOn, forKey: "localModeOn") } }
     @Published public var autoLocalWhenOffline: Bool { didSet { defaults.set(autoLocalWhenOffline, forKey: "autoLocalWhenOffline") } }
+    /// Off (the default): the simple panel, first run, Models window and Settings, which never name an
+    /// engine. On: every engine, tool and setting, as before simple mode existed.
+    @Published public var advancedMode: Bool { didSet { defaults.set(advancedMode, forKey: "advancedMode") } }
     @Published public var defaultModel: String? { didSet { defaults.set(defaultModel, forKey: "defaultModel") } }
     @Published public var lastModel: String? { didSet { defaults.set(lastModel, forKey: "lastModel") } }
     /// Served model name (engine-specific) -> llmfit candidate id, so measurements and "installed"
@@ -47,6 +50,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         launchProfile = Self.raw(defaults, "launchProfile", .light)
         localModeOn = defaults.bool(forKey: "localModeOn")
         autoLocalWhenOffline = defaults.bool(forKey: "autoLocalWhenOffline")
+        advancedMode = defaults.bool(forKey: "advancedMode")
         defaultModel = defaults.string(forKey: "defaultModel")
         lastModel = defaults.string(forKey: "lastModel")
         modelIDs = defaults.dictionary(forKey: "modelIDs") as? [String: String] ?? [:]

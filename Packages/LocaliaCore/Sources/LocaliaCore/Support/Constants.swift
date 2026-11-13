@@ -16,4 +16,14 @@ public enum LocaliaConstants {
     public static let mlxGatewayPort = 11436
     /// `mlx_lm.server` itself, reached only through the gateway.
     public static let mlxServerPort = 11437
+
+    // MARK: Simple mode wording
+
+    /// "Fast" from this generation speed (tokens/second, measured, else llmfit's estimate).
+    public static let simpleFastTPS = 15.0
+    /// "OK" from this speed up to `simpleFastTPS`; "Slow" below.
+    public static let simpleOKTPS = 6.0
+    /// "Memory is tight" once a model needs more than this share of the memory it may use; "Not enough
+    /// memory" past all of it.
+    public static let simpleMemoryTightFraction = 0.85
 }

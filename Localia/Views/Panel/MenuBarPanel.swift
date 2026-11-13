@@ -22,6 +22,8 @@ struct MenuBarPanel: View {
     /// The tool whose inline folder list is open (`claudeCode`, or a local tool's id): not persisted, it is
     /// a submenu.
     @State private var launchOpen: String?
+    /// Simple mode: the inline model chooser is open (not persisted, like `launchOpen`).
+    @State var chooserOpen: Bool
     @State private var freeing = false
     /// The panel's natural height, measured through AppKit (see `remeasure`).
     @State private var contentHeight: CGFloat = 0
@@ -38,7 +40,7 @@ struct MenuBarPanel: View {
     }
 
     init(model: AppModel, windows: WindowManager, updater: Updater, scrolls: Bool = true,
-         store: UserDefaults = .standard, launchOpen: String? = nil) {
+         store: UserDefaults = .standard, launchOpen: String? = nil, chooserOpen: Bool = false) {
         self.model = model
         self.windows = windows
         self.updater = updater
@@ -49,6 +51,7 @@ struct MenuBarPanel: View {
         _sessionsOpen = AppStorage(wrappedValue: false, Key.sessions, store: store)
         _engineOpen = AppStorage(wrappedValue: false, Key.engine, store: store)
         _launchOpen = State(initialValue: launchOpen)
+        _chooserOpen = State(initialValue: chooserOpen)
     }
 
     // MARK: Height
@@ -64,7 +67,8 @@ struct MenuBarPanel: View {
 
     private func remeasure() {
         contentHeight = PanelSizer.naturalHeight(of: MenuBarPanel(
-            model: model, windows: windows, updater: updater, scrolls: false, store: store, launchOpen: launchOpen))
+            model: model, windows: windows, updater: updater, scrolls: false, store: store, launchOpen: launchOpen,
+            chooserOpen: chooserOpen))
     }
 
     /// Everything that changes how tall the panel wants to be. Text that merely gets longer is absorbed
@@ -74,7 +78,8 @@ struct MenuBarPanel: View {
                      model.launchModel != nil] + model.localTools.map { $0.path != nil }
         let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
                       model.recentFolders().count, model.localTools.count]
-        return "\(flags)|\(counts)|\(launchOpen ?? "")"
+        let simple = model.settings.advancedMode ? "" : "\(model.simpleStatus.kind)|\(chooserOpen)|\(model.simpleModelChoices.count)"
+        return "\(flags)|\(counts)|\(launchOpen ?? "")|\(model.settings.advancedMode)|\(simple)"
     }
 
     // MARK: Body
@@ -99,17 +104,21 @@ struct MenuBarPanel: View {
         }
     }
 
-    private var content: some View {
-        VStack(spacing: 8) {
-            heroCard
-            localModeCard
-            modelsCard
-            appsCard
-            sessionsCard
-            engineCard
-            listCard
+    @ViewBuilder private var content: some View {
+        if model.settings.advancedMode {
+            VStack(spacing: 8) {
+                heroCard
+                localModeCard
+                modelsCard
+                appsCard
+                sessionsCard
+                engineCard
+                listCard
+            }
+            .padding(10)
+        } else {
+            simpleContent
         }
-        .padding(10)
     }
 
     // MARK: Hero
@@ -415,7 +424,7 @@ struct MenuBarPanel: View {
         return model.displayName(for: m)
     }
 
-    private var localModeBinding: Binding<Bool> {
+    var localModeBinding: Binding<Bool> {
         Binding(get: { model.isLocalModeOn },
                 set: { on in Task { await model.setLocalMode(on); presentAlertIfNeeded() } })
     }
@@ -595,7 +604,7 @@ struct MenuBarPanel: View {
     // MARK: Behaviour
 
     /// Memory, heavy apps, sessions, engine status and the launch destination, read fresh when the panel opens.
-    private func refresh() {
+    func refresh() {
         Task {
             await model.refreshStatus()
             await model.refreshLaunchTarget()
@@ -604,14 +613,14 @@ struct MenuBarPanel: View {
     }
 
     /// Closes the panel: a modal or a window opened from it must not appear behind it.
-    private func dismiss() { host.window?.close() }
+    func dismiss() { host.window?.close() }
 
-    private func show(_ kind: WindowManager.Kind) {
+    func show(_ kind: WindowManager.Kind) {
         dismiss()
         DispatchQueue.main.async { windows.show(kind) }
     }
 
-    private func launch(_ folder: URL, toolID: String?) {
+    func launch(_ folder: URL, toolID: String?) {
         dismiss()
         Task {
             await model.launch(folder: folder, toolID: toolID)
@@ -619,7 +628,7 @@ struct MenuBarPanel: View {
         }
     }
 
-    private func chooseFolder(tool: LocalToolRow?) {
+    func chooseFolder(tool: LocalToolRow?) {
         dismiss()
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
@@ -637,7 +646,7 @@ struct MenuBarPanel: View {
 
     /// The panel has no window of its own to hang a SwiftUI alert on, so errors use NSAlert, after the
     /// panel has closed.
-    private func presentAlertIfNeeded() {
+    func presentAlertIfNeeded() {
         guard model.alert != nil else { return }
         dismiss()
         AlertPresenter.present(model)

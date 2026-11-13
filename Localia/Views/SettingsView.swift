@@ -3,7 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    @State private var confirmEveryClaude = false
+    /// False when hosted in `SettingsRoot`'s tab view, which presents the window's one alert.
+    var ownsAlert = true
     @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
@@ -23,14 +24,7 @@ struct SettingsView: View {
             }
 
             Section(String(localized: "Local mode")) {
-                Picker(String(localized: "Applies to"), selection: Binding(
-                    get: { model.controller.scope },
-                    set: { scope in
-                        if scope == .everyClaude { confirmEveryClaude = true } else { Task { await model.setScope(scope) } }
-                    })) {
-                    Text(String(localized: "Localia sessions only")).tag(LocalModeScope.localiaOnly)
-                    Text(String(localized: "Every claude in any terminal")).tag(LocalModeScope.everyClaude)
-                }
+                // Where local mode applies is set in the General tab (SettingsRoot), with its confirmation.
                 Picker(String(localized: "When the engine is down"), selection: Binding(
                     get: { settings.engineDownPolicy },
                     set: { settings.engineDownPolicy = $0; model.settingsChanged() })) {
@@ -94,13 +88,7 @@ struct SettingsView: View {
         } message: {
             Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
         }
-        .sheet(isPresented: $confirmEveryClaude) {
-            EveryClaudeConfirmation(block: model.rcBlockPreview(), onCancel: { confirmEveryClaude = false }) {
-                confirmEveryClaude = false
-                Task { await model.setScope(.everyClaude) }
-            }
-        }
-        .alert(item: $model.alert) { $0.swiftUIAlert }
+        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
     }
 
     private var terminals: [TerminalApp] {
@@ -161,7 +149,7 @@ private struct EngineRow: View {
 }
 
 /// Shows the exact block that goes into the shell rc files before anything is written.
-private struct EveryClaudeConfirmation: View {
+struct EveryClaudeConfirmation: View {
     let block: String
     let onCancel: () -> Void
     let onConfirm: () -> Void

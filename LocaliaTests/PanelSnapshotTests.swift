@@ -32,6 +32,8 @@ final class PanelSnapshotTests: XCTestCase {
     private func makeModel(heavyApps: [String] = [], installed: [String] = [served, "gemma3:12b"]) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
+        // Today's panel, unchanged: advanced mode. The simple panel has its own snapshots (SimpleModeAppTests).
+        settings.advancedMode = true
         settings.modelIDs = [Self.served: "Qwen/Qwen3-Coder-30B-A3B-Instruct"]
         settings.measurements = Measurements(tps: ["Qwen/Qwen3-Coder-30B-A3B-Instruct": 32])
         settings.recentFolders = ["/Users/vincent/DevApps/Localia", "/Users/vincent/Documents/GitHub/ClaudeCockpit"]
