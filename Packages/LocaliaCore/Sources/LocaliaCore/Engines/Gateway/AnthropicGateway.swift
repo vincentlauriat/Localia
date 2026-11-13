@@ -7,7 +7,8 @@ import Network
 /// One request per connection (`Connection: close`). Requests must carry a `Content-Length` no larger than
 /// `maxBodyBytes`; chunked bodies are refused; a request must arrive within `readTimeout`; at most
 /// `maxConnections` are served at once. Browsers are kept out (DNS rebinding, cross-site POST): any `Origin`
-/// header, or a `Host` other than `127.0.0.1:<port>` / `localhost:<port>`, gets 403. Routes: `POST /v1/messages`, `POST /v1/messages/count_tokens`,
+/// header, or a `Host` other than `127.0.0.1:<port>` / `localhost:<port>`, gets 403. `POST /v1/chat/completions`
+/// is passed through to the upstream (model renamed) for OpenAI clients (OpenCode, Pi). Routes: `POST /v1/messages`, `POST /v1/messages/count_tokens`,
 /// `GET /health` (healthy only while the upstream server is), `GET /v1/models`.
 public final class AnthropicGateway: @unchecked Sendable {
     public let port: UInt16
@@ -211,14 +212,19 @@ public final class AnthropicGateway: @unchecked Sendable {
             await sendJSON(conn, status: ok ? 200 : 503, Data((ok ? #"{"status":"ok"}"# : #"{"status":"unavailable"}"#).utf8),
                            headOnly: req.method == "HEAD")
         case ("GET", "/v1/models"):
-            let data: [[String: Any]] = servedModel().map { [["type": "model", "id": $0, "display_name": $0]] } ?? []
-            let obj: [String: Any] = ["data": data, "has_more": false]
+            // Readable as an Anthropic and as an OpenAI model list.
+            let data: [[String: Any]] = servedModel().map {
+                [["type": "model", "object": "model", "id": $0, "display_name": $0, "owned_by": "localia"]]
+            } ?? []
+            let obj: [String: Any] = ["object": "list", "data": data, "has_more": false]
             await sendJSON(conn, status: 200, (try? JSONSerialization.data(withJSONObject: obj)) ?? Data())
         case ("POST", "/v1/messages/count_tokens"):
             let obj = ["input_tokens": AnthropicTranslation.estimateTokens(req.body)]
             await sendJSON(conn, status: 200, (try? JSONSerialization.data(withJSONObject: obj)) ?? Data())
         case ("POST", "/v1/messages"):
             await messages(conn, req.body)
+        case ("POST", "/v1/chat/completions"):
+            await chatCompletions(conn, req.body)
         default:
             await sendJSON(conn, status: 404, AnthropicTranslation.errorBody(type: "not_found_error", message: "Not found: \(req.method) \(req.path)"))
         }
@@ -325,6 +331,51 @@ public final class AnthropicGateway: @unchecked Sendable {
             _ = await conn.send(encoder.finish())
         } catch {
             _ = await conn.send(encoder.fail("The local model server stopped: \(error.localizedDescription)"))
+        }
+    }
+
+    /// OpenAI chat completions (OpenCode, Pi) passed through as they are, except `model`: the upstream only
+    /// knows its loaded model as `upstreamModel`, and would try to load any other name as a repo.
+    private func chatCompletions(_ conn: Connection, _ body: Data) async {
+        guard var obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              obj["messages"] is [Any] else {
+            await sendJSON(conn, status: 400, Data(#"{"error":{"message":"Request body must be a JSON object with messages","type":"invalid_request_error"}}"#.utf8))
+            return
+        }
+        obj["model"] = upstreamModel
+        guard let upstreamBody = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        var r = URLRequest(url: upstream.appendingPathComponent("v1/chat/completions"))
+        r.httpMethod = "POST"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = upstreamBody
+        r.timeoutInterval = 600
+        let bytes: URLSession.AsyncBytes
+        let code: Int
+        do {
+            let (b, resp) = try await session.bytes(for: r)
+            bytes = b
+            code = (resp as? HTTPURLResponse)?.statusCode ?? 502
+        } catch {
+            await sendJSON(conn, status: 502, Data(#"{"error":{"message":"The local model server did not answer","type":"api_error"}}"#.utf8))
+            return
+        }
+        defer { bytes.task.cancel() }
+        let type = (obj["stream"] as? Bool) == true ? "text/event-stream" : "application/json"
+        let reason = HTTPURLResponse.localizedString(forStatusCode: code).capitalized
+        let head = "HTTP/1.1 \(code) \(reason)\r\nContent-Type: \(type)\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+        guard await conn.send(Data(head.utf8)) else { return }
+        var pending = Data()
+        do {
+            for try await byte in bytes {
+                pending.append(byte)
+                // Forward line by line, so streamed tokens arrive as they come.
+                guard byte == UInt8(ascii: "\n") || pending.count >= 64 << 10 else { continue }
+                guard await conn.send(pending) else { return }
+                pending.removeAll(keepingCapacity: true)
+            }
+            if !pending.isEmpty { _ = await conn.send(pending) }
+        } catch {
+            return
         }
     }
 

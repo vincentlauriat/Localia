@@ -8,6 +8,7 @@ public struct CodexTool: LocalCodingTool {
     public let id = "codex"
     public let displayName = "Codex"
     public let installPage = URL(string: "https://developers.openai.com/codex/cli")!
+    public let needsResponsesAPI = true
     public static let configFile = "config.toml"
 
     private let binary: ToolBinary

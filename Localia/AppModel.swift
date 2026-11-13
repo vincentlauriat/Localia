@@ -523,6 +523,12 @@ final class AppModel: ObservableObject {
                              message: String(localized: "\(localTool.displayName) runs only with a local model. Turn on local mode, then try again."))
             return
         }
+        if let localTool, localTool.needsResponsesAPI, case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
+            let engine = Self.engineName(engineID)
+            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
+                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
+            return
+        }
         let sessionID = UUID()
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?

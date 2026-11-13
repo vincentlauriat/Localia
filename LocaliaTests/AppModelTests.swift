@@ -158,6 +158,27 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
     }
 
+    func test_codex_refusedOnMLX_openCodeAllowed() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: engine, terminal: terminal,
+                              localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
+                                           OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])]) {
+            $0.activeEngine = .mlx
+        }
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "codex")
+        XCTAssertEqual(model.alert?.title, String(localized: "\("Codex") cannot use \(AppModel.engineName(.mlx))"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [], "nothing is loaded for a launch that cannot work")
+        model.alert = nil
+        await model.launch(folder: try folder(), toolID: "opencode")
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+    }
+
     func test_localTool_refusedOutsideLocalMode() async throws {
         let terminal = FakeTerminal()
         let model = makeModel(engine: FakeEngine(installed: ["m1"]), terminal: terminal,

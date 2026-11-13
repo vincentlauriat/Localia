@@ -208,6 +208,30 @@ final class AnthropicGatewayTests: XCTestCase {
         XCTAssertNil(sent["stop"])
     }
 
+    func test_openAIChatCompletions_passThrough_withModelRenamed() async throws {
+        let sse = try fixture("mlx-0.32.2-stream-text.sse")
+        let json = try fixture("mlx-0.32.2-nonstream-text.json")
+        EngineStubProtocol.handler = { req in
+            guard req.path == "/v1/chat/completions" else { return StubResponse(status: 404) }
+            return StubResponse(body: (req.json?["stream"] as? Bool) == true ? sse : json)
+        }
+        let open = #"{"model":"mlx-community/Qwen3-8B-4bit","messages":[{"role":"user","content":"hi"}]"#
+        var (code, body) = try await post("/v1/chat/completions", open + "}")
+        XCTAssertEqual(code, 200)
+        XCTAssertEqual(Data(body.utf8), json, "a non-streamed answer is forwarded unchanged")
+        (code, body) = try await post("/v1/chat/completions", open + #","stream":true}"#)
+        XCTAssertEqual(code, 200)
+        XCTAssertEqual(Data(body.utf8), sse, "a stream is forwarded unchanged")
+        let sent = EngineStubProtocol.recorded.filter { $0.path == "/v1/chat/completions" }
+        XCTAssertEqual(sent.compactMap { $0.json?["model"] as? String }, ["default_model", "default_model"])
+        (code, _) = try await post("/v1/chat/completions", "[1]")
+        XCTAssertEqual(code, 400)
+        let (models, _) = try await URLSession.shared.data(from: base.appendingPathComponent("v1/models"))
+        let list = try JSONSerialization.jsonObject(with: models) as? [String: Any]
+        XCTAssertEqual(list?["object"] as? String, "list")
+        XCTAssertEqual(((list?["data"] as? [[String: Any]])?.first)?["object"] as? String, "model")
+    }
+
     func test_portInUse_throws() async {
         let other = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!)
         do { try await other.start(); XCTFail("second listener on the same port"); other.stop() } catch {}

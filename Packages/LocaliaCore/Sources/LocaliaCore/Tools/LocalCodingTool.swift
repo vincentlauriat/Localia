@@ -10,6 +10,8 @@ import Foundation
 public protocol LocalCodingTool: CodingTool {
     /// Official install page. Localia does not install these tools itself.
     var installPage: URL { get }
+    /// The tool speaks only the OpenAI Responses API (`/v1/responses`), which not every engine serves.
+    var needsResponsesAPI: Bool { get }
     /// Like `locate()`, but `refresh` forces the login-shell lookup even when a recent one found nothing.
     /// Without it, a miss is remembered for `ToolBinary.missTTL` so opening the panel spawns no shell.
     func locate(refresh: Bool) async -> URL?
@@ -28,6 +30,8 @@ public enum LocalToolError: Error, Equatable {
 }
 
 extension LocalCodingTool {
+    public var needsResponsesAPI: Bool { false }
+
     public func locate() async -> URL? { await locate(refresh: false) }
 
     public func install(progress: @escaping @Sendable (Double) -> Void) async throws {

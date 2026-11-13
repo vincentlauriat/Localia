@@ -33,6 +33,22 @@
         }
       }
     },
+    "%@ cannot use %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ cannot use %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ ne peut pas utiliser %2$@"
+          }
+        }
+      }
+    },
     "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway.": {
       "localizations": {
         "en": {
@@ -93,6 +109,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ est prêt."
+          }
+        }
+      }
+    },
+    "%@ needs the Responses API, which %@ does not offer. Switch to Ollama or llama.cpp to use it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ needs the Responses API, which %2$@ does not offer. Switch to Ollama or llama.cpp to use it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ a besoin de l'API Responses, que %2$@ ne propose pas. Passez à Ollama ou llama.cpp pour l'utiliser."
           }
         }
       }
