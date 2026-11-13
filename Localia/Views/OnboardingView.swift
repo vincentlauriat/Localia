@@ -240,7 +240,7 @@ struct OnboardingView: View {
                     HStack(spacing: 10) {
                         if let f = d.fraction {
                             ProgressBar(value: f)
-                            Text(f.formatted(.percent.precision(.fractionLength(0))))
+                            Text(f.formatted(.percent.precision(.fractionLength(0)).locale(Fmt.appLocale)))
                                 .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
                         } else {
                             ProgressView().controlSize(.small)
@@ -343,7 +343,7 @@ private struct ProgressBar: View {
         }
         .frame(height: 6)
         .accessibilityElement()
-        .accessibilityValue(Text(value.formatted(.percent.precision(.fractionLength(0)))))
+        .accessibilityValue(Text(value.formatted(.percent.precision(.fractionLength(0)).locale(Fmt.appLocale))))
     }
 }
 

@@ -23,8 +23,8 @@ final class Updater: ObservableObject {
             let c = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
             controller = c
             observation = c.updater.publisher(for: \.canCheckForUpdates)
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] in self?.canCheckForUpdates = $0 }
+                .receive(on: RunLoop.main)
+                .sink { [weak self] value in MainActor.assumeIsolated { self?.canCheckForUpdates = value } }
         } else {
             controller = nil
         }
