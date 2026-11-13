@@ -77,6 +77,7 @@ final class PanelSnapshotTests: XCTestCase {
             let model = makeModel(heavyApps: v.heavy, installed: v.empty ? [] : [Self.served, "gemma3:12b"])
             await model.startEngine()
             await model.refreshAll()
+            await model.refreshLocalTools(refresh: true)
             if v.on { await model.setLocalMode(true) }
             if v.expanded {
                 // A real launch through the fakes, so the sessions card has something to list.

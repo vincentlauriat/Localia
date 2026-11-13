@@ -10,19 +10,26 @@ import Foundation
 public protocol LocalCodingTool: CodingTool {
     /// Official install page. Localia does not install these tools itself.
     var installPage: URL { get }
-    /// Version printed by `<binary> --version`, or nil.
-    func version() async -> String?
+    /// Like `locate()`, but `refresh` forces the login-shell lookup even when a recent one found nothing.
+    /// Without it, a miss is remembered for `ToolBinary.missTTL` so opening the panel spawns no shell.
+    func locate(refresh: Bool) async -> URL?
+    /// Version printed by `<executable> --version`, or nil.
+    func version(at executable: URL) async -> String?
     /// Files to write into the config directory before a local launch: name -> contents. Pure.
     /// `existing` holds the current contents of those files, for tools that keep state in them.
-    func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) -> [String: Data]
+    func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) throws -> [String: Data]
 }
 
 public enum LocalToolError: Error, Equatable {
     /// These tools are installed from their own website.
     case manualInstall(URL)
+    /// A generated config could not be serialized.
+    case invalidConfig(String)
 }
 
 extension LocalCodingTool {
+    public func locate() async -> URL? { await locate(refresh: false) }
+
     public func install(progress: @escaping @Sendable (Double) -> Void) async throws {
         throw LocalToolError.manualInstall(installPage)
     }
@@ -34,10 +41,10 @@ extension LocalCodingTool {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var existing: [String: Data] = [:]
-        for name in configFiles(target: target, folder: folder, existing: [:]).keys {
+        for name in try configFiles(target: target, folder: folder, existing: [:]).keys {
             existing[name] = try? Data(contentsOf: dir.appendingPathComponent(name))
         }
-        for (name, data) in configFiles(target: target, folder: folder, existing: existing) {
+        for (name, data) in try configFiles(target: target, folder: folder, existing: existing) {
             try data.write(to: dir.appendingPathComponent(name), options: .atomic)
         }
         return dir
@@ -57,10 +64,11 @@ enum LocalEndpoint {
         return s.hasSuffix("/v1") ? s : s + "/v1"
     }
 
-    /// Pretty, key-sorted JSON with a trailing newline.
-    static func json(_ object: Any) -> Data {
-        var data = (try? JSONSerialization.data(withJSONObject: object,
-                                                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
+    /// Pretty, key-sorted JSON with a trailing newline. Throws rather than write an empty file.
+    static func json(_ object: Any) throws -> Data {
+        guard JSONSerialization.isValidJSONObject(object) else { throw LocalToolError.invalidConfig("not a JSON object") }
+        var data = try JSONSerialization.data(withJSONObject: object,
+                                              options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         data.append(0x0A)
         return data
     }
@@ -91,19 +99,34 @@ enum TOML {
 
 /// Finds a tool's binary: known install paths first, then the user's login shell (`command -v`).
 struct ToolBinary: Sendable {
+    /// How long a login-shell miss is trusted before the shell is asked again.
+    static let missTTL: TimeInterval = 600
+
     let name: String
     let searchPaths: [URL]
     let runner: ProcessRunning
+    let now: @Sendable () -> Date
     let located = LocatedBinary()
+    private let lastMiss = LastMiss()
+
+    init(name: String, searchPaths: [URL], runner: ProcessRunning, now: @escaping @Sendable () -> Date = Date.init) {
+        self.name = name; self.searchPaths = searchPaths; self.runner = runner; self.now = now
+    }
 
     private func firstExecutable() -> URL? {
         searchPaths.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    func locate() async -> URL? {
-        var found = firstExecutable()
-        if found == nil,
-           let r = try? await runner.run(URL(fileURLWithPath: "/bin/zsh"), ["-lc", "command -v \(name)"],
+    /// Known paths first (cheap). Then a binary found by an earlier shell lookup, if still there. Then the login
+    /// shell, unless it found nothing less than `missTTL` ago and `refresh` is false.
+    func locate(refresh: Bool = false) async -> URL? {
+        if let f = firstExecutable() { located.set(f); return f }
+        if !refresh {
+            if let cached = located.get(), FileManager.default.isExecutableFile(atPath: cached.path) { return cached }
+            if let miss = lastMiss.get(), now().timeIntervalSince(miss) < Self.missTTL { located.set(nil); return nil }
+        }
+        var found: URL?
+        if let r = try? await runner.run(URL(fileURLWithPath: "/bin/zsh"), ["-lc", "command -v \(name)"],
                                          env: nil, timeout: 10),
            r.status == 0 {
             let line = String(decoding: r.stdout, as: UTF8.self)
@@ -114,6 +137,7 @@ struct ToolBinary: Sendable {
             }
         }
         located.set(found)
+        lastMiss.set(found == nil ? now() : nil)
         return found
     }
 
@@ -132,8 +156,7 @@ struct ToolBinary: Sendable {
     }
 
     /// `<binary> --version`, last word of the first non-empty stdout line ("codex-cli 0.167.0" -> "0.167.0").
-    func version() async -> String? {
-        guard let exe = await locate() else { return nil }
+    func version(at exe: URL) async -> String? {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = exe.deletingLastPathComponent().path + ":" + (env["PATH"] ?? "/usr/bin:/bin")
         guard let r = try? await runner.run(exe, ["--version"], env: env, timeout: 15), r.status == 0 else { return nil }
@@ -142,4 +165,11 @@ struct ToolBinary: Sendable {
             .first { !$0.isEmpty }
         return line?.split(separator: " ").last.map(String.init)
     }
+}
+
+private final class LastMiss: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date?
+    func get() -> Date? { lock.lock(); defer { lock.unlock() }; return date }
+    func set(_ d: Date?) { lock.lock(); date = d; lock.unlock() }
 }

@@ -18,8 +18,10 @@ public struct RunningSession: Equatable, Sendable, Identifiable {
     public let engine: EngineID
     public let model: String
     public let folder: URL?
-    public init(id: UUID, engine: EngineID, model: String, folder: URL?) {
-        self.id = id; self.engine = engine; self.model = model; self.folder = folder
+    /// Display name of the tool the session runs ("Claude Code", "Codex"...), nil when the launcher did not say.
+    public let tool: String?
+    public init(id: UUID, engine: EngineID, model: String, folder: URL?, tool: String? = nil) {
+        self.id = id; self.engine = engine; self.model = model; self.folder = folder; self.tool = tool
     }
 }
 
@@ -34,7 +36,7 @@ public actor SessionTracker {
     private let statusDir: URL
     private var sessions: [UUID: ModelKey] = [:]
     /// Folder and start order of each running session, for display only.
-    private var details: [UUID: (folder: URL?, order: Int)] = [:]
+    private var details: [UUID: (folder: URL?, tool: String?, order: Int)] = [:]
     private var nextOrder = 0
     /// Sessions registered by the shell shim, keyed by the id in their `.session` file name.
     private var shimSessions: [UUID: (key: ModelKey, folder: URL?, order: Int)] = [:]
@@ -57,11 +59,11 @@ public actor SessionTracker {
         return n.hasSuffix(".command") || n.hasSuffix(".done") || n.hasSuffix(".done.tmp") || n.hasSuffix(".session.tmp")
     }
 
-    public func begin(id: UUID, engine: EngineID, model: String, folder: URL? = nil) {
+    public func begin(id: UUID, engine: EngineID, model: String, folder: URL? = nil, tool: String? = nil) {
         // A stale file from a previous run must not end the new session.
         try? FileManager.default.removeItem(at: file(id, "done"))
         sessions[id] = ModelKey(engine: engine, model: model)
-        details[id] = (folder, nextOrder)
+        details[id] = (folder, tool, nextOrder)
         nextOrder += 1
     }
 
@@ -91,10 +93,12 @@ public actor SessionTracker {
     public func runningSessions() -> [RunningSession] {
         syncShimSessions()
         let own = sessions.map { id, key in
-            (RunningSession(id: id, engine: key.engine, model: key.model, folder: details[id]?.folder), details[id]?.order ?? 0)
+            (RunningSession(id: id, engine: key.engine, model: key.model, folder: details[id]?.folder,
+                            tool: details[id]?.tool), details[id]?.order ?? 0)
         }
+        // The shell shim only ever wraps `claude`.
         let shim = shimSessions.map { id, s in
-            (RunningSession(id: id, engine: s.key.engine, model: s.key.model, folder: s.folder), s.order)
+            (RunningSession(id: id, engine: s.key.engine, model: s.key.model, folder: s.folder, tool: "Claude Code"), s.order)
         }
         return (own + shim).sorted { $0.1 < $1.1 }.map(\.0)
     }

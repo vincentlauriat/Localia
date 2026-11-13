@@ -21,12 +21,12 @@ public struct PiTool: LocalCodingTool {
 
     public init(searchPaths: [URL]? = nil,
                 home: URL = FileManager.default.homeDirectoryForCurrentUser,
-                runner: ProcessRunning = Shell()) {
-        binary = ToolBinary(name: "pi", searchPaths: searchPaths ?? Self.defaultSearchPaths(home: home), runner: runner)
+                runner: ProcessRunning = Shell(), now: @escaping @Sendable () -> Date = Date.init) {
+        binary = ToolBinary(name: "pi", searchPaths: searchPaths ?? Self.defaultSearchPaths(home: home), runner: runner, now: now)
     }
 
-    public func locate() async -> URL? { await binary.locate() }
-    public func version() async -> String? { await binary.version() }
+    public func locate(refresh: Bool) async -> URL? { await binary.locate(refresh: refresh) }
+    public func version(at executable: URL) async -> String? { await binary.version(at: executable) }
 
     public func command(target: LaunchTarget, profile: LaunchProfile, configDir: URL?) -> ToolCommand {
         var command = binary.plainCommand()
@@ -35,21 +35,26 @@ public struct PiTool: LocalCodingTool {
         return command
     }
 
-    /// `settings.json` is merged: Pi records its own state there (changelog seen, last model choices).
-    public func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) -> [String: Data] {
+    /// `settings.json` is merged: Pi records its own state there (changelog seen, last model choices). A file
+    /// that is not a JSON object is saved as `settings.json.bak` first.
+    public func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) throws -> [String: Data] {
         guard case let .local(_, baseURL, model, contextTokens) = target else { return [:] }
         var settings: [String: Any] = [:]
-        if let data = existing[Self.settingsFile],
-           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            settings = obj
+        var files: [String: Data] = [:]
+        if let data = existing[Self.settingsFile], !data.isEmpty {
+            if let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                settings = obj
+            } else {
+                // Not a JSON object: keep a copy before it is replaced.
+                files[Self.settingsFile + ".bak"] = data
+            }
         }
         settings["defaultProvider"] = LocalEndpoint.providerID
         settings["defaultModel"] = model
         settings["enableInstallTelemetry"] = false
-        return [
-            Self.modelsFile: LocalEndpoint.json(Self.models(baseURL: baseURL, model: model, contextTokens: contextTokens)),
-            Self.settingsFile: LocalEndpoint.json(settings),
-        ]
+        files[Self.modelsFile] = try LocalEndpoint.json(Self.models(baseURL: baseURL, model: model, contextTokens: contextTokens))
+        files[Self.settingsFile] = try LocalEndpoint.json(settings)
+        return files
     }
 
     /// Ollama and llama-server take the system prompt as a `system` message, and no `reasoning_effort`.

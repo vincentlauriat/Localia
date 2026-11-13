@@ -33,6 +33,22 @@
         }
       }
     },
+    "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ gets a context window of %lld tokens. %@ needs at least %lld for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ dispose d’une fenêtre de contexte de %lld tokens. %@ en demande au moins %lld pour ses instructions et ses outils : il échouerait. Choisissez un modèle téléchargé par Localia, qui fixe une fenêtre plus grande, ou lancez quand même."
+          }
+        }
+      }
+    },
     "%@ is not installed": {
       "localizations": {
         "en": {
@@ -893,6 +909,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Compatibles"
+          }
+        }
+      }
+    },
+    "Context window too small": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context window too small"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre de contexte trop petite"
           }
         }
       }
@@ -2237,6 +2269,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Lancer %@"
+          }
+        }
+      }
+    },
+    "Launch Anyway": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch Anyway"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer quand même"
           }
         }
       }
@@ -4705,6 +4753,22 @@
         }
       }
     },
+    "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp runs one model at a time, and a %@ session is using %@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session %@ utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
     "llama.cpp runs one model at a time, and a Claude Code session is using %@. Wait for that session to end, or end it, then try again.": {
       "localizations": {
         "en": {
@@ -4717,6 +4781,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une session Claude Code utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
+          }
+        }
+      }
+    },
+    "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp runs one model at a time, and another session is using %@. Wait for that session to end, or end it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "llama.cpp ne fait tourner qu'un modèle à la fois, et une autre session utilise %@. Attendez la fin de cette session, ou terminez-la, puis réessayez."
           }
         }
       }

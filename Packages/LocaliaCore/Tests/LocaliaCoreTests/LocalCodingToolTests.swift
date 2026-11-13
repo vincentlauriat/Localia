@@ -9,6 +9,25 @@ private final class ToolVersionRunner: ProcessRunning, @unchecked Sendable {
     }
 }
 
+private final class CountingRunner: ProcessRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _count = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+    func run(_ exe: URL, _ args: [String], env: [String: String]?, timeout: TimeInterval) async throws -> ProcessResult {
+        lock.withLock { _count += 1 }
+        return ProcessResult(status: 1, stdout: Data(), stderr: "")
+    }
+}
+
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _now = Date(timeIntervalSince1970: 1_000_000)
+    var now: Date {
+        get { lock.lock(); defer { lock.unlock() }; return _now }
+        set { lock.lock(); _now = newValue; lock.unlock() }
+    }
+}
+
 final class LocalCodingToolTests: XCTestCase {
     var dir: URL!
     let ollama = URL(string: "http://127.0.0.1:11434")!
@@ -55,7 +74,7 @@ final class LocalCodingToolTests: XCTestCase {
 
     func test_codex_configFixture() throws {
         let folder = URL(fileURLWithPath: "/Users/me/My Project")
-        let files = CodexTool().configFiles(target: local(ollama, "hf.co/unsloth/Qwen3:Q4_K_M-localia", 65536),
+        let files = try CodexTool().configFiles(target: local(ollama, "hf.co/unsloth/Qwen3:Q4_K_M-localia", 65536),
                                             folder: folder, existing: [:])
         XCTAssertEqual(Array(files.keys), ["config.toml"])
         XCTAssertEqual(text(files["config.toml"]), """
@@ -77,8 +96,8 @@ final class LocalCodingToolTests: XCTestCase {
         """)
     }
 
-    func test_codex_escapesModelAndFolder_llamaPort() {
-        let toml = text(CodexTool().configFiles(target: local(llama, oddModel), folder: URL(fileURLWithPath: #"/p/my "proj" \x"#),
+    func test_codex_escapesModelAndFolder_llamaPort() throws {
+        let toml = text(try CodexTool().configFiles(target: local(llama, oddModel), folder: URL(fileURLWithPath: #"/p/my "proj" \x"#),
                                                 existing: [:])["config.toml"])
         XCTAssertTrue(toml.contains(#"model = "a \"b\" \\c 'd'""#), toml)
         XCTAssertTrue(toml.contains(#"[projects."/p/my \"proj\" \\x"]"#), toml)
@@ -90,7 +109,7 @@ final class LocalCodingToolTests: XCTestCase {
         let link = dir.appendingPathComponent("link")
         try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
-        let toml = text(CodexTool().configFiles(target: local(ollama, "m"), folder: link, existing: [:])["config.toml"])
+        let toml = text(try CodexTool().configFiles(target: local(ollama, "m"), folder: link, existing: [:])["config.toml"])
         XCTAssertTrue(toml.contains("[projects.\(TOML.string(link.path))]"), toml)
         XCTAssertTrue(toml.contains("/real\"]"), toml)
     }
@@ -106,10 +125,17 @@ final class LocalCodingToolTests: XCTestCase {
         XCTAssertEqual(t.command(target: .cloud, profile: .light, configDir: cfg).environment, [:])
     }
 
+    func test_codex_folderWithBracketAndNewline() throws {
+        let folder = URL(fileURLWithPath: "/p/a]b\nc")
+        let toml = text(try CodexTool().configFiles(target: local(ollama, "m"), folder: folder, existing: [:])["config.toml"])
+        XCTAssertTrue(toml.contains(#"[projects."/p/a]b\nc"]"#), toml)
+        XCTAssertFalse(toml.contains("a]b\nc"), "raw newline must not reach the TOML")
+    }
+
     // MARK: OpenCode
 
     func test_opencode_configFixture() throws {
-        let files = OpenCodeTool().configFiles(target: local(llama, "qwen3:8b", 32768), folder: dir, existing: [:])
+        let files = try OpenCodeTool().configFiles(target: local(llama, "qwen3:8b", 32768), folder: dir, existing: [:])
         XCTAssertEqual(Array(files.keys), ["opencode.json"])
         XCTAssertEqual(text(files["opencode.json"]), """
         {
@@ -170,7 +196,7 @@ final class LocalCodingToolTests: XCTestCase {
     // MARK: Pi
 
     func test_pi_configFixture() throws {
-        let files = PiTool().configFiles(target: local(ollama, "gemma4-code:latest", 65536), folder: dir, existing: [:])
+        let files = try PiTool().configFiles(target: local(ollama, "gemma4-code:latest", 65536), folder: dir, existing: [:])
         XCTAssertEqual(Set(files.keys), ["models.json", "settings.json"])
         XCTAssertEqual(text(files["models.json"]), """
         {
@@ -207,10 +233,33 @@ final class LocalCodingToolTests: XCTestCase {
 
     func test_pi_settingsKeepPiState() throws {
         let old = Data(#"{"lastChangelogVersion":"0.81.1","defaultModel":"old"}"#.utf8)
-        let files = PiTool().configFiles(target: local(ollama, "new"), folder: dir, existing: ["settings.json": old])
+        let files = try PiTool().configFiles(target: local(ollama, "new"), folder: dir, existing: ["settings.json": old])
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: files["settings.json"]!) as? [String: Any])
         XCTAssertEqual(obj["lastChangelogVersion"] as? String, "0.81.1")
         XCTAssertEqual(obj["defaultModel"] as? String, "new")
+    }
+
+    func test_pi_malformedSettings_backedUp() throws {
+        for bad in ["{not json", "[1, 2]"] {
+            let data = Data(bad.utf8)
+            let files = try PiTool().configFiles(target: local(ollama, "m"), folder: dir, existing: ["settings.json": data])
+            XCTAssertEqual(files["settings.json.bak"], data, bad)
+            XCTAssertTrue(text(files["settings.json"]).contains(#""defaultModel" : "m""#))
+        }
+        let ok = try PiTool().configFiles(target: local(ollama, "m"), folder: dir, existing: ["settings.json": Data("{}".utf8)])
+        XCTAssertNil(ok["settings.json.bak"])
+    }
+
+    func test_prepareConfig_writesPiBackup() throws {
+        let cfg = dir.appendingPathComponent("tools/pi")
+        try FileManager.default.createDirectory(at: cfg, withIntermediateDirectories: true)
+        try Data("oops".utf8).write(to: cfg.appendingPathComponent("settings.json"))
+        try PiTool().prepareConfig(target: local(ollama, "m"), folder: dir, dir: cfg)
+        XCTAssertEqual(try String(contentsOf: cfg.appendingPathComponent("settings.json.bak"), encoding: .utf8), "oops")
+    }
+
+    func test_json_throwsInsteadOfWritingEmpty() {
+        XCTAssertThrowsError(try LocalEndpoint.json(["bad": Double.nan]))
     }
 
     func test_pi_command() async throws {
@@ -226,9 +275,9 @@ final class LocalCodingToolTests: XCTestCase {
 
     // MARK: Shared
 
-    func test_cloudTarget_writesNothing() {
+    func test_cloudTarget_writesNothing() throws {
         let tools: [any LocalCodingTool] = [CodexTool(), OpenCodeTool(), PiTool()]
-        for t in tools { XCTAssertTrue(t.configFiles(target: .cloud, folder: dir, existing: [:]).isEmpty, t.id) }
+        for t in tools { XCTAssertTrue(try t.configFiles(target: .cloud, folder: dir, existing: [:]).isEmpty, t.id) }
     }
 
     func test_prepareConfig_writesFilesAndKeepsOthers() throws {
@@ -266,17 +315,31 @@ final class LocalCodingToolTests: XCTestCase {
         }
     }
 
+    func test_locate_remembersAShellMissForTenMinutes() async throws {
+        let runner = CountingRunner()
+        let clock = Clock()
+        let t = PiTool(searchPaths: [dir.appendingPathComponent("nope/pi")], runner: runner, now: { clock.now })
+        _ = await t.locate()
+        _ = await t.locate()
+        XCTAssertEqual(runner.count, 1, "second lookup within the TTL spawns no shell")
+        _ = await t.locate(refresh: true)
+        XCTAssertEqual(runner.count, 2, "refresh forces the shell")
+        clock.now += 601
+        _ = await t.locate()
+        XCTAssertEqual(runner.count, 3, "a stale miss is looked up again")
+    }
+
     func test_version_parsesLastWord() async throws {
         let bin = try fakeBinary("codex")
         let runner = ToolVersionRunner()
         runner.stdout = "\ncodex-cli 0.167.0\n"
-        let a = await CodexTool(searchPaths: [bin], runner: runner).version()
+        let a = await CodexTool(searchPaths: [bin], runner: runner).version(at: bin)
         XCTAssertEqual(a, "0.167.0")
         runner.stdout = "1.19.5\n"
-        let b = await OpenCodeTool(searchPaths: [bin], runner: runner).version()
+        let b = await OpenCodeTool(searchPaths: [bin], runner: runner).version(at: bin)
         XCTAssertEqual(b, "1.19.5")
         runner.status = 1
-        let c = await PiTool(searchPaths: [bin], runner: runner).version()
+        let c = await PiTool(searchPaths: [bin], runner: runner).version(at: bin)
         XCTAssertNil(c)
     }
 }

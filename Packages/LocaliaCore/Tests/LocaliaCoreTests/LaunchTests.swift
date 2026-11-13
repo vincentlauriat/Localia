@@ -182,11 +182,11 @@ final class SessionTrackerTests: XCTestCase {
         let t = SessionTracker(statusDir: dir)
         let a = UUID(), b = UUID(), c = UUID()
         let f1 = URL(fileURLWithPath: "/tmp/p1"), f2 = URL(fileURLWithPath: "/tmp/p2")
-        await t.begin(id: a, engine: .ollama, model: "m1", folder: f1)
+        await t.begin(id: a, engine: .ollama, model: "m1", folder: f1, tool: "Codex")
         await t.begin(id: b, engine: .ollama, model: "m1", folder: f2)
         await t.begin(id: c, engine: .llamaCpp, model: "m2")
         var running = await t.runningSessions()
-        XCTAssertEqual(running, [RunningSession(id: a, engine: .ollama, model: "m1", folder: f1),
+        XCTAssertEqual(running, [RunningSession(id: a, engine: .ollama, model: "m1", folder: f1, tool: "Codex"),
                                  RunningSession(id: b, engine: .ollama, model: "m1", folder: f2),
                                  RunningSession(id: c, engine: .llamaCpp, model: "m2", folder: nil)])
         try touchDone(a)
@@ -235,7 +235,8 @@ final class SessionTrackerTests: XCTestCase {
         try writeShimRecord(shim, model: "m2", folder: "/tmp/shimproj")
         var running = await t.runningSessions()
         XCTAssertEqual(running, [RunningSession(id: own, engine: .ollama, model: "m1", folder: nil),
-                                 RunningSession(id: shim, engine: .ollama, model: "m2", folder: URL(fileURLWithPath: "/tmp/shimproj"))])
+                                 RunningSession(id: shim, engine: .ollama, model: "m2", folder: URL(fileURLWithPath: "/tmp/shimproj"),
+                                                tool: "Claude Code")])
         var inUse = await t.modelsStillInUse()
         XCTAssertTrue(inUse.contains(ModelKey(engine: .ollama, model: "m2")))
         try FileManager.default.removeItem(at: dir.appendingPathComponent("\(shim.uuidString).session"))

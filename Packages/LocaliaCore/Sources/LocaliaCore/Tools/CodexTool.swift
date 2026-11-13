@@ -20,12 +20,12 @@ public struct CodexTool: LocalCodingTool {
 
     public init(searchPaths: [URL]? = nil,
                 home: URL = FileManager.default.homeDirectoryForCurrentUser,
-                runner: ProcessRunning = Shell()) {
-        binary = ToolBinary(name: "codex", searchPaths: searchPaths ?? Self.defaultSearchPaths(home: home), runner: runner)
+                runner: ProcessRunning = Shell(), now: @escaping @Sendable () -> Date = Date.init) {
+        binary = ToolBinary(name: "codex", searchPaths: searchPaths ?? Self.defaultSearchPaths(home: home), runner: runner, now: now)
     }
 
-    public func locate() async -> URL? { await binary.locate() }
-    public func version() async -> String? { await binary.version() }
+    public func locate(refresh: Bool) async -> URL? { await binary.locate(refresh: refresh) }
+    public func version(at executable: URL) async -> String? { await binary.version(at: executable) }
 
     public func command(target: LaunchTarget, profile: LaunchProfile, configDir: URL?) -> ToolCommand {
         var command = binary.plainCommand()
@@ -34,7 +34,7 @@ public struct CodexTool: LocalCodingTool {
         return command
     }
 
-    public func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) -> [String: Data] {
+    public func configFiles(target: LaunchTarget, folder: URL, existing: [String: Data]) throws -> [String: Data] {
         guard case let .local(_, baseURL, model, contextTokens) = target else { return [:] }
         return [Self.configFile: Data(Self.configTOML(baseURL: baseURL, model: model, contextTokens: contextTokens,
                                                       folder: folder).utf8)]

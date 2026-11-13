@@ -346,7 +346,8 @@ struct MenuBarPanel: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(s.folder?.lastPathComponent ?? String(localized: "Unknown folder"))
                                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text("\(AppModel.engineName(s.engine)) · \(model.displayName(for: s.model))")
+                            Text(verbatim: [s.tool, AppModel.engineName(s.engine), model.displayName(for: s.model)]
+                                .compactMap { $0 }.joined(separator: " · "))
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                                 .lineLimit(1).truncationMode(.middle)
                         }

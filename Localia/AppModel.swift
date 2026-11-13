@@ -43,6 +43,8 @@ struct LocalToolRow: Identifiable, Equatable {
     /// nil when the tool is not installed.
     var path: URL?
     var version: String?
+    /// Real path and modification date of the binary when `version` was read: an upgrade changes it.
+    var stamp: String?
 }
 
 struct InstalledRow: Identifiable, Equatable {
@@ -177,6 +179,8 @@ final class AppModel: ObservableObject {
         }
         startPathMonitor()
         Task { await refreshRecommendations() }
+        // Login shells and `--version` can be slow: never on the path of the engine status.
+        Task { await refreshLocalTools(refresh: true) }
     }
 
     /// First run, or no model at all. An engine that is merely stopped is not "nothing installed".
@@ -207,7 +211,6 @@ final class AppModel: ObservableObject {
         for e in await registry.all { engineStates[e.id] = await e.installState() }
         claudePath = await deps.tool.locate()
         claudeChecked = true
-        await refreshLocalTools()
         await refreshInstalled()
         await refreshStatus()
         await refreshLaunchTarget()
@@ -459,26 +462,46 @@ final class AppModel: ObservableObject {
 
     func modelsInUse() async -> Set<ModelKey> { await tracker.modelsStillInUse() }
 
-    /// Finds Codex, OpenCode and Pi and reads their versions. The version is read again only when the
-    /// binary moved.
-    func refreshLocalTools() async {
-        var rows: [LocalToolRow] = []
-        for tool in deps.localTools {
-            let path = await tool.locate()
-            let old = localTools.first { $0.id == tool.id }
-            var version = old?.path == path ? old?.version : nil
-            if path != nil, version == nil { version = await tool.version() }
-            rows.append(LocalToolRow(id: tool.id, displayName: tool.displayName, installPage: tool.installPage,
-                                     path: path, version: version))
+    /// Finds Codex, OpenCode and Pi in parallel and reads their versions. A version is read again only when
+    /// the binary changed (real path or modification date). `refresh` forces the login-shell lookup for
+    /// tools a recent lookup did not find (startup); the panel opening does not.
+    func refreshLocalTools(refresh: Bool = false) async {
+        let old = Dictionary(localTools.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let tools = deps.localTools
+        let rows = await withTaskGroup(of: (Int, LocalToolRow).self) { group in
+            for (i, tool) in tools.enumerated() {
+                let previous = old[tool.id]
+                group.addTask {
+                    let path = await tool.locate(refresh: refresh)
+                    let stamp = path.map(Self.binaryStamp)
+                    var version = previous?.stamp == stamp ? previous?.version : nil
+                    if let path, version == nil { version = await tool.version(at: path) }
+                    return (i, LocalToolRow(id: tool.id, displayName: tool.displayName, installPage: tool.installPage,
+                                            path: path, version: version, stamp: stamp))
+                }
+            }
+            var out: [(Int, LocalToolRow)] = []
+            for await r in group { out.append(r) }
+            return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
         localTools = rows
     }
 
+    nonisolated static func binaryStamp(_ url: URL) -> String {
+        let real = url.resolvingSymlinksInPath()
+        let date = (try? FileManager.default.attributesOfItem(atPath: real.path)[.modificationDate]) as? Date
+        return "\(real.path)|\(date?.timeIntervalSince1970 ?? 0)"
+    }
+
     /// `toolID` nil launches Claude Code; otherwise one of `deps.localTools`, which run in local mode only.
-    func launch(folder: URL, toolID: String? = nil) async {
+    /// `allowSmallContext` skips the context-window check (the alert's "Launch Anyway").
+    func launch(folder: URL, toolID: String? = nil, allowSmallContext: Bool = false) async {
         let localTool = toolID.flatMap { id in deps.localTools.first { $0.id == id } }
         let tool: any CodingTool = localTool ?? deps.tool
-        guard await tool.locate() != nil else {
+        var found = await tool.locate()
+        // A tool installed since the last lookup: ask the login shell again before saying it is missing.
+        if found == nil, let localTool { found = await localTool.locate(refresh: true) }
+        guard found != nil else {
             if let localTool {
                 await refreshLocalTools()
                 alert = AppAlert(title: String(localized: "\(localTool.displayName) is not installed"),
@@ -511,7 +534,7 @@ final class AppModel: ObservableObject {
                 return
             }
             if let other = await llamaConflict(engine: engineID, model: model) {
-                alert = llamaBusyAlert(other)
+                alert = await llamaBusyAlert(other)
                 return
             }
             let key = ModelKey(engine: engineID, model: model)
@@ -536,6 +559,18 @@ final class AppModel: ObservableObject {
             if case let .local(id, baseURL, m, _) = target {
                 target = .local(engine: id, baseURL: baseURL, model: m, contextTokens: await engine.contextWindow(m))
             }
+            if let localTool, !allowSmallContext, case let .local(_, _, m, window) = target,
+               window < Self.minimumToolContext {
+                busyMessage = nil
+                await undoLoad(loadedNow)
+                alert = AppAlert(
+                    title: String(localized: "Context window too small"),
+                    message: String(localized: "\(displayName(for: m)) gets a context window of \(window) tokens. \(localTool.displayName) needs at least \(Self.minimumToolContext) for its instructions and tools, so it would fail. Choose a model downloaded by Localia, which sets a larger window, or launch anyway."),
+                    action: .init(title: String(localized: "Launch Anyway")) { [weak self] in
+                        await self?.launch(folder: folder, toolID: toolID, allowSmallContext: true)
+                    })
+                return
+            }
             if let localTool {
                 do {
                     configDir = try localTool.prepareConfig(target: target, folder: folder,
@@ -559,7 +594,10 @@ final class AppModel: ObservableObject {
                 await undoLoad(loadedNow)   // no session will ever end to unload it
                 throw error
             }
-            if let session { await tracker.begin(id: sessionID, engine: session.engine, model: session.model, folder: folder) }
+            if let session {
+                await tracker.begin(id: sessionID, engine: session.engine, model: session.model, folder: folder,
+                                    tool: tool.displayName)
+            }
             do { try await deps.terminal.open(scriptURL: url, in: settings.terminalApp) } catch {
                 // No window opened: end the session record so its model can be unloaded.
                 try? "1\n".write(to: url.deletingPathExtension().appendingPathExtension("done"),
@@ -597,9 +635,19 @@ final class AppModel: ObservableObject {
         if let i = llamaPending.firstIndex(of: key) { llamaPending.remove(at: i) }
     }
 
-    private func llamaBusyAlert(_ other: ModelKey) -> AppAlert {
-        AppAlert(title: String(localized: "llama.cpp is busy"),
-                 message: String(localized: "llama.cpp runs one model at a time, and a Claude Code session is using \(displayName(for: other.model)). Wait for that session to end, or end it, then try again."))
+    /// Codex, OpenCode and Pi send several thousand tokens of instructions and tool schemas.
+    static let minimumToolContext = 16384
+
+    /// Names the tool of the session holding llama.cpp, when a running session does (a launch still loading
+    /// has none yet).
+    private func llamaBusyAlert(_ other: ModelKey) async -> AppAlert {
+        let name = displayName(for: other.model)
+        let tool = await tracker.runningSessions()
+            .first { $0.engine == other.engine && $0.model == other.model }?.tool
+        let message = tool.map {
+            String(localized: "llama.cpp runs one model at a time, and a \($0) session is using \(name). Wait for that session to end, or end it, then try again.")
+        } ?? String(localized: "llama.cpp runs one model at a time, and another session is using \(name). Wait for that session to end, or end it, then try again.")
+        return AppAlert(title: String(localized: "llama.cpp is busy"), message: message)
     }
 
     /// Spec 6.4. Detection is best effort (a GUI app does not see keys exported in the shell rc), so this
@@ -805,7 +853,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 if let other = await llamaConflict(engine: .llamaCpp, model: m) {
-                    alert = llamaBusyAlert(other)
+                    alert = await llamaBusyAlert(other)
                     await refreshStatus()
                     return
                 }
@@ -966,7 +1014,7 @@ final class AppModel: ObservableObject {
     /// llama.cpp would have to serve another model than the one a session uses.
     func setDefault(_ row: InstalledRow) async {
         if let other = await llamaConflict(engine: row.engine, model: row.name) {
-            alert = llamaBusyAlert(other)
+            alert = await llamaBusyAlert(other)
             return
         }
         selectingModel = row.id
