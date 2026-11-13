@@ -44,6 +44,11 @@ public actor MLXEngine: Engine {
     private let served = ServedName()
     private var ownServer: (any ServerHandle)?
     private var queueTail: Task<Void, Never>?
+    private var restarts: RestartPolicy
+    /// Model MLX stopped serving because it ran out of memory again, until `takeFailure()` reads it.
+    private var failure: String?
+    /// Lets the gateway (created before `self` exists) reach the engine.
+    private let deadRelay = DeadRelay()
 
     public init(
         baseURL: URL = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxGatewayPort)")!,
@@ -59,8 +64,11 @@ public actor MLXEngine: Engine {
         hfFileBase: URL = URL(string: "https://huggingface.co")!,
         uvArchiveURL: URL = URL(string: "https://github.com/astral-sh/uv/releases/download/\(MLXEngine.uvVersion)/uv-aarch64-apple-darwin.tar.gz")!,
         uvSHA256: String = MLXEngine.uvSHA256,
-        inspector: ProcessInspecting = SystemProcessInspector()
+        inspector: ProcessInspecting = SystemProcessInspector(),
+        restartWindow: TimeInterval = 600,
+        restartGrace: TimeInterval = 30
     ) {
+        self.restarts = RestartPolicy(window: restartWindow, grace: restartGrace)
         self.baseURL = baseURL
         self.upstreamURL = upstreamURL
         self.session = session
@@ -77,8 +85,11 @@ public actor MLXEngine: Engine {
         self.uvSHA256 = uvSHA256
         self.inspector = inspector
         let served = self.served
+        let relay = self.deadRelay
         self.gateway = AnthropicGateway(port: UInt16(baseURL.port ?? LocaliaConstants.mlxGatewayPort),
-                                        upstream: upstreamURL, servedModel: { served.get() }, session: session)
+                                        upstream: upstreamURL, servedModel: { served.get() }, session: session,
+                                        onUpstreamDead: { relay.fire() })
+        relay.set { [weak self] in Task { await self?.upstreamDied() } }
         // Downloads abandoned by an earlier run (crash, quit mid-download) hold GBs nobody can see.
         Self.removeIncompleteModels(in: Paths.models(base: appSupportBase).appendingPathComponent("mlx", isDirectory: true))
     }
@@ -121,6 +132,31 @@ public actor MLXEngine: Engine {
     public func cliBinary() -> URL? {
         let u = venv.appendingPathComponent("bin/mlx_lm.chat")
         return FileManager.default.isExecutableFile(atPath: u.path) ? u : nil
+    }
+
+    /// The model MLX stopped serving by itself (out of memory again within the restart window), once;
+    /// nil when nothing happened.
+    public func takeFailure() -> String? {
+        defer { failure = nil }
+        return failure
+    }
+
+    /// The server's generation thread died (Metal out of memory): restart it with the same model, at most once
+    /// per `restartWindow`. Past that, stop it and keep the reason for `takeFailure()`.
+    func upstreamDied() async {
+        guard ownServer != nil || record.recordedPID() != nil, let name = served.get() else { return }
+        switch restarts.decide(now: Date()) {
+        case .ignore: return
+        case .giveUp:
+            try? await stopServing()
+            failure = name
+            return
+        case .restart: break
+        }
+        try? await serialized { engine in
+            try await engine.stopServing()   // the old process is broken even if its /health still answers
+            try await engine.performLoad(name)
+        }
     }
 
     /// Directory of an installed model, or nil.
@@ -564,4 +600,32 @@ private final class ServedName: @unchecked Sendable {
     private var name: String?
     func get() -> String? { lock.lock(); defer { lock.unlock() }; return name }
     func set(_ n: String?) { lock.lock(); name = n; lock.unlock() }
+}
+
+/// At most one automatic restart per `window`. Failures within `grace` of a restart belong to the same
+/// incident (several requests fail at once, or reach the old process): they are ignored, not counted.
+struct RestartPolicy: Sendable {
+    enum Decision: Equatable { case restart, ignore, giveUp }
+    let window: TimeInterval
+    let grace: TimeInterval
+    private(set) var last: Date?
+    init(window: TimeInterval, grace: TimeInterval = 30) { self.window = window; self.grace = min(grace, window) }
+
+    mutating func decide(now: Date) -> Decision {
+        if let last {
+            let since = now.timeIntervalSince(last)
+            if since < grace { return .ignore }
+            if since < window { return .giveUp }
+        }
+        last = now
+        return .restart
+    }
+}
+
+/// Forwards the gateway's "upstream died" callback to the engine once it exists.
+private final class DeadRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable () -> Void)?
+    func set(_ h: @escaping @Sendable () -> Void) { lock.lock(); handler = h; lock.unlock() }
+    func fire() { lock.lock(); let h = handler; lock.unlock(); h?() }
 }

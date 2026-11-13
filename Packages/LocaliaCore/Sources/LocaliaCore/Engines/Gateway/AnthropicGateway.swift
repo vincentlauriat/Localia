@@ -15,6 +15,8 @@ public final class AnthropicGateway: @unchecked Sendable {
     private let upstream: URL
     private let upstreamModel: String
     private let servedModel: @Sendable () -> String?
+    /// Called (once per failed request) when the upstream's generation died, so its owner can restart it.
+    private let onUpstreamDead: @Sendable () -> Void
     private let session: URLSession
     private let maxBodyBytes: Int
     private let maxHeaderBytes = 64 << 10
@@ -34,8 +36,10 @@ public final class AnthropicGateway: @unchecked Sendable {
     public init(port: UInt16, upstream: URL, upstreamModel: String = "default_model",
                 servedModel: @escaping @Sendable () -> String? = { nil },
                 session: URLSession = .shared, maxBodyBytes: Int = 32 << 20,
-                readTimeout: TimeInterval = 30, maxConnections: Int = 16) {
+                readTimeout: TimeInterval = 30, maxConnections: Int = 16,
+                onUpstreamDead: @escaping @Sendable () -> Void = {}) {
         self.port = port; self.upstream = upstream; self.upstreamModel = upstreamModel
+        self.onUpstreamDead = onUpstreamDead
         self.servedModel = servedModel; self.session = session; self.maxBodyBytes = maxBodyBytes
         self.readTimeout = readTimeout; self.maxConnections = maxConnections
     }
@@ -258,8 +262,7 @@ public final class AnthropicGateway: @unchecked Sendable {
                 let (data, resp) = try await session.data(for: r)
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<300).contains(code) else {
-                    let m = AnthropicTranslation.errorMapping(upstreamStatus: code)
-                    await sendJSON(conn, status: m.status, AnthropicTranslation.errorBody(type: m.type, message: upstreamMessage(data, code)))
+                    await upstreamFailed(conn, code, data)
                     return
                 }
                 let msg = try AnthropicTranslation.message(fromChatCompletion: data, clientModel: chat.clientModel,
@@ -278,8 +281,7 @@ public final class AnthropicGateway: @unchecked Sendable {
             guard (200..<300).contains(code) else {
                 var data = Data()
                 for try await byte in b { data.append(byte); if data.count > 64 << 10 { break } }
-                let m = AnthropicTranslation.errorMapping(upstreamStatus: code)
-                await sendJSON(conn, status: m.status, AnthropicTranslation.errorBody(type: m.type, message: upstreamMessage(data, code)))
+                await upstreamFailed(conn, code, data)
                 return
             }
             bytes = b
@@ -360,6 +362,18 @@ public final class AnthropicGateway: @unchecked Sendable {
             return
         }
         defer { bytes.task.cancel() }
+        if !(200..<300).contains(code) {
+            var data = Data()
+            do { for try await byte in bytes { data.append(byte); if data.count > 64 << 10 { break } } } catch {}
+            if Self.isDeadGeneration(data) {
+                onUpstreamDead()
+                await sendJSON(conn, status: 503, (try? JSONSerialization.data(withJSONObject: [
+                    "error": ["message": Self.deadMessage, "type": "server_error"]])) ?? Data())
+            } else {
+                await sendJSON(conn, status: code, data)
+            }
+            return
+        }
         let type = (obj["stream"] as? Bool) == true ? "text/event-stream" : "application/json"
         let reason = HTTPURLResponse.localizedString(forStatusCode: code).capitalized
         let head = "HTTP/1.1 \(code) \(reason)\r\nContent-Type: \(type)\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
@@ -377,6 +391,26 @@ public final class AnthropicGateway: @unchecked Sendable {
         } catch {
             return
         }
+    }
+
+    /// `mlx_lm.server` after its generation thread died (Metal ran out of memory): every request then fails
+    /// with this message until the server is restarted.
+    static func isDeadGeneration(_ body: Data) -> Bool {
+        String(decoding: body.prefix(64 << 10), as: UTF8.self).contains("generation thread died")
+    }
+
+    static let deadMessage = "MLX ran out of memory; Localia is restarting it. Try again in a moment, or close other apps."
+
+    /// An upstream error as an Anthropic error. A dead generation becomes `overloaded_error` (529, which
+    /// Claude Code retries) and asks the owner to restart the server.
+    private func upstreamFailed(_ conn: Connection, _ code: Int, _ data: Data) async {
+        if Self.isDeadGeneration(data) {
+            onUpstreamDead()
+            await sendJSON(conn, status: 529, AnthropicTranslation.errorBody(type: "overloaded_error", message: Self.deadMessage))
+            return
+        }
+        let m = AnthropicTranslation.errorMapping(upstreamStatus: code)
+        await sendJSON(conn, status: m.status, AnthropicTranslation.errorBody(type: m.type, message: upstreamMessage(data, code)))
     }
 
     private func upstreamMessage(_ data: Data, _ code: Int) -> String {

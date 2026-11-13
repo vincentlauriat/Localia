@@ -2737,6 +2737,38 @@
         }
       }
     },
+    "MLX ran out of memory again with %@, so Localia stopped it. Close other apps or choose a smaller model, then start MLX again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MLX ran out of memory again with %@, so Localia stopped it. Close other apps or choose a smaller model, then start MLX again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MLX a de nouveau manqué de mémoire avec %@, Localia l'a donc arrêté. Fermez d'autres apps ou choisissez un modèle plus petit, puis relancez MLX."
+          }
+        }
+      }
+    },
+    "MLX stopped": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MLX stopped"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MLX s'est arrêté"
+          }
+        }
+      }
+    },
     "Made with ♥ by Vincent Lauriat": {
       "localizations": {
         "en": {

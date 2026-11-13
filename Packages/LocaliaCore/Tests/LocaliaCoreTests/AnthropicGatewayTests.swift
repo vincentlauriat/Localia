@@ -232,8 +232,41 @@ final class AnthropicGatewayTests: XCTestCase {
         XCTAssertEqual(((list?["data"] as? [[String: Any]])?.first)?["object"] as? String, "model")
     }
 
+    func test_deadGeneration_becomesOverloaded_andAsksForARestart() async throws {
+        gateway.stop()
+        port = UInt16.random(in: 30000...50000)
+        let deaths = Counter()
+        gateway = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!,
+                                   session: EngineStubProtocol.session(), onUpstreamDead: { deaths.increment() })
+        try await gateway.start()
+        EngineStubProtocol.handler = { _ in StubResponse(status: 404, text: #"{"error": "generation thread died"}"#) }
+        var (code, body) = try await post("/v1/messages", simple + #","stream":true}"#)
+        XCTAssertEqual(code, 529)
+        XCTAssertTrue(body.contains("overloaded_error") && body.contains("restarting"), body)
+        (code, _) = try await post("/v1/messages", simple + "}")
+        XCTAssertEqual(code, 529)
+        (code, body) = try await post("/v1/chat/completions", #"{"model":"m","messages":[]}"#)
+        XCTAssertEqual(code, 503)
+        XCTAssertTrue(body.contains("restarting"), body)
+        XCTAssertEqual(deaths.value, 3)
+        // Any other 404 is just a 404.
+        EngineStubProtocol.handler = { _ in StubResponse(status: 404, text: #"{"error": "nope"}"#) }
+        (code, _) = try await post("/v1/messages", simple + "}")
+        XCTAssertEqual(code, 404)
+        XCTAssertEqual(deaths.value, 3)
+        XCTAssertTrue(AnthropicGateway.isDeadGeneration(Data("RuntimeError: generation thread died".utf8)))
+        XCTAssertFalse(AnthropicGateway.isDeadGeneration(Data("{}".utf8)))
+    }
+
     func test_portInUse_throws() async {
         let other = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!)
         do { try await other.start(); XCTFail("second listener on the same port"); other.stop() } catch {}
     }
+}
+
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func increment() { lock.lock(); n += 1; lock.unlock() }
 }

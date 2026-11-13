@@ -400,6 +400,48 @@ final class MLXEngineTests: XCTestCase {
         try await e.stopServing()
     }
 
+    func test_restartPolicy_oncePerWindow_sameIncidentIgnored() {
+        var p = RestartPolicy(window: 600, grace: 30)
+        let t0 = Date(timeIntervalSince1970: 1000)
+        XCTAssertEqual(p.decide(now: t0), .restart)
+        XCTAssertEqual(p.decide(now: t0.addingTimeInterval(5)), .ignore, "other requests of the same failure")
+        XCTAssertEqual(p.decide(now: t0.addingTimeInterval(120)), .giveUp, "out of memory again: no restart loop")
+        XCTAssertEqual(p.decide(now: t0.addingTimeInterval(700)), .restart, "a later failure gets its restart")
+    }
+
+    func test_deadGeneration_restartsOnce_thenStopsAndReports() async throws {
+        try fakeInstall()
+        try fakeModel("mlx-community/A-4bit")
+        let launcher = FreshLauncher()
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/health": return StubResponse(status: launcher.anyRunning ? 200 : 503)
+            case "/v1/chat/completions": return StubResponse(text: "{}")
+            default: return StubResponse(status: 404)
+            }
+        }
+        let e = MLXEngine(baseURL: URL(string: "http://127.0.0.1:\(Int.random(in: 30000...50000))")!,
+                          upstreamURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
+                          launcher: launcher, appSupportBase: tmp, startupTimeout: 1, pollInterval: 0.02,
+                          inspector: FakeInspector(), restartWindow: 600, restartGrace: 0)
+        try await e.load("mlx-community/A-4bit", contextTokens: 65536)
+        XCTAssertEqual(launcher.count, 1)
+        await e.upstreamDied()
+        XCTAssertEqual(launcher.count, 2, "restarted with the same model")
+        let loaded = try await e.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), ["mlx-community/A-4bit"])
+        let none = await e.takeFailure()
+        XCTAssertNil(none)
+        await e.upstreamDied()
+        XCTAssertEqual(launcher.count, 2, "no second restart within the window")
+        let serving = await e.isServing()
+        XCTAssertFalse(serving, "stopped instead")
+        let failure = await e.takeFailure()
+        XCTAssertEqual(failure, "mlx-community/A-4bit")
+        let again = await e.takeFailure()
+        XCTAssertNil(again, "reported once")
+    }
+
     func test_load_refusesForeignServer_andNeedsInstall() async throws {
         try fakeModel("mlx-community/A-4bit")
         let e = engine(health: { 200 })

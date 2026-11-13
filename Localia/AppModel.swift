@@ -247,6 +247,10 @@ final class AppModel: ObservableObject {
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
+        if let mlx = engine as? MLXEngine, let model = await mlx.takeFailure() {
+            alert = AppAlert(title: String(localized: "MLX stopped"),
+                             message: String(localized: "MLX ran out of memory again with \(displayName(for: model)), so Localia stopped it. Close other apps or choose a smaller model, then start MLX again."))
+        }
     }
 
     func refreshInstalled() async {
