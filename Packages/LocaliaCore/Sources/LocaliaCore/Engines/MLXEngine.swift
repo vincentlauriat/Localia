@@ -18,6 +18,8 @@ public actor MLXEngine: Engine {
     public static let mlxLMVersion = "0.32.2"
     public static let pythonVersion = "3.12"
     /// Dependencies of mlx-lm are resolved as they were on this date, so an install is reproducible.
+    /// Open point: PyPI artifacts are not hash-pinned (no `--require-hashes` lock); integrity relies on
+    /// PyPI over HTTPS plus this date and the exact mlx-lm version.
     public static let excludeNewer = "2026-11-13T00:00:00Z"
     /// Files of a model repo that are downloaded (weights, configs, tokenizer, chat template).
     static let modelExtensions: Set<String> = ["safetensors", "json", "txt", "model", "jinja", "tiktoken"]
@@ -201,7 +203,14 @@ public actor MLXEngine: Engine {
     /// `mlx_lm.server` serves one model, so `load` starts it. A server still running from before an app
     /// restart gets its gateway back here.
     public func startServing() async throws {
-        if await upstreamHealthy() { try await gateway.start(); return }
+        if await upstreamHealthy() {
+            // Never put the gateway in front of a server Localia did not start.
+            guard ownServer != nil || record.recordedPID() != nil else {
+                throw EngineError.server("Port \(upstreamURL.port ?? LocaliaConstants.mlxServerPort) is already in use by another server.")
+            }
+            try await gateway.start()
+            return
+        }
         guard case .installed = await installState() else { throw EngineError.notInstalled }
     }
 
@@ -248,7 +257,10 @@ public actor MLXEngine: Engine {
 
     // MARK: - Models
 
-    /// `<org>/<repo>` directories that hold a `config.json` and weights.
+    /// Written last by `pull`, once every file is verified: a directory without it is an unfinished download.
+    static let completeMarker = ".localia-complete"
+
+    /// `<org>/<repo>` directories that hold a finished download.
     private func scanModels() -> [(name: String, url: URL, sizeBytes: Int64)] {
         let fm = FileManager.default
         var out: [(String, URL, Int64)] = []
@@ -257,7 +269,8 @@ public actor MLXEngine: Engine {
             for repo in ((try? fm.contentsOfDirectory(atPath: orgDir.path)) ?? []).sorted() where !repo.hasPrefix(".") {
                 let dir = orgDir.appendingPathComponent(repo, isDirectory: true)
                 let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
-                guard files.contains(where: { $0.lastPathComponent == "config.json" }),
+                guard fm.fileExists(atPath: dir.appendingPathComponent(Self.completeMarker).path),
+                      files.contains(where: { $0.lastPathComponent == "config.json" }),
                       files.contains(where: { $0.pathExtension == "safetensors" }) else { continue }
                 let size = files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
                 out.append(("\(org)/\(repo)", dir, size))
@@ -266,13 +279,40 @@ public actor MLXEngine: Engine {
         return out
     }
 
+    /// Directory of a finished download.
     private func modelDir(_ name: String) throws -> URL {
-        guard LlamaCppEngine.isSafeRelativePath(name), name.split(separator: "/").count == 2 else { throw EngineError.assetNotFound(name) }
-        let dir = modelsRoot.appendingPathComponent(name, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
+        let dir = try anyModelDir(name)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path),
+              fm.fileExists(atPath: dir.appendingPathComponent(Self.completeMarker).path) else {
             throw EngineError.assetNotFound(name)
         }
         return dir
+    }
+
+    /// `<org>/<repo>` directory, finished or not (for delete).
+    private func anyModelDir(_ name: String) throws -> URL {
+        guard LlamaCppEngine.isSafeRelativePath(name), name.split(separator: "/").count == 2 else { throw EngineError.assetNotFound(name) }
+        let dir = modelsRoot.appendingPathComponent(name, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: dir.path) else { throw EngineError.assetNotFound(name) }
+        return dir
+    }
+
+    /// Weight shards that `model.safetensors.index.json` lists but the directory lacks (empty without an index).
+    static func missingShards(in dir: URL) throws -> [String] {
+        let index = dir.appendingPathComponent("model.safetensors.index.json")
+        guard FileManager.default.fileExists(atPath: index.path) else { return [] }
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: index.path))?[.size] as? Int,
+              size <= maxSmallFileBytes,
+              let obj = (try? JSONSerialization.jsonObject(with: Data(contentsOf: index))) as? [String: Any],
+              let map = obj["weight_map"] as? [String: Any] else {
+            throw EngineError.assetNotFound("a readable model.safetensors.index.json")
+        }
+        let shards = Set(map.values.compactMap { $0 as? String })
+        guard shards.allSatisfy({ LlamaCppEngine.isSafeRelativePath($0) && !$0.contains("/") }) else {
+            throw EngineError.assetNotFound("safe shard names in model.safetensors.index.json")
+        }
+        return shards.filter { !FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }.sorted()
     }
 
     public func installedModels() async throws -> [InstalledModel] {
@@ -347,12 +387,17 @@ public actor MLXEngine: Engine {
 
         let total = files.reduce(Int64(0)) { $0 &+ $1.size }
         let dir = modelsRoot.appendingPathComponent(repo, isDirectory: true)
+        let marker = dir.appendingPathComponent(Self.completeMarker)
+        try? FileManager.default.removeItem(at: marker)   // unfinished until every file is verified again
         var base: Int64 = 0
         for f in files {
             let dest = dir.appendingPathComponent(f.path)
             let done = base
             let existing = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int64) ?? nil
-            if existing != f.size {   // a file at its final path was verified when it was downloaded
+            // A same-size LFS file at its final path was SHA-256 checked when downloaded (hashing GBs again is
+            // slow); a small file is cheap to check again.
+            let reusable = existing == f.size && (f.gitSHA1.map { (try? Self.gitBlobSHA1(of: dest)) == $0.lowercased() } ?? true)
+            if !reusable {
                 var url = hfFileBase.appendingPathComponent("\(repo)/resolve/main")
                 url.appendPathComponent(f.path)
                 _ = try await downloader.download(url, to: dest, sha256: f.sha256) { d, _ in
@@ -369,11 +414,14 @@ public actor MLXEngine: Engine {
             base = base &+ f.size
             progress(base, total > 0 ? total : nil)
         }
+        let missing = try Self.missingShards(in: dir)
+        guard missing.isEmpty else { throw EngineError.assetNotFound("\(repo): \(missing.joined(separator: ", "))") }
+        try Data().write(to: marker, options: .atomic)
         return repo
     }
 
     public func delete(_ modelName: String) async throws {
-        let dir = try modelDir(modelName)
+        let dir = try anyModelDir(modelName)
         if await servedName() == modelName { try await stopServing() }
         let fm = FileManager.default
         try fm.removeItem(at: dir)

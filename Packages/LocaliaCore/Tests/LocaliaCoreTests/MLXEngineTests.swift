@@ -25,12 +25,29 @@ final class MLXEngineTests: XCTestCase {
     private var modelsRoot: URL { Paths.models(base: tmp).appendingPathComponent("mlx") }
 
     @discardableResult
-    private func fakeModel(_ name: String, config: String = #"{"max_position_embeddings": 40960}"#, weights: Bool = true) throws -> URL {
+    private func fakeModel(_ name: String, config: String = #"{"max_position_embeddings": 40960}"#, weights: Bool = true,
+                           complete: Bool = true) throws -> URL {
         let dir = modelsRoot.appendingPathComponent(name)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
         if weights { try Data(count: 1024).write(to: dir.appendingPathComponent("model.safetensors")) }
+        if complete { try Data().write(to: dir.appendingPathComponent(MLXEngine.completeMarker)) }
         return dir
+    }
+
+    private func sha256(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
+
+    private func gitSHA1(_ d: Data) throws -> String {
+        let f = tmp.appendingPathComponent("blob-\(UUID().uuidString)")
+        try d.write(to: f)
+        defer { try? FileManager.default.removeItem(at: f) }
+        return try MLXEngine.gitBlobSHA1(of: f)
+    }
+
+    private func hfEngine() -> MLXEngine {
+        let session = EngineStubProtocol.session()
+        return MLXEngine(session: session, downloader: Downloader(session: session), appSupportBase: tmp,
+                         hfAPIBase: URL(string: "https://hf.test/api/models")!, hfFileBase: URL(string: "https://hf.test")!)
     }
 
     /// venv python + marker, as a finished install leaves them.
@@ -186,6 +203,82 @@ final class MLXEngineTests: XCTestCase {
         }
     }
 
+    func test_interruptedPull_isNotInstalled_untilARetryFinishes() async throws {
+        let config = Data("{}".utf8), weights = Data("w".utf8)
+        let tree = #"[{"type":"file","path":"config.json","size":2,"oid":"\#(try gitSHA1(config))"},{"type":"file","path":"model.safetensors","size":1,"lfs":{"oid":"\#(sha256(weights))"}}]"#
+        let failWeights = LockedFlag(true)
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/api/models/mlx-community/M-4bit/tree/main": return StubResponse(text: tree)
+            case "/mlx-community/M-4bit/resolve/main/config.json": return StubResponse(body: config)
+            case "/mlx-community/M-4bit/resolve/main/model.safetensors":
+                return failWeights.value ? StubResponse(error: URLError(.networkConnectionLost)) : StubResponse(body: weights)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let e = hfEngine()
+        do { _ = try await e.pull(candidate("Org/M")) { _, _ in }; XCTFail("download must fail") } catch {}
+        let none = try await e.installedModels()
+        XCTAssertEqual(none.map(\.name), [], "config.json alone is not an installed model")
+        failWeights.value = false
+        let name = try await e.pull(candidate("Org/M")) { _, _ in }
+        let some = try await e.installedModels()
+        XCTAssertEqual(some.map(\.name), [name])
+    }
+
+    func test_pull_requiresEveryIndexedShard() async throws {
+        let config = Data("{}".utf8), shard = Data("s".utf8)
+        let index = Data(#"{"weight_map":{"a":"model-00001-of-00002.safetensors","b":"model-00002-of-00002.safetensors"}}"#.utf8)
+        let tree = #"[{"type":"file","path":"config.json","size":2,"oid":"\#(try gitSHA1(config))"},{"type":"file","path":"model.safetensors.index.json","size":\#(index.count),"oid":"\#(try gitSHA1(index))"},{"type":"file","path":"model-00001-of-00002.safetensors","size":1,"lfs":{"oid":"\#(sha256(shard))"}}]"#
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/api/models/mlx-community/M-4bit/tree/main": return StubResponse(text: tree)
+            case "/mlx-community/M-4bit/resolve/main/config.json": return StubResponse(body: config)
+            case "/mlx-community/M-4bit/resolve/main/model.safetensors.index.json": return StubResponse(body: index)
+            case "/mlx-community/M-4bit/resolve/main/model-00001-of-00002.safetensors": return StubResponse(body: shard)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let e = hfEngine()
+        do { _ = try await e.pull(candidate("Org/M")) { _, _ in }; XCTFail("a missing shard must fail") } catch let EngineError.assetNotFound(what) {
+            XCTAssertTrue(what.contains("model-00002-of-00002.safetensors"), what)
+        }
+        let installed = try await e.installedModels()
+        XCTAssertTrue(installed.isEmpty)
+    }
+
+    func test_pull_reverifiesSameSizeSmallFiles() async throws {
+        let config = Data(#"{"a":1}"#.utf8), weights = Data("w".utf8)
+        let tree = #"[{"type":"file","path":"config.json","size":\#(config.count),"oid":"\#(try gitSHA1(config))"},{"type":"file","path":"model.safetensors","size":1,"lfs":{"oid":"\#(sha256(weights))"}}]"#
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/api/models/mlx-community/M-4bit/tree/main": return StubResponse(text: tree)
+            case "/mlx-community/M-4bit/resolve/main/config.json": return StubResponse(body: config)
+            case "/mlx-community/M-4bit/resolve/main/model.safetensors": return StubResponse(body: weights)
+            default: return StubResponse(status: 404)
+            }
+        }
+        // A tampered config.json of the right size is already there.
+        let dir = modelsRoot.appendingPathComponent("mlx-community/M-4bit")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"b":2}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
+        _ = try await hfEngine().pull(candidate("Org/M")) { _, _ in }
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("config.json")), config)
+    }
+
+    func test_startServing_refusesForeignServer() async throws {
+        try fakeInstall()
+        let port = Int.random(in: 30000...50000)
+        let e = engine(gatewayPort: port, health: { 200 })   // something else answers on the server port
+        do { try await e.startServing(); XCTFail("must not front a foreign server") } catch {
+            guard case EngineError.server = error else { return XCTFail("\(error)") }
+        }
+        let serving = await e.isServing()
+        XCTAssertFalse(serving)
+        let gatewayUp = (try? await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)) != nil
+        XCTAssertFalse(gatewayUp)
+    }
+
     // MARK: - Context window
 
     func test_contextWindow_readsConfig_capsAndSurvivesHostileValues() async throws {
@@ -208,6 +301,7 @@ final class MLXEngineTests: XCTestCase {
     func test_installedModels_needConfigAndWeights() async throws {
         try fakeModel("mlx-community/A-4bit")
         try fakeModel("mlx-community/NoWeights-4bit", weights: false)
+        try fakeModel("mlx-community/Unfinished-4bit", complete: false)
         try FileManager.default.createDirectory(at: modelsRoot.appendingPathComponent("loose"), withIntermediateDirectories: true)
         let names = try await engine().installedModels().map(\.name)
         XCTAssertEqual(names, ["mlx-community/A-4bit"])
@@ -317,5 +411,16 @@ final class MLXEngineTests: XCTestCase {
         try await e.uninstall()
         let gone = await e.installState()
         XCTAssertEqual(gone, .notInstalled)
+    }
+}
+
+/// Thread-safe flag a stub handler can read.
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: Bool
+    init(_ v: Bool) { self.v = v }
+    var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return v }
+        set { lock.lock(); v = newValue; lock.unlock() }
     }
 }
