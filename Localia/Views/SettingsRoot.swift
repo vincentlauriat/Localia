@@ -67,9 +67,10 @@ struct GeneralSettingsView: View {
                 Task { await model.setScope(.everyClaude) }
             }
         }
-        // One alert per window: in advanced mode the Advanced tab (SettingsView) has its own.
-        .alert(item: model.settings.advancedMode ? .constant(nil) : $model.alert) {
-            $0.simplified(heavyApps: model.heavyApps).swiftUIAlert
+        // The scope picker lives only here now, so its errors are shown here in both modes (the hidden tab of a
+        // TabView is out of the window, so the Advanced tab's own alert does not present at the same time).
+        .alert(item: model.simpleAlertBinding) {
+            model.isSimpleMode ? $0.simplified(heavyApps: model.heavyApps).swiftUIAlert : $0.swiftUIAlert
         }
     }
 }

@@ -60,6 +60,7 @@ final class SimpleModeAppTests: XCTestCase {
 
     private func makeModel(engine: FakeEngine, claude: Bool = true, rows: [LlmfitRow] = [],
                            heavyApps: [String] = [], freeGB: Double = 9.6, advanced: Bool = false,
+                           others: [FakeEngine] = [], mlxRepos: FakeMLXRepos = FakeMLXRepos(),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
@@ -73,7 +74,7 @@ final class SimpleModeAppTests: XCTestCase {
                                   "/Users/vincent/Documents/Notes"]
         configure(settings)
         let deps = AppDependencies(
-            settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
+            settings: settings, engines: [engine] + others, registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(path: claude ? URL(fileURLWithPath: "/usr/bin/true") : nil), shim: FakeShim(),
             terminal: FakeTerminal(), availableTerminals: { [.terminal] }, speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { freeGB }, runningHeavyApps: { heavyApps }),
@@ -83,7 +84,8 @@ final class SimpleModeAppTests: XCTestCase {
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
             hasCloudLogin: { true }, notify: { _ in },
             localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
-                         PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())])
+                         PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())],
+            mlxRepos: mlxRepos)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -201,6 +203,90 @@ final class SimpleModeAppTests: XCTestCase {
         await m.runSimpleSetup()
         XCTAssertEqual(m.simpleSetup, .failed(SimpleIssue(hint: .noModelFits, heavyApps: [], detail: nil)))
         XCTAssertNil(m.alert, "the technical alert is not shown on top of the plain sentence")
+    }
+
+    /// An existing user with a model on the active engine: setup changes nothing of theirs (no download, no
+    /// new default, local mode left off), even with a stale alert from earlier.
+    func testSetupLeavesAnExistingUserAlone() async throws {
+        let engine = FakeEngine(installed: [Self.served, Self.second])
+        let m = makeModel(engine: engine, rows: try Self.rows()) { $0.defaultModel = Self.second }
+        await m.refreshAll()
+        m.alert = AppAlert(title: "Old", message: "An earlier, unrelated alert")
+        await m.runSimpleSetup()
+        XCTAssertEqual(m.simpleSetup, .done)
+        XCTAssertEqual(m.simpleSetupPlan, SimpleSetupPlan(engine: false, claude: false, model: false))
+        XCTAssertNil(m.simpleSetupPick, "no model was picked or downloaded")
+        XCTAssertEqual(m.settings.defaultModel, Self.second)
+        XCTAssertFalse(m.isLocalModeOn)
+        XCTAssertEqual(m.installed.count, 2)
+    }
+
+    /// Claude missing for a user who has a model: only Claude is installed.
+    func testSetupInstallsOnlyClaudeWhenTheModelIsThere() async {
+        let m = makeModel(engine: FakeEngine(installed: [Self.served]), claude: false) { $0.defaultModel = Self.served }
+        await m.refreshAll()
+        await m.runSimpleSetup()
+        XCTAssertEqual(m.simpleSetupPlan, SimpleSetupPlan(engine: false, claude: true, model: false))
+        XCTAssertFalse(m.isLocalModeOn)
+        XCTAssertEqual(m.settings.defaultModel, Self.served)
+    }
+
+    /// Models only on another engine: one of them is selected (the engine follows), nothing is downloaded.
+    func testSetupSelectsAModelOnTheOtherEngine() async throws {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["coder-7b.gguf"])
+        let m = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(), others: [llama])
+        await m.refreshAll()
+        await m.runSimpleSetup()
+        XCTAssertEqual(m.simpleSetup, .done)
+        XCTAssertEqual(m.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(m.settings.defaultModel, "coder-7b.gguf")
+        XCTAssertTrue(m.downloads.isEmpty)
+        XCTAssertFalse(m.isLocalModeOn)
+    }
+
+    /// The user cancels the pick's download: a quiet cancelled state, not "check your connection", and local
+    /// mode stays off.
+    func testCancelledDownloadIsNotAFailure() async throws {
+        let (m, engine, setup) = try await modelHeldAtDownload()
+        let id = try XCTUnwrap(m.simpleSetupPick?.id)
+        m.cancelDownload(id)
+        await engine.releasePulls()
+        await setup.value
+        XCTAssertEqual(m.simpleSetup, .cancelled)
+        XCTAssertNil(m.alert)
+        XCTAssertFalse(m.isLocalModeOn)
+        XCTAssertEqual(m.simpleStatus.kind, "ready", "the model arrived anyway in this fake; nothing is shown as an error")
+    }
+
+    /// `download` refuses the pick (MLX has no version of it): "no model fits", not a connection problem.
+    func testRefusedDownloadSaysNoModelFits() async throws {
+        let repos = FakeMLXRepos(["mlx-community/Qwen3-8B-4bit": false])
+        let m = makeModel(engine: FakeEngine(id: .mlx, installed: []), rows: try Self.rows(), mlxRepos: repos) {
+            $0.activeEngine = .mlx
+        }
+        await m.refreshAll()
+        await m.refreshRecommendations()
+        let pick = try XCTUnwrap(m.recommendation.flatMap(SimplePicks.firstRunPick))
+        await m.checkMLXRepo(pick)
+        await m.runSimpleSetup()
+        guard case let .failed(issue) = m.simpleSetup else { return XCTFail("\(m.simpleSetup)") }
+        XCTAssertEqual(issue.hint, .noModelFits)
+        XCTAssertFalse(m.isLocalModeOn)
+    }
+
+    func testRecentFolderPlaceIsShort() {
+        let home = URL(fileURLWithPath: "/Users/vincent")
+        XCTAssertEqual(AppModel.recentFolderPlace(URL(fileURLWithPath: "/Users/vincent/DevApps/Localia"), home: home),
+                       String(localized: "in \("DevApps")"))
+        XCTAssertEqual(AppModel.recentFolderPlace(URL(fileURLWithPath: "/Users/vincent/Notes"), home: home),
+                       String(localized: "in your home folder"))
+        XCTAssertFalse(AppModel.recentFolderPlace(URL(fileURLWithPath: "/Users/vincent/DevApps/Localia"), home: home)
+            .contains("/"))
+    }
+
+    func testSpeedOKHasItsOwnKey() {
+        XCTAssertEqual(SpeedBucket.ok.title, lang == "fr" ? "Correct" : "OK")
+        XCTAssertEqual(String(localized: "OK"), "OK", "the alert button keeps its own key")
     }
 
     func testThreePicksForTheModelsWindow() async throws {

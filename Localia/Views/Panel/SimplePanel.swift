@@ -11,7 +11,8 @@ extension MenuBarPanel {
 
     var simpleContent: some View {
         VStack(spacing: 10) {
-            SimpleStatusCard(model: model, status: model.simpleStatus, chooseModel: openChooser)
+            SimpleStatusCard(model: model, status: model.simpleStatus, chooseModel: openChooser,
+                             presentAlert: presentAlertIfNeeded)
             simpleLocalModeCard
             simpleLaunchCard
             simpleModelCard
@@ -51,8 +52,20 @@ extension MenuBarPanel {
             }
             // Quiet while "Set Up" is the button to press.
             .buttonStyle(PrimaryWideButtonStyle(prominent: launchIsTheMainAction))
-            .padding(12)
             .accessibilityHint(Text(String(localized: "Choose the folder Claude works in.")))
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, model.isLocalModeOn ? 8 : 12)
+
+            if model.isLocalModeOn {
+                Text(String(localized: "Local AI is good for small fixes. For big jobs, use Claude online."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
 
             if !recents.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
@@ -87,9 +100,9 @@ extension MenuBarPanel {
             Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(.secondary).frame(width: 18)
             VStack(alignment: .leading, spacing: 0) {
                 Text(folder.lastPathComponent).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text((folder.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
-                    .lineLimit(1).truncationMode(.head)
+                Text(AppModel.recentFolderPlace(folder))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 0)
         }
@@ -224,6 +237,8 @@ struct SimpleStatusCard: View {
     @ObservedObject var model: AppModel
     let status: SimpleStatus
     var chooseModel: () -> Void = {}
+    /// Shows an alert an action raised (the panel closes first).
+    var presentAlert: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -245,12 +260,6 @@ struct SimpleStatusCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
-        .help(issueDetail ?? "")
-    }
-
-    private var issueDetail: String? {
-        if case let .needsAttention(issue) = status { return issue.detail }
-        return nil
     }
 
     private var title: String {
@@ -337,7 +346,10 @@ struct SimpleStatusCard: View {
         var failedSetup = false
         if case .failed = model.simpleSetup { failedSetup = true }
         switch issue.hint {
-        case .installClaude, .setUp:
+        case .installClaude:
+            // Claude alone: the model and local mode are already the user's.
+            return (String(localized: "Set Up"), { Task { await model.installClaude(); presentAlert() } })
+        case .setUp:
             return (String(localized: "Set Up"), { Task { await model.runSimpleSetup() } })
         case .lighterModel:
             return (String(localized: "Choose a Model"), chooseModel)

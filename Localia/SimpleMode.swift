@@ -80,6 +80,8 @@ enum SimpleSetupPhase: Equatable {
     case idle
     case running(SimpleSetupStep)
     case failed(SimpleIssue)
+    /// The user cancelled the model download: back to the start, no error.
+    case cancelled
     case done
 }
 
@@ -108,7 +110,7 @@ extension SpeedBucket {
     var title: String {
         switch self {
         case .fast: String(localized: "Fast")
-        case .ok: String(localized: "OK")
+        case .ok: String(localized: "speed.ok", defaultValue: "OK")
         case .slow: String(localized: "Slow")
         }
     }
@@ -150,6 +152,21 @@ extension MemoryBucket {
 
 extension AppModel {
     var isSimpleMode: Bool { !settings.advancedMode }
+
+    /// `alert` for the simple windows: hidden while the first run works, which turns its steps' alerts into
+    /// one plain sentence (no second, technical message on top).
+    var simpleAlertBinding: Binding<AppAlert?> {
+        Binding(get: { [weak self] in self?.isSimpleSetupRunning == true ? nil : self?.alert },
+                set: { [weak self] in self?.alert = $0 })
+    }
+
+    /// "in DevApps": where a recent folder is, in a few words.
+    nonisolated static func recentFolderPlace(_ folder: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String {
+        let parent = folder.deletingLastPathComponent().standardizedFileURL
+        if parent.path == home.standardizedFileURL.path { return String(localized: "in your home folder") }
+        if parent.path == "/" { return String(localized: "on this Mac") }
+        return String(localized: "in \(parent.lastPathComponent)")
+    }
 
     /// "Qwen3 8B" for a served name, through its llmfit id when Localia downloaded it.
     func friendlyName(for served: String) -> String { ModelDisplayName.human(candidateID(for: served)) }
@@ -217,7 +234,7 @@ extension AppModel {
             let detail = simpleSetupStep == .model ? simpleSetupPick.map(friendlyName(for:)) : nil
             return .downloading(fraction: simpleSetupFraction, detail: detail ?? simpleSetupDetail)
         case let .failed(issue): return .needsAttention(issue)
-        case .idle, .done: break
+        case .idle, .cancelled, .done: break
         }
         if let d = downloads.values.sorted(by: { $0.candidateID < $1.candidateID }).first {
             return .downloading(fraction: d.fraction, detail: ModelDisplayName.human(d.candidateID))

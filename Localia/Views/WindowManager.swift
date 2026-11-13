@@ -16,10 +16,11 @@ final class WindowManager {
     init(model: AppModel) {
         self.model = model
         // Advanced mode on, or "See all models…": the Models and Settings windows grow to fit what they show.
+        // `receive(on: main)`: the sinks run on the main thread, after the new value is stored.
         model.settings.$advancedMode.dropFirst().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.fitToMode() }.store(in: &bag)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.modeChanged() } }.store(in: &bag)
         model.$modelsShowAll.dropFirst().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.fitToMode() }.store(in: &bag)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.fitToMode() } }.store(in: &bag)
     }
 
     func show(_ kind: Kind) {
@@ -59,6 +60,14 @@ final class WindowManager {
         let top = window.frame.maxY
         window.setContentSize(size)
         window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
+    }
+
+    /// Advanced mode switched: resize, and an open welcome window becomes the other mode's first run.
+    private func modeChanged() {
+        fitToMode()
+        if let w = windows[.onboarding], w.isVisible, onboardingAdvanced != model.settings.advancedMode {
+            show(.onboarding)
+        }
     }
 
     private func fitToMode() {

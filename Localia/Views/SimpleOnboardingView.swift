@@ -18,7 +18,7 @@ struct SimpleOnboardingView: View {
 
     private var screen: Screen {
         switch model.simpleSetup {
-        case .idle: .welcome
+        case .idle, .cancelled: .welcome
         case .running, .failed: .preparing
         case .done: .ready
         }
@@ -40,7 +40,7 @@ struct SimpleOnboardingView: View {
         }
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
-        .alert(item: $model.alert) { $0.simplified(heavyApps: model.heavyApps).swiftUIAlert }
+        .alert(item: model.simpleAlertBinding) { $0.simplified(heavyApps: model.heavyApps).swiftUIAlert }
         .task {
             // What the welcome screen says about the download comes from the recommendation.
             if model.recommendation == nil { await model.refreshRecommendations() }
@@ -143,7 +143,6 @@ struct SimpleOnboardingView: View {
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .card(fill: Theme.orange.opacity(0.10), stroke: Theme.orange.opacity(0.35))
-                .help(failure.detail ?? "")
                 .accessibilityElement(children: .combine)
             } else {
                 let fraction = model.simpleSetupFraction

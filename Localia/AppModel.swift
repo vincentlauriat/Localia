@@ -150,6 +150,8 @@ final class AppModel: ObservableObject {
     /// the server. One entry per operation (two launches may reserve the same model).
     private var llamaPending: [ModelKey] = []
     private var downloadTasks: [String: Task<Void, Never>] = [:]
+    /// Downloads cancelled by the user, so the first run can tell a cancel from a failure.
+    private var cancelledDownloads: Set<String> = []
     private var pollTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
@@ -1065,7 +1067,9 @@ final class AppModel: ObservableObject {
     }
 
     func cancelDownload(_ id: String) {
-        downloadTasks[id]?.cancel()
+        guard let task = downloadTasks[id] else { return }
+        cancelledDownloads.insert(id)
+        task.cancel()
     }
 
     /// Returns once the download of `id` has ended (installed, failed or cancelled); at once when none runs.
@@ -1155,24 +1159,45 @@ final class AppModel: ObservableObject {
 
     // MARK: - Simple mode first run
 
-    /// Simple mode's one-click setup: installs the active engine (Ollama unless the user chose another) and
-    /// Claude Code when missing, downloads the model the recommendation picks for this Mac, makes it the
-    /// model Claude uses and turns local mode on. Every step is the existing install / download path; a
-    /// failure stops the run with one plain sentence (the technical alert is kept as its detail).
+    /// Simple mode's one-click setup. Only what is missing is done, so an existing user's setup is never
+    /// changed:
+    /// - a model already on the active engine: nothing is downloaded or selected, local mode is left alone;
+    /// - models only on another engine: one of them is selected (the default one first), no download;
+    /// - no model at all: the active engine (Ollama unless the user chose another) is installed if needed, the
+    ///   recommendation's pick is downloaded, made the model Claude uses (unless the user picked another one
+    ///   meanwhile) and local mode is turned on, last, once everything else worked.
+    /// Claude Code is installed when missing. Every step is the existing install / download path; a failure
+    /// stops the run with one plain sentence, and the cancelled download of the pick stops it quietly.
     func runSimpleSetup() async {
         if case .running = simpleSetup { return }
+        alert = nil   // an older alert is not this run's failure
+        simpleSetupPick = nil
         let engineID = settings.activeEngine
-        simpleSetupPlan = SimpleSetupPlan(engine: !isEngineInstalled(engineID), claude: claudePath == nil, model: true)
+        let onActive = installed.contains { $0.engine == engineID }
+        let elsewhere = installed.filter { $0.engine != engineID }
+        let needModel = !onActive && elsewhere.isEmpty
+        simpleSetupPlan = SimpleSetupPlan(engine: needModel && !isEngineInstalled(engineID),
+                                          claude: claudePath == nil, model: needModel)
         simpleSetup = .running(.engine)
         if simpleSetupPlan.engine {
             await installEngine(engineID)
-            guard isEngineInstalled(settings.activeEngine) else { return failSimpleSetup(.checkConnection) }
+            guard isEngineInstalled(settings.activeEngine), alert == nil else { return failSimpleSetup(.checkConnection) }
         }
         if simpleSetupPlan.claude {
             simpleSetup = .running(.claude)
             await installClaude()
-            guard claudePath != nil else { return failSimpleSetup(.checkConnection) }
+            guard claudePath != nil, alert == nil else { return failSimpleSetup(.checkConnection) }
         }
+        if !needModel {
+            if !onActive {
+                let row = elsewhere.first { $0.name == settings.defaultModel } ?? elsewhere[0]
+                await setDefault(row)
+                if alert != nil { return failSimpleSetup(.tryAgain) }
+            }
+            finishSimpleSetup()
+            return
+        }
+
         simpleSetup = .running(.model)
         if recommendation == nil { await refreshRecommendations() }
         guard let r = recommendation, let pick = SimplePicks.firstRunPick(r) else {
@@ -1180,25 +1205,49 @@ final class AppModel: ObservableObject {
                                    detail: recommendationError)
         }
         simpleSetupPick = pick
+        let defaultBefore = settings.defaultModel
+        cancelledDownloads.remove(pick.id)
         if installedName(for: pick) == nil {
             if downloads[pick.id] == nil { download(pick) }
+            // `download` refuses a model that does not fit or has no MLX version: nothing started.
+            guard downloads[pick.id] != nil else {
+                let refused = !pick.fits || mlxAvailability(pick).isMissing
+                return failSimpleSetup(refused ? .noModelFits : .tryAgain)
+            }
             await waitForDownload(pick.id)
-            guard installedName(for: pick) != nil else { return failSimpleSetup(.checkConnection) }
+            if cancelledDownloads.remove(pick.id) != nil {
+                alert = nil
+                simpleSetup = .cancelled
+                return
+            }
+            guard let name = installedName(for: pick), alert == nil else { return failSimpleSetup(.checkConnection) }
+            // The download makes it the default only when there was none: the user's own pick meanwhile stays.
+            guard settings.defaultModel == defaultBefore || settings.defaultModel == name else {
+                return finishSimpleSetup()
+            }
         }
         if let name = installedName(for: pick),
            let row = installed.first(where: { $0.engine == settings.activeEngine && $0.name == name }) {
             await setDefault(row)
+            if alert != nil { return failSimpleSetup(.tryAgain) }
         }
-        if !isLocalModeOn { await setLocalMode(true) }
-        if alert != nil { return failSimpleSetup(.tryAgain) }
+        if !isLocalModeOn {
+            await setLocalMode(true)
+            if alert != nil { return failSimpleSetup(.tryAgain) }
+        }
+        finishSimpleSetup()
+    }
+
+    private func finishSimpleSetup() {
         finishOnboarding()
         simpleSetup = .done
     }
 
-    /// Back to the welcome screen of the first run (its window was closed before it finished).
-    func resetSimpleSetup() {
-        if case .running = simpleSetup { return }
-        simpleSetup = .idle
+    /// True while the first run works: its steps' own alerts are turned into its single plain sentence, so
+    /// windows must not present them.
+    var isSimpleSetupRunning: Bool {
+        if case .running = simpleSetup { return true }
+        return false
     }
 
     private func failSimpleSetup(_ hint: SimpleHint, detail: String? = nil) {

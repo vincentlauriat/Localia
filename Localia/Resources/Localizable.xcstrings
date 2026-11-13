@@ -3025,6 +3025,22 @@
         }
       }
     },
+    "Local AI is good for small fixes. For big jobs, use Claude online.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local AI is good for small fixes. For big jobs, use Claude online."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les IA locales conviennent aux petites corrections. Pour un gros travail, utilisez Claude en ligne."
+          }
+        }
+      }
+    },
     "Local coding models on this Mac, in one click. Free and open source.": {
       "localizations": {
         "en": {
@@ -6305,6 +6321,38 @@
         }
       }
     },
+    "in %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dans %@"
+          }
+        }
+      }
+    },
+    "in your home folder": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in your home folder"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dans votre dossier personnel"
+          }
+        }
+      }
+    },
     "llmfit %@ is the latest version.": {
       "localizations": {
         "en": {
@@ -6513,6 +6561,22 @@
         }
       }
     },
+    "on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "on this Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sur ce Mac"
+          }
+        }
+      }
+    },
     "perfect": {
       "localizations": {
         "en": {
@@ -6573,6 +6637,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "lent"
+          }
+        }
+      }
+    },
+    "speed.ok": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OK"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Correct"
           }
         }
       }

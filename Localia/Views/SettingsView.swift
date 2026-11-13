@@ -3,7 +3,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    @State private var confirmEveryClaude = false
     @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
@@ -23,14 +22,7 @@ struct SettingsView: View {
             }
 
             Section(String(localized: "Local mode")) {
-                Picker(String(localized: "Applies to"), selection: Binding(
-                    get: { model.controller.scope },
-                    set: { scope in
-                        if scope == .everyClaude { confirmEveryClaude = true } else { Task { await model.setScope(scope) } }
-                    })) {
-                    Text(String(localized: "Localia sessions only")).tag(LocalModeScope.localiaOnly)
-                    Text(String(localized: "Every claude in any terminal")).tag(LocalModeScope.everyClaude)
-                }
+                // Where local mode applies is set in the General tab (SettingsRoot), with its confirmation.
                 Picker(String(localized: "When the engine is down"), selection: Binding(
                     get: { settings.engineDownPolicy },
                     set: { settings.engineDownPolicy = $0; model.settingsChanged() })) {
@@ -93,12 +85,6 @@ struct SettingsView: View {
             Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
         } message: {
             Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
-        }
-        .sheet(isPresented: $confirmEveryClaude) {
-            EveryClaudeConfirmation(block: model.rcBlockPreview(), onCancel: { confirmEveryClaude = false }) {
-                confirmEveryClaude = false
-                Task { await model.setScope(.everyClaude) }
-            }
         }
         .alert(item: $model.alert) { $0.swiftUIAlert }
     }
