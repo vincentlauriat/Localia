@@ -221,6 +221,35 @@ final class SimpleModeAppTests: XCTestCase {
         XCTAssertEqual(m.installed.count, 2)
     }
 
+    /// A stopped engine with the user's model: setup starts it and reads the model again, so nothing is
+    /// downloaded or changed.
+    func testSetupStartsAStoppedEngineInsteadOfDownloading() async throws {
+        let engine = FakeEngine(installed: [Self.served], failUntilStarted: true)
+        let m = makeModel(engine: engine, rows: try Self.rows()) { $0.defaultModel = Self.served }
+        await m.refreshAll()
+        XCTAssertTrue(m.installed.isEmpty, "the stopped engine's models could not be read")
+        await m.runSimpleSetup()
+        XCTAssertEqual(m.simpleSetup, .done)
+        XCTAssertEqual(m.installed.map(\.name), [Self.served])
+        XCTAssertNil(m.simpleSetupPick, "nothing was downloaded")
+        XCTAssertEqual(m.settings.defaultModel, Self.served)
+        XCTAssertFalse(m.isLocalModeOn)
+    }
+
+    /// The engine cannot be reached even after a start: a calm "try again", never a download.
+    func testSetupStopsWhenTheEngineStaysUnreachable() async throws {
+        let engine = FakeEngine(installed: [Self.served], failInstalled: true)
+        let m = makeModel(engine: engine, rows: try Self.rows()) { $0.defaultModel = Self.served }
+        await m.refreshAll()
+        await m.runSimpleSetup()
+        XCTAssertEqual(m.simpleSetup, .failed(SimpleIssue(hint: .tryAgain, heavyApps: [])))
+        XCTAssertNil(m.simpleSetupPick)
+        XCTAssertTrue(m.downloads.isEmpty)
+        XCTAssertEqual(m.settings.defaultModel, Self.served)
+        XCTAssertFalse(m.isLocalModeOn)
+        XCTAssertNil(m.alert)
+    }
+
     /// Claude missing for a user who has a model: only Claude is installed.
     func testSetupInstallsOnlyClaudeWhenTheModelIsThere() async {
         let m = makeModel(engine: FakeEngine(installed: [Self.served]), claude: false) { $0.defaultModel = Self.served }

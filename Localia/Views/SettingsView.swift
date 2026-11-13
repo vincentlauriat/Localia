@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    /// False when hosted in `SettingsRoot`'s tab view, which presents the window's one alert.
+    var ownsAlert = true
     @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
@@ -86,7 +88,7 @@ struct SettingsView: View {
         } message: {
             Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
         }
-        .alert(item: $model.alert) { $0.swiftUIAlert }
+        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
     }
 
     private var terminals: [TerminalApp] {

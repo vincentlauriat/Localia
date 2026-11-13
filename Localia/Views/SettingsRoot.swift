@@ -12,11 +12,19 @@ struct SettingsRoot: View {
     static let advancedSize = CGSize(width: 560, height: 620)
 
     var body: some View {
+        content
+            // The window's only alert: neither tab presents one (SettingsView's is off, `ownsAlert: false`).
+            .alert(item: model.simpleAlertBinding) {
+                model.isSimpleMode ? $0.simplified(heavyApps: model.heavyApps).swiftUIAlert : $0.swiftUIAlert
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         if model.settings.advancedMode {
             TabView {
                 GeneralSettingsView(model: model)
                     .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
-                SettingsView(model: model)
+                SettingsView(model: model, ownsAlert: false)
                     .tabItem { Label(String(localized: "Advanced"), systemImage: "slider.horizontal.3") }
             }
         } else {
@@ -66,11 +74,6 @@ struct GeneralSettingsView: View {
                 confirmEveryClaude = false
                 Task { await model.setScope(.everyClaude) }
             }
-        }
-        // The scope picker lives only here now, so its errors are shown here in both modes (the hidden tab of a
-        // TabView is out of the window, so the Advanced tab's own alert does not present at the same time).
-        .alert(item: model.simpleAlertBinding) {
-            model.isSimpleMode ? $0.simplified(heavyApps: model.heavyApps).swiftUIAlert : $0.swiftUIAlert
         }
     }
 }

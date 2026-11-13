@@ -986,9 +986,14 @@ actor FakeEngine: Engine {
 
     private let window: Int
 
+    /// `failUntilStarted`: the model list cannot be read until `startServing` (a stopped Ollama).
+    private let failUntilStarted: Bool
+
     init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false,
+         failUntilStarted: Bool = false,
          state: InstallState = .installed("1.0", managedByLocalia: false), contextWindow: Int = 32768) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
+        self.failUntilStarted = failUntilStarted
         self.window = contextWindow
         self.singleModel = id.servesOneModel
         self.state = state
@@ -1007,7 +1012,7 @@ actor FakeEngine: Engine {
     func releaseStarts() { holdingStarts = false; heldStarts.forEach { $0.resume() }; heldStarts = [] }
     func stopServing() async throws { stopCount += 1 }
     func installedModels() async throws -> [InstalledModel] {
-        if failInstalled { throw EngineError.http(0) }
+        if failInstalled || (failUntilStarted && startCount == 0) { throw EngineError.http(0) }
         return installed.map { InstalledModel(name: $0, sizeGB: 4) }
     }
     func loadedModels() async throws -> [LoadedModel] { loaded.sorted().map { LoadedModel(name: $0, memoryGB: 4) } }

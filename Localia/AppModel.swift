@@ -1172,6 +1172,20 @@ final class AppModel: ObservableObject {
         if case .running = simpleSetup { return }
         alert = nil   // an older alert is not this run's failure
         simpleSetupPick = nil
+        // An engine that is merely stopped still has its models: start it and read them again before deciding
+        // anything (like `needsOnboarding`). Still unreachable: stop here, never download over a real setup.
+        if !unreachableEngines.isEmpty {
+            simpleSetup = .running(.engine)
+            for id in unreachableEngines {
+                if let e = await registry.engine(id) { try? await e.startServing() }
+            }
+            await refreshInstalled()
+            guard unreachableEngines.isEmpty else {
+                alert = nil
+                simpleSetup = .failed(SimpleIssue(hint: .tryAgain, heavyApps: heavyApps))
+                return
+            }
+        }
         let engineID = settings.activeEngine
         let onActive = installed.contains { $0.engine == engineID }
         let elsewhere = installed.filter { $0.engine != engineID }
