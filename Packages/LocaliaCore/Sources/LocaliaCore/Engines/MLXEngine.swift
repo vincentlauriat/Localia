@@ -144,18 +144,28 @@ public actor MLXEngine: Engine {
     /// The server's generation thread died (Metal out of memory): restart it with the same model, at most once
     /// per `restartWindow`. Past that, stop it and keep the reason for `takeFailure()`.
     func upstreamDied() async {
-        guard ownServer != nil || record.recordedPID() != nil, let name = served.get() else { return }
+        guard let name = served.get() else { return }
+        // In the load queue, so it never runs alongside a user's load or unload.
+        try? await serialized { await $0.handleDeath(of: name) }
+    }
+
+    func handleDeath(of name: String) async {
+        // An unload or a switch to another model made meanwhile wins.
+        guard served.get() == name, ownServer != nil || record.recordedPID() != nil else { return }
         switch restarts.decide(now: Date()) {
         case .ignore: return
         case .giveUp:
             try? await stopServing()
             failure = name
-            return
-        case .restart: break
-        }
-        try? await serialized { engine in
-            try await engine.stopServing()   // the old process is broken even if its /health still answers
-            try await engine.performLoad(name)
+        case .restart:
+            do {
+                try await stopServing()   // the old process is broken even if its /health still answers
+                try await performLoad(name)
+                restarts.restarted(at: Date())   // the grace period runs from a working server
+            } catch {
+                try? await stopServing()
+                failure = name
+            }
         }
     }
 
@@ -620,6 +630,9 @@ struct RestartPolicy: Sendable {
         last = now
         return .restart
     }
+
+    /// The restart finished: failures in the next `grace` still belong to the old incident.
+    mutating func restarted(at date: Date) { last = date }
 }
 
 /// Forwards the gateway's "upstream died" callback to the engine once it exists.

@@ -254,8 +254,28 @@ final class AnthropicGatewayTests: XCTestCase {
         (code, _) = try await post("/v1/messages", simple + "}")
         XCTAssertEqual(code, 404)
         XCTAssertEqual(deaths.value, 3)
-        XCTAssertTrue(AnthropicGateway.isDeadGeneration(Data("RuntimeError: generation thread died".utf8)))
-        XCTAssertFalse(AnthropicGateway.isDeadGeneration(Data("{}".utf8)))
+        let died = Data("RuntimeError: generation thread died".utf8)
+        XCTAssertTrue(AnthropicGateway.isDeadGeneration(status: 404, died))
+        XCTAssertTrue(AnthropicGateway.isDeadGeneration(status: 500, died))
+        XCTAssertFalse(AnthropicGateway.isDeadGeneration(status: 200, died), "a model may say these words")
+        XCTAssertFalse(AnthropicGateway.isDeadGeneration(status: 400, died))
+        XCTAssertFalse(AnthropicGateway.isDeadGeneration(status: 404, Data("{}".utf8)))
+    }
+
+    func test_passThroughError_truncatedOrInvalid_becomesValidJSON() async throws {
+        let huge = Data(("{\"error\": \"" + String(repeating: "x", count: 100_000) + "\"}").utf8)
+        EngineStubProtocol.handler = { _ in StubResponse(status: 500, body: huge) }
+        var (code, body) = try await post("/v1/chat/completions", #"{"model":"m","messages":[]}"#)
+        XCTAssertEqual(code, 500)
+        XCTAssertNotNil(try? JSONSerialization.jsonObject(with: Data(body.utf8)), "truncated at 64 KB: replaced")
+        EngineStubProtocol.handler = { _ in StubResponse(status: 502, text: "<html>bad gateway</html>") }
+        (code, body) = try await post("/v1/chat/completions", #"{"model":"m","messages":[]}"#)
+        XCTAssertEqual(code, 502)
+        let obj = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
+        XCTAssertNotNil(obj?["error"])
+        EngineStubProtocol.handler = { _ in StubResponse(status: 400, text: #"{"error":"bad"}"#) }
+        (code, body) = try await post("/v1/chat/completions", #"{"model":"m","messages":[]}"#)
+        XCTAssertEqual(body, #"{"error":"bad"}"#, "a whole JSON error is forwarded as is")
     }
 
     func test_portInUse_throws() async {

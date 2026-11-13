@@ -68,7 +68,13 @@ final class MLXEngineTests: XCTestCase {
         private var handles: [FakeServerHandle] = []
         var count: Int { lock.lock(); defer { lock.unlock() }; return handles.count }
         var anyRunning: Bool { lock.lock(); defer { lock.unlock() }; return handles.contains { $0.isRunning } }
+        private var _failNext = false
+        var failNext: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return _failNext }
+            set { lock.lock(); _failNext = newValue; lock.unlock() }
+        }
         func launch(executable: URL, arguments: [String], environment: [String: String]) throws -> any ServerHandle {
+            if failNext { failNext = false; throw EngineError.serverDidNotStart }
             let h = FakeServerHandle()
             lock.lock(); handles.append(h); lock.unlock()
             return h
@@ -407,6 +413,60 @@ final class MLXEngineTests: XCTestCase {
         XCTAssertEqual(p.decide(now: t0.addingTimeInterval(5)), .ignore, "other requests of the same failure")
         XCTAssertEqual(p.decide(now: t0.addingTimeInterval(120)), .giveUp, "out of memory again: no restart loop")
         XCTAssertEqual(p.decide(now: t0.addingTimeInterval(700)), .restart, "a later failure gets its restart")
+
+        // The grace runs from the end of a (slow) restart.
+        var q = RestartPolicy(window: 600, grace: 30)
+        XCTAssertEqual(q.decide(now: t0), .restart)
+        q.restarted(at: t0.addingTimeInterval(100))
+        XCTAssertEqual(q.decide(now: t0.addingTimeInterval(110)), .ignore)
+        XCTAssertEqual(q.decide(now: t0.addingTimeInterval(200)), .giveUp)
+    }
+
+    private func deathEngine(_ launcher: FreshLauncher) -> MLXEngine {
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/health": return StubResponse(status: launcher.anyRunning ? 200 : 503)
+            case "/v1/chat/completions": return StubResponse(text: "{}")
+            default: return StubResponse(status: 404)
+            }
+        }
+        return MLXEngine(baseURL: URL(string: "http://127.0.0.1:\(Int.random(in: 30000...50000))")!,
+                         upstreamURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
+                         launcher: launcher, appSupportBase: tmp, startupTimeout: 0.5, pollInterval: 0.02,
+                         inspector: FakeInspector(), restartWindow: 600, restartGrace: 0)
+    }
+
+    func test_deathOfAReplacedModel_isIgnored() async throws {
+        try fakeInstall()
+        try fakeModel("mlx-community/A-4bit")
+        try fakeModel("mlx-community/B-4bit")
+        let launcher = FreshLauncher()
+        let e = deathEngine(launcher)
+        try await e.load("mlx-community/A-4bit", contextTokens: 65536)
+        try await e.load("mlx-community/B-4bit", contextTokens: 65536)   // the user switched meanwhile
+        await e.handleDeath(of: "mlx-community/A-4bit")
+        XCTAssertEqual(launcher.count, 2, "no restart of the old model")
+        let loaded = try await e.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), ["mlx-community/B-4bit"])
+        let failure = await e.takeFailure()
+        XCTAssertNil(failure)
+        try await e.unload("mlx-community/B-4bit")
+        await e.upstreamDied()
+        XCTAssertEqual(launcher.count, 2, "nothing served: nothing to restart")
+    }
+
+    func test_failedRestart_reportsFailure() async throws {
+        try fakeInstall()
+        try fakeModel("mlx-community/A-4bit")
+        let launcher = FreshLauncher()
+        let e = deathEngine(launcher)
+        try await e.load("mlx-community/A-4bit", contextTokens: 65536)
+        launcher.failNext = true
+        await e.upstreamDied()
+        let failure = await e.takeFailure()
+        XCTAssertEqual(failure, "mlx-community/A-4bit")
+        let serving = await e.isServing()
+        XCTAssertFalse(serving)
     }
 
     func test_deadGeneration_restartsOnce_thenStopsAndReports() async throws {

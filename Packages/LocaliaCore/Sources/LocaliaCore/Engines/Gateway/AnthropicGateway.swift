@@ -365,12 +365,15 @@ public final class AnthropicGateway: @unchecked Sendable {
         if !(200..<300).contains(code) {
             var data = Data()
             do { for try await byte in bytes { data.append(byte); if data.count > 64 << 10 { break } } } catch {}
-            if Self.isDeadGeneration(data) {
+            if Self.isDeadGeneration(status: code, data) {
                 onUpstreamDead()
                 await sendJSON(conn, status: 503, (try? JSONSerialization.data(withJSONObject: [
                     "error": ["message": Self.deadMessage, "type": "server_error"]])) ?? Data())
             } else {
-                await sendJSON(conn, status: code, data)
+                // Forwarded only when it is whole, valid JSON; otherwise a JSON error of our own.
+                let valid = data.count <= 64 << 10 && (try? JSONSerialization.jsonObject(with: data)) != nil
+                await sendJSON(conn, status: code, valid ? data : (try? JSONSerialization.data(withJSONObject: [
+                    "error": ["message": upstreamMessage(data.prefix(64 << 10), code), "type": "api_error"]])) ?? Data())
             }
             return
         }
@@ -395,8 +398,9 @@ public final class AnthropicGateway: @unchecked Sendable {
 
     /// `mlx_lm.server` after its generation thread died (Metal ran out of memory): every request then fails
     /// with this message until the server is restarted.
-    static func isDeadGeneration(_ body: Data) -> Bool {
-        String(decoding: body.prefix(64 << 10), as: UTF8.self).contains("generation thread died")
+    static func isDeadGeneration(status: Int, _ body: Data) -> Bool {
+        guard status == 404 || (500...599).contains(status) else { return false }
+        return String(decoding: body.prefix(64 << 10), as: UTF8.self).contains("generation thread died")
     }
 
     static let deadMessage = "MLX ran out of memory; Localia is restarting it. Try again in a moment, or close other apps."
@@ -404,7 +408,7 @@ public final class AnthropicGateway: @unchecked Sendable {
     /// An upstream error as an Anthropic error. A dead generation becomes `overloaded_error` (529, which
     /// Claude Code retries) and asks the owner to restart the server.
     private func upstreamFailed(_ conn: Connection, _ code: Int, _ data: Data) async {
-        if Self.isDeadGeneration(data) {
+        if Self.isDeadGeneration(status: code, data) {
             onUpstreamDead()
             await sendJSON(conn, status: 529, AnthropicTranslation.errorBody(type: "overloaded_error", message: Self.deadMessage))
             return
