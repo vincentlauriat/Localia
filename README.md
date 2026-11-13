@@ -5,9 +5,10 @@ Localia is a macOS menu-bar app that finds the local LLMs that run well on your 
 - **Recommendations that fit.** Models ranked for your hardware by [llmfit](https://github.com/AlexsJones/llmfit), speed first, with a clear warning when your Mac will be slow. The whole llmfit catalog is read, and every compatible model is listed with the reason others were set aside.
 - **Hugging Face.** Recent GGUF releases from trusted providers and a free search, each with its memory breakdown and a fits / tight / doesn't-fit verdict for this Mac.
 - **Model management.** Download with progress, cancel, see what is installed and loaded, unload, delete.
-- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Tested end to end on llama.cpp; 7–8B models are recommended for multi-file work.
+- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Tested end to end on llama.cpp and MLX. Models under 14B carry a "simple tasks" badge: fine for small fixes, unreliable across several files.
 - **Local mode switch.** An airplane-mode-style toggle that sends AI work to the local models.
-- **Engines.** Ollama (default) and llama.cpp, installed, updated and removed from the app.
+- **Other coding tools.** In local mode, Codex, OpenCode and Pi launch the same way, each with its own config written by Localia (your `~/.codex`, `~/.config/opencode` and `~/.pi` are never touched). Localia warns when the model's context window is too small for them.
+- **Engines.** Ollama (default), llama.cpp and MLX, installed, updated and removed from the app. MLX runs `mlx-lm` in a private Python made with `uv`, behind an in-app gateway that speaks the Anthropic API to Claude Code (Codex needs Ollama or llama.cpp).
 
 Requires macOS 14 or later. Recommendations are tuned for Apple Silicon.
 
@@ -42,7 +43,7 @@ The **Local mode** switch (second row of the menu-bar panel) turns local mode on
 
 With local mode off, `claude` runs exactly as before.
 
-llama.cpp serves one model at a time. While a Claude Code session uses a llama.cpp model, Localia refuses to launch another session on a different llama.cpp model instead of stopping the first one: wait for that session to end, or end it.
+llama.cpp and MLX serve one model at a time. While a session uses one of their models, Localia refuses to launch another session on a different model of the same engine instead of stopping the first one: wait for that session to end, or end it. Sessions started from a terminal in "every `claude`" mode appear in the Sessions card too.
 
 ## Uninstall
 
