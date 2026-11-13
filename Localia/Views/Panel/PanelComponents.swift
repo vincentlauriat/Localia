@@ -111,7 +111,7 @@ struct SegmentedBar: View {
         }
         .frame(height: 10)
         .accessibilityElement()
-        .accessibilityValue(Text(fraction.formatted(.percent.precision(.fractionLength(0)))))
+        .accessibilityValue(Text(fraction.formatted(.percent.precision(.fractionLength(0)).locale(Fmt.appLocale))))
     }
 }
 

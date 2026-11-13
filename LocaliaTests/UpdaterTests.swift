@@ -18,4 +18,11 @@ final class UpdaterTests: XCTestCase {
     func test_disabled_neverStartsEvenWithKey() {
         XCTAssertFalse(Updater(info: ["SUPublicEDKey": "abc="], enabled: false).isAvailable)
     }
+
+    func test_checkIsDisabledWhileACheckRuns_orWhenUnavailable() {
+        XCTAssertTrue(Updater.canCheckNow(isAvailable: true, canCheckForUpdates: true))
+        XCTAssertFalse(Updater.canCheckNow(isAvailable: true, canCheckForUpdates: false), "check in progress")
+        XCTAssertFalse(Updater.canCheckNow(isAvailable: false, canCheckForUpdates: true))
+        XCTAssertFalse(Updater(enabled: false).canCheckNow)
+    }
 }

@@ -222,6 +222,72 @@ final class SessionTrackerTests: XCTestCase {
         }
     }
 
+    private func writeShimRecord(_ id: UUID, engine: String = "ollama", model: String = "m", folder: String = "/tmp/p",
+                                 pid: Int32 = getpid()) throws {
+        try "engine=\(engine)\nmodel=\(model)\nfolder=\(folder)\npid=\(pid)\n"
+            .write(to: dir.appendingPathComponent("\(id.uuidString).session"), atomically: true, encoding: .utf8)
+    }
+
+    func test_sessionTracker_seesShellShimSessions_andReportsThemFinished() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let own = UUID(), shim = UUID()
+        await t.begin(id: own, engine: .ollama, model: "m1")
+        try writeShimRecord(shim, model: "m2", folder: "/tmp/shimproj")
+        var running = await t.runningSessions()
+        XCTAssertEqual(running, [RunningSession(id: own, engine: .ollama, model: "m1", folder: nil),
+                                 RunningSession(id: shim, engine: .ollama, model: "m2", folder: URL(fileURLWithPath: "/tmp/shimproj"))])
+        var inUse = await t.modelsStillInUse()
+        XCTAssertTrue(inUse.contains(ModelKey(engine: .ollama, model: "m2")))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("\(shim.uuidString).session"))
+        running = await t.runningSessions()
+        XCTAssertEqual(running.map(\.id), [own])
+        inUse = await t.modelsStillInUse()
+        XCTAssertFalse(inUse.contains(ModelKey(engine: .ollama, model: "m2")))
+        let finished = await t.pollFinished()
+        XCTAssertEqual(finished, [FinishedSession(id: shim, engine: .ollama, model: "m2")])
+        let again = await t.pollFinished()
+        XCTAssertEqual(again, [])
+    }
+
+    func test_sessionTracker_dropsShimRecordOfDeadShell() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let id = UUID()
+        try writeShimRecord(id, pid: 999_999)   // above macOS's pid ceiling: never alive
+        let running = await t.runningSessions()
+        XCTAssertEqual(running, [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(id.uuidString).session").path))
+    }
+
+    func test_sessionTracker_firstValueOfAKeyWins_andUnreadableKnownRecordStaysRunning() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let id = UUID()
+        try "engine=ollama\nmodel=m\nfolder=/tmp/a\nfolder=/tmp/b\npid=\(getpid())\n"
+            .write(to: dir.appendingPathComponent("\(id.uuidString).session"), atomically: true, encoding: .utf8)
+        var running = await t.runningSessions()
+        XCTAssertEqual(running.first?.folder, URL(fileURLWithPath: "/tmp/a"))
+        try "garbage".write(to: dir.appendingPathComponent("\(id.uuidString).session"), atomically: true, encoding: .utf8)
+        running = await t.runningSessions()
+        XCTAssertEqual(running.map(\.id), [id], "a transiently unreadable record must not end the session")
+        let finished = await t.pollFinished()
+        XCTAssertEqual(finished, [])
+    }
+
+    func test_sessionTracker_initPrunesOldSessionTmp() throws {
+        let old = dir.appendingPathComponent("\(UUID().uuidString).session.tmp")
+        try "x".write(to: old, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-48 * 3600)], ofItemAtPath: old.path)
+        _ = SessionTracker(statusDir: dir)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+    }
+
+    func test_sessionTracker_ignoresMalformedShimRecord() async throws {
+        let t = SessionTracker(statusDir: dir)
+        try "engine=nope\nmodel=m\npid=1\n".write(to: dir.appendingPathComponent("\(UUID().uuidString).session"),
+                                                    atomically: true, encoding: .utf8)
+        let running = await t.runningSessions()
+        XCTAssertEqual(running, [])
+    }
+
     func test_sessionTracker_initPrunesOldFilesOnly() throws {
         let old = dir.appendingPathComponent("\(UUID().uuidString).command")
         let fresh = dir.appendingPathComponent("\(UUID().uuidString).done")

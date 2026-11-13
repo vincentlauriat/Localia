@@ -107,6 +107,80 @@ final class ShellShimTests: XCTestCase {
             .filter { $0.lastPathComponent.hasPrefix(rc.lastPathComponent + ".localia-backup-") }
     }
 
+    // MARK: session registration
+
+    /// The shim writes a record into the sessions dir while `claude` runs and removes it afterwards.
+    func test_shim_registersSessionWhileClaudeRuns_thenRemovesIt() throws {
+        // Fake claude that copies the sessions dir listing and the record content as it sees them.
+        try exe("claude", """
+        for f in "$HOME"/Library/Application\\ Support/Localia/sessions/*.session; do cat "$f" > "$HOME/seen.session"; done
+        echo $$ > "$HOME/claude.pid"
+        exit 7
+        """)
+        touch("healthy")
+        try installAndState(model: "qwen3-coder:30b", engine: .ollama)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("seen.session"))
+            let r = try run(shell)
+            XCTAssertEqual(r.status, 7, shell)
+            let seen = try XCTUnwrap(read("seen.session"), "\(shell): no record while claude ran")
+            XCTAssertTrue(seen.contains("engine=ollama\n"), seen)
+            XCTAssertTrue(seen.contains("model=qwen3-coder:30b\n"), seen)
+            XCTAssertTrue(seen.contains("/\(home.lastPathComponent)\n"), seen)   // /private/var vs /var
+            let claudePid = try XCTUnwrap(read("claude.pid")).trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertTrue(seen.contains("pid=\(claudePid)\n"), "\(shell): record pid must be claude's own (\(claudePid)): \(seen)")
+            let left = (try? FileManager.default.contentsOfDirectory(atPath: shim().sessionsDir.path)) ?? []
+            XCTAssertEqual(left, [], "\(shell): record must be gone after claude exits")
+        }
+    }
+
+    /// claude killed by a signal: status 137, no leftover record, and its recorded pid is dead (so a
+    /// record that survived would be pruned by the tracker).
+    func test_shim_claudeKilledBySignal_leavesNoLiveRecord() throws {
+        try exe("claude", """
+        cat "$HOME"/Library/Application\\ Support/Localia/sessions/*.session > "$HOME/seen.session"
+        kill -9 $$
+        """)
+        touch("healthy")
+        try installAndState()
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell)
+            XCTAssertEqual(r.status, 137, shell)
+            let seen = try XCTUnwrap(read("seen.session"))
+            let pid = try XCTUnwrap(seen.split(separator: "\n").first { $0.hasPrefix("pid=") }.flatMap { Int32($0.dropFirst(4)) })
+            XCTAssertNotEqual(kill(pid, 0), 0, "\(shell): claude's pid must be gone")
+            let left = (try? FileManager.default.contentsOfDirectory(atPath: shim().sessionsDir.path)) ?? []
+            XCTAssertEqual(left, [], shell)
+        }
+    }
+
+    func test_shim_folderWithNewline_registersNoSession() throws {
+        try exe("claude", """
+        ls "$HOME"/Library/Application\\ Support/Localia/sessions 2>/dev/null > "$HOME/seen.list"
+        exit 0
+        """)
+        touch("healthy")
+        try installAndState()
+        let odd = home.appendingPathComponent("a\nb", isDirectory: true)
+        try FileManager.default.createDirectory(at: odd, withIntermediateDirectories: true)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("seen.list"))
+            let r = try run(shell, prelude: "cd \"$HOME/$(printf 'a\\nb')\" || exit 99")
+            XCTAssertEqual(r.status, 0, "\(shell): cd into the newline folder must work: \(r.stderr)")
+            XCTAssertEqual(read("seen.list") ?? "<missing>", "", shell)
+        }
+    }
+
+    func test_shim_cloudRun_registersNoSession() throws {
+        try exe("claude", """
+        ls "$HOME"/Library/Application\\ Support/Localia/sessions 2>/dev/null > "$HOME/seen.list"
+        exit 0
+        """)
+        try installAndState(on: false)
+        _ = try run("zsh")
+        XCTAssertEqual(read("seen.list") ?? "", "")
+    }
+
     // MARK: install / uninstall
 
     func test_install_isIdempotentAndBacksUp() throws {

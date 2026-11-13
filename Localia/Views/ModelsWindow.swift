@@ -923,7 +923,7 @@ private struct ModelDetailPane: View {
 
     static func source(_ item: ModelItem) -> String {
         if item.isHF { return String(localized: "Hugging Face, not rated by llmfit") }
-        let quality = item.candidate.quality.formatted(.number.precision(.fractionLength(0)))
+        let quality = item.candidate.quality.formatted(.number.precision(.fractionLength(0)).locale(Fmt.appLocale))
         return String(localized: "llmfit, quality \(quality)")
     }
 
