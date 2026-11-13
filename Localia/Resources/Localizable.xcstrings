@@ -3041,6 +3041,22 @@
         }
       }
     },
+    "Needs the Responses API, which %@ does not offer": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs the Responses API, which %@ does not offer"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nécessite l'API Responses, que %@ ne propose pas"
+          }
+        }
+      }
+    },
     "New on HF": {
       "localizations": {
         "en": {

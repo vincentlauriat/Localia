@@ -520,7 +520,12 @@ struct MenuBarPanel: View {
     /// An installed tool opens its folder list, like Claude Code; a missing one links to its install page.
     @ViewBuilder
     private func localToolRow(_ tool: LocalToolRow) -> some View {
-        if tool.path != nil {
+        if tool.path != nil, let reason = model.unavailableReason(tool) {
+            ListRow(icon: "chevron.left.forwardslash.chevron.right", iconColor: .secondary,
+                    title: String(localized: "Launch \(tool.displayName)"), subtitle: reason)
+                .opacity(0.6)
+                .help(reason)
+        } else if tool.path != nil {
             Button { toggleLaunch(tool.id) } label: {
                 ListRow(icon: "chevron.left.forwardslash.chevron.right",
                         title: String(localized: "Launch \(tool.displayName)"), subtitle: launchSubtitle) {

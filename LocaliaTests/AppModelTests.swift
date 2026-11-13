@@ -167,6 +167,11 @@ final class AppModelTests: XCTestCase {
             $0.activeEngine = .mlx
         }
         await model.refreshAll()
+        await model.refreshLocalTools()
+        let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
+        XCTAssertEqual(model.unavailableReason(try XCTUnwrap(rows["codex"])),
+                       String(localized: "Needs the Responses API, which \(AppModel.engineName(.mlx)) does not offer"))
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["opencode"])))
         await model.setLocalMode(true)
         await model.launch(folder: try folder(), toolID: "codex")
         XCTAssertEqual(model.alert?.title, String(localized: "\("Codex") cannot use \(AppModel.engineName(.mlx))"))
@@ -177,6 +182,9 @@ final class AppModelTests: XCTestCase {
         await model.launch(folder: try folder(), toolID: "opencode")
         XCTAssertNil(model.alert)
         XCTAssertEqual(terminal.opened.count, 1)
+        // On another engine Codex is offered again.
+        await model.setActiveEngine(.ollama)
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
     }
 
     func test_localTool_refusedOutsideLocalMode() async throws {

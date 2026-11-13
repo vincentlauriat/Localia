@@ -40,6 +40,8 @@ struct LocalToolRow: Identifiable, Equatable {
     let id: String
     let displayName: String
     let installPage: URL
+    /// Speaks only the OpenAI Responses API (Codex), which MLX does not serve.
+    var needsResponsesAPI = false
     /// nil when the tool is not installed.
     var path: URL?
     var version: String?
@@ -481,6 +483,7 @@ final class AppModel: ObservableObject {
                     var version = previous?.stamp == stamp ? previous?.version : nil
                     if let path, version == nil { version = await tool.version(at: path) }
                     return (i, LocalToolRow(id: tool.id, displayName: tool.displayName, installPage: tool.installPage,
+                                            needsResponsesAPI: tool.needsResponsesAPI,
                                             path: path, version: version, stamp: stamp))
                 }
             }
@@ -489,6 +492,12 @@ final class AppModel: ObservableObject {
             return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
         localTools = rows
+    }
+
+    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can.
+    func unavailableReason(_ tool: LocalToolRow) -> String? {
+        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI else { return nil }
+        return String(localized: "Needs the Responses API, which \(Self.engineName(settings.activeEngine)) does not offer")
     }
 
     nonisolated static func binaryStamp(_ url: URL) -> String {
