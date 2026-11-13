@@ -220,10 +220,23 @@ final class MLXEngineTests: XCTestCase {
         do { _ = try await e.pull(candidate("Org/M")) { _, _ in }; XCTFail("download must fail") } catch {}
         let none = try await e.installedModels()
         XCTAssertEqual(none.map(\.name), [], "config.json alone is not an installed model")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: modelsRoot.appendingPathComponent("mlx-community").path),
+                       "a failed pull leaves nothing behind")
         failWeights.value = false
         let name = try await e.pull(candidate("Org/M")) { _, _ in }
         let some = try await e.installedModels()
         XCTAssertEqual(some.map(\.name), [name])
+    }
+
+    func test_engineStart_removesAbandonedDownloads() throws {
+        try fakeModel("mlx-community/Done-4bit")
+        try fakeModel("mlx-community/Half-4bit", complete: false)
+        try fakeModel("other/Half-4bit", complete: false)
+        _ = engine()
+        let fm = FileManager.default
+        XCTAssertTrue(fm.fileExists(atPath: modelsRoot.appendingPathComponent("mlx-community/Done-4bit").path))
+        XCTAssertFalse(fm.fileExists(atPath: modelsRoot.appendingPathComponent("mlx-community/Half-4bit").path))
+        XCTAssertFalse(fm.fileExists(atPath: modelsRoot.appendingPathComponent("other").path))
     }
 
     func test_pull_requiresEveryIndexedShard() async throws {
@@ -245,6 +258,7 @@ final class MLXEngineTests: XCTestCase {
         }
         let installed = try await e.installedModels()
         XCTAssertTrue(installed.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: modelsRoot.appendingPathComponent("mlx-community/M-4bit").path))
     }
 
     func test_pull_reverifiesSameSizeSmallFiles() async throws {

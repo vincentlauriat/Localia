@@ -79,6 +79,27 @@ public actor MLXEngine: Engine {
         let served = self.served
         self.gateway = AnthropicGateway(port: UInt16(baseURL.port ?? LocaliaConstants.mlxGatewayPort),
                                         upstream: upstreamURL, servedModel: { served.get() }, session: session)
+        // Downloads abandoned by an earlier run (crash, quit mid-download) hold GBs nobody can see.
+        Self.removeIncompleteModels(in: Paths.models(base: appSupportBase).appendingPathComponent("mlx", isDirectory: true))
+    }
+
+    /// Deletes `<org>/<repo>` directories without the complete marker, and org directories left empty.
+    static func removeIncompleteModels(in root: URL) {
+        let fm = FileManager.default
+        for org in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where !org.hasPrefix(".") {
+            let orgDir = root.appendingPathComponent(org, isDirectory: true)
+            for repo in (try? fm.contentsOfDirectory(atPath: orgDir.path)) ?? [] where !repo.hasPrefix(".") {
+                let dir = orgDir.appendingPathComponent(repo, isDirectory: true)
+                if !fm.fileExists(atPath: dir.appendingPathComponent(completeMarker).path) { try? fm.removeItem(at: dir) }
+            }
+            removeIfEmpty(orgDir)
+        }
+    }
+
+    static func removeIfEmpty(_ dir: URL) {
+        if ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? ["?"]).filter({ !$0.hasPrefix(".") }).isEmpty {
+            try? FileManager.default.removeItem(at: dir)
+        }
     }
 
     // MARK: - Locations
@@ -389,6 +410,22 @@ public actor MLXEngine: Engine {
         let dir = modelsRoot.appendingPathComponent(repo, isDirectory: true)
         let marker = dir.appendingPathComponent(Self.completeMarker)
         try? FileManager.default.removeItem(at: marker)   // unfinished until every file is verified again
+        do {
+            try await download(files, repo: repo, into: dir, total: total, progress: progress)
+            let missing = try Self.missingShards(in: dir)
+            guard missing.isEmpty else { throw EngineError.assetNotFound("\(repo): \(missing.joined(separator: ", "))") }
+            try Data().write(to: marker, options: .atomic)
+        } catch {
+            // Failed or cancelled: keep nothing that is not a finished model.
+            try? FileManager.default.removeItem(at: dir)
+            Self.removeIfEmpty(dir.deletingLastPathComponent())
+            throw error
+        }
+        return repo
+    }
+
+    private func download(_ files: [HFFile], repo: String, into dir: URL, total: Int64,
+                          progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws {
         var base: Int64 = 0
         for f in files {
             let dest = dir.appendingPathComponent(f.path)
@@ -414,10 +451,6 @@ public actor MLXEngine: Engine {
             base = base &+ f.size
             progress(base, total > 0 ? total : nil)
         }
-        let missing = try Self.missingShards(in: dir)
-        guard missing.isEmpty else { throw EngineError.assetNotFound("\(repo): \(missing.joined(separator: ", "))") }
-        try Data().write(to: marker, options: .atomic)
-        return repo
     }
 
     public func delete(_ modelName: String) async throws {
