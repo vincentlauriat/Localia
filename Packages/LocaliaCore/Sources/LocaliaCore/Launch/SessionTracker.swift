@@ -54,7 +54,7 @@ public actor SessionTracker {
 
     private static func isSessionFile(_ u: URL) -> Bool {
         let n = u.lastPathComponent
-        return n.hasSuffix(".command") || n.hasSuffix(".done") || n.hasSuffix(".done.tmp")
+        return n.hasSuffix(".command") || n.hasSuffix(".done") || n.hasSuffix(".done.tmp") || n.hasSuffix(".session.tmp")
     }
 
     public func begin(id: UUID, engine: EngineID, model: String, folder: URL? = nil) {
@@ -108,7 +108,10 @@ public actor SessionTracker {
         var present: Set<UUID> = []
         for f in files {
             guard let id = UUID(uuidString: f.deletingPathExtension().lastPathComponent) else { continue }
-            guard let rec = Self.readShimRecord(f) else { continue }   // unreadable or unknown: leave it
+            guard let rec = Self.readShimRecord(f) else {
+                if shimSessions[id] != nil { present.insert(id) }   // unreadable now: keep what we knew
+                continue
+            }
             guard Self.isAlive(pid: rec.pid) else { try? fm.removeItem(at: f); continue }
             present.insert(id)
             if shimSessions[id] == nil {
@@ -127,7 +130,8 @@ public actor SessionTracker {
         var fields: [String: String] = [:]
         for line in text.split(separator: "\n") {
             guard let eq = line.firstIndex(of: "=") else { continue }
-            fields[String(line[..<eq])] = String(line[line.index(after: eq)...])
+            let key = String(line[..<eq])
+            if fields[key] == nil { fields[key] = String(line[line.index(after: eq)...]) }   // first wins
         }
         guard let e = fields["engine"], let engine = EngineID(rawValue: e),
               let model = fields["model"], !model.isEmpty,

@@ -258,6 +258,28 @@ final class SessionTrackerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(id.uuidString).session").path))
     }
 
+    func test_sessionTracker_firstValueOfAKeyWins_andUnreadableKnownRecordStaysRunning() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let id = UUID()
+        try "engine=ollama\nmodel=m\nfolder=/tmp/a\nfolder=/tmp/b\npid=\(getpid())\n"
+            .write(to: dir.appendingPathComponent("\(id.uuidString).session"), atomically: true, encoding: .utf8)
+        var running = await t.runningSessions()
+        XCTAssertEqual(running.first?.folder, URL(fileURLWithPath: "/tmp/a"))
+        try "garbage".write(to: dir.appendingPathComponent("\(id.uuidString).session"), atomically: true, encoding: .utf8)
+        running = await t.runningSessions()
+        XCTAssertEqual(running.map(\.id), [id], "a transiently unreadable record must not end the session")
+        let finished = await t.pollFinished()
+        XCTAssertEqual(finished, [])
+    }
+
+    func test_sessionTracker_initPrunesOldSessionTmp() throws {
+        let old = dir.appendingPathComponent("\(UUID().uuidString).session.tmp")
+        try "x".write(to: old, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-48 * 3600)], ofItemAtPath: old.path)
+        _ = SessionTracker(statusDir: dir)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+    }
+
     func test_sessionTracker_ignoresMalformedShimRecord() async throws {
         let t = SessionTracker(statusDir: dir)
         try "engine=nope\nmodel=m\npid=1\n".write(to: dir.appendingPathComponent("\(UUID().uuidString).session"),

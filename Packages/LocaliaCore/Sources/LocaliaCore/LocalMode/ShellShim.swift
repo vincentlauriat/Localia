@@ -344,18 +344,26 @@ public struct ShellShim: ShellShimming {
                 ;;
             esac
           fi
-          # Register this run for the app's Sessions card: one record file, removed when claude exits (the
-          # app also drops it if this shell dies). Best effort: a failure here never blocks `claude`.
-          if [ -n "$_l_engine" ] && [ -n "$_l_model" ] && _l_id=$(command uuidgen 2>/dev/null) && [ -n "$_l_id" ] \\
-             && command mkdir -p \(sessions) 2>/dev/null; then
-            _l_rec=\(sessions)/$_l_id.session
-            if printf 'engine=%s\\nmodel=%s\\nfolder=%s\\npid=%s\\n' "$_l_engine" "$_l_model" "$PWD" "$$" \\
-                 > "$_l_rec.tmp" 2>/dev/null && command mv "$_l_rec.tmp" "$_l_rec" 2>/dev/null; then :
-            else command rm -f "$_l_rec.tmp"; _l_rec=; fi
-          fi
+          # Register this run for the app's Sessions card: one record file naming claude's own pid (the
+          # subshell below writes it, then `exec`s claude, so its pid IS claude's). The file is removed when
+          # claude exits; the app also drops it once that pid is gone. Best effort: never blocks `claude`.
+          # No record when $PWD holds a control character (it would break the line format).
+          case $PWD in *[[:cntrl:]]*) ;; *)
+            if [ -n "$_l_engine" ] && [ -n "$_l_model" ] && _l_id=$(command uuidgen 2>/dev/null) && [ -n "$_l_id" ] \\
+               && command mkdir -p \(sessions) 2>/dev/null; then
+              _l_rec=\(sessions)/$_l_id.session
+            fi ;;
+          esac
           # Local run in a subshell so nothing leaks into the calling shell. Only ANTHROPIC_* and
           # CLAUDE_* names are ever exported or unset; profile arguments go before the user's.
           (
+            if [ -n "$_l_rec" ]; then
+              # sh is a direct child of this subshell, so its $PPID is this subshell's pid, kept by `exec` below.
+              if command sh -c 'printf "engine=%s\\nmodel=%s\\nfolder=%s\\npid=%s\\n" "$1" "$2" "$3" "$PPID"' sh \\
+                   "$_l_engine" "$_l_model" "$PWD" > "$_l_rec.tmp" 2>/dev/null \\
+                 && command mv "$_l_rec.tmp" "$_l_rec" 2>/dev/null; then :
+              else command rm -f "$_l_rec.tmp"; fi
+            fi
             _l_n=$#
             while IFS= read -r _l_line || [ -n "$_l_line" ]; do
               case $_l_line in
@@ -379,7 +387,9 @@ public struct ShellShim: ShellShimming {
               shift
               _l_i=$((_l_i + 1))
             done
-            command claude "$@"
+            # Drop our function so `exec` runs the real binary and replaces this subshell with it.
+            unset -f claude
+            exec claude "$@"
           )
           _l_rc=$?
           [ -n "$_l_rec" ] && command rm -f "$_l_rec"
