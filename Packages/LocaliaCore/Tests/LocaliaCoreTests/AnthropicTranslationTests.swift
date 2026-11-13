@@ -57,7 +57,8 @@ final class AnthropicTranslationTests: XCTestCase {
         XCTAssertEqual(r.body["max_tokens"] as? Int, 4096)
         XCTAssertEqual(r.body["top_k"] as? Int, 20)
         XCTAssertEqual(r.body["temperature"] as? Double, 0.2)
-        XCTAssertEqual(r.body["stop"] as? [String], ["END"])
+        XCTAssertNil(r.body["stop"], "stop sequences are matched by the gateway")
+        XCTAssertEqual(r.stopSequences, ["END"])
         XCTAssertEqual((r.body["stream_options"] as? [String: Bool])?["include_usage"], true)
         XCTAssertEqual(r.body["tool_choice"] as? String, "required")
         let msgs = try XCTUnwrap(r.body["messages"] as? [[String: Any]])
@@ -219,6 +220,41 @@ final class AnthropicTranslationTests: XCTestCase {
         let md = ev.first { $0.0 == "message_delta" }?.1
         XCTAssertEqual((md?["delta"] as? [String: Any])?["stop_reason"] as? String, "max_tokens")
         XCTAssertEqual((md?["usage"] as? [String: Int])?["output_tokens"], 0)
+    }
+
+    func test_stream_stopSequenceAcrossChunks_endsTurnWithStopSequence() {
+        var enc = AnthropicStreamEncoder(model: "m", estimatedInputTokens: 1, stopSequences: ["</done>", "STOP"], messageID: "msg_1")
+        var out = enc.start()
+        for t in ["Result: 4", "2 </do", "ne> trailing", "more"] {
+            out += enc.consume(["choices": [["delta": ["content": t]]]])
+        }
+        XCTAssertEqual(enc.matchedStop, "</done>")
+        let ev = events(out + enc.finish())
+        let text = ev.filter { $0.0 == "content_block_delta" }.compactMap { ($0.1["delta"] as? [String: Any])?["text"] as? String }.joined()
+        XCTAssertEqual(text, "Result: 42 ")
+        let md = ev.first { $0.0 == "message_delta" }?.1["delta"] as? [String: Any]
+        XCTAssertEqual(md?["stop_reason"] as? String, "stop_sequence")
+        XCTAssertEqual(md?["stop_sequence"] as? String, "</done>")
+    }
+
+    func test_stream_heldPrefixIsFlushedWhenNoStopFollows_andLeadingBlankIsKept() {
+        var enc = AnthropicStreamEncoder(model: "m", estimatedInputTokens: 1, stopSequences: ["STOP"])
+        var out = enc.start()
+        for t in ["  ", "Hi ST", "ART"] { out += enc.consume(["choices": [["delta": ["content": t]]]]) }
+        out += enc.consume(["choices": [["delta": [:], "finish_reason": "stop"]]])
+        let ev = events(out + enc.finish())
+        let text = ev.filter { $0.0 == "content_block_delta" }.compactMap { ($0.1["delta"] as? [String: Any])?["text"] as? String }.joined()
+        XCTAssertEqual(text, "  Hi START", "blank prefix kept, held 'ST' released")
+        XCTAssertEqual((ev.first { $0.0 == "message_delta" }?.1["delta"] as? [String: Any])?["stop_reason"] as? String, "end_turn")
+        XCTAssertTrue(enc.sawFinishReason)
+    }
+
+    func test_nonStream_stopSequenceCutsText() throws {
+        let data = json(#"{"choices":[{"finish_reason":"stop","message":{"content":"abc END def"}}]}"#)
+        let m = try AnthropicTranslation.message(fromChatCompletion: data, clientModel: "m", stopSequences: ["END"])
+        XCTAssertEqual(m["stop_reason"] as? String, "stop_sequence")
+        XCTAssertEqual(m["stop_sequence"] as? String, "END")
+        XCTAssertEqual((m["content"] as? [[String: Any]])?.first?["text"] as? String, "abc ")
     }
 
     func test_sseParser_ignoresCommentsAndHandlesCRLF() {

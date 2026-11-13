@@ -16,6 +16,9 @@ public enum AnthropicTranslation {
         public let stream: Bool
         /// The `model` the client asked for, echoed in responses.
         public let clientModel: String
+        /// `stop_sequences`, matched by the gateway (not sent upstream: mlx_lm.server would strip the match and
+        /// report a plain `stop`, so the client could not be told which sequence ended the turn).
+        public var stopSequences: [String] = []
     }
 
     static let imagePlaceholder = "[image omitted: this local model reads text only]"
@@ -54,16 +57,13 @@ public enum AnthropicTranslation {
             if let v = finiteDouble(root[key]) { body[key] = v }
         }
         if let k = positiveInt(root["top_k"]) { body["top_k"] = k }
-        if let stops = root["stop_sequences"] as? [Any] {
-            let s = stops.compactMap { $0 as? String }
-            if !s.isEmpty { body["stop"] = s }
-        }
+        let stops = (root["stop_sequences"] as? [Any] ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
         let tools = (root["tools"] as? [Any] ?? []).compactMap(tool)
         if !tools.isEmpty {
             body["tools"] = tools
             if let choice = toolChoice(root["tool_choice"]) { body["tool_choice"] = choice }
         }
-        return ChatRequest(body: body, stream: stream, clientModel: (root["model"] as? String) ?? "")
+        return ChatRequest(body: body, stream: stream, clientModel: (root["model"] as? String) ?? "", stopSequences: stops)
     }
 
     /// A string, or the text blocks of a block array (other blocks skipped), joined.
@@ -187,24 +187,34 @@ public enum AnthropicTranslation {
     public static func newMessageID() -> String { "msg_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
     static func newToolID() -> String { "toolu_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
 
-    /// A non-streamed chat completion as an Anthropic message.
-    public static func message(fromChatCompletion data: Data, clientModel: String) throws -> [String: Any] {
+    /// Earliest occurrence of any of `stops` in `text`: the sequence and where it starts.
+    static func firstStop(in text: String, _ stops: [String]) -> (seq: String, at: String.Index)? {
+        stops.compactMap { seq in text.range(of: seq).map { (seq, $0.lowerBound) } }.min { $0.1 < $1.1 }
+    }
+
+    /// A non-streamed chat completion as an Anthropic message. Text is cut at the first stop sequence.
+    public static func message(fromChatCompletion data: Data, clientModel: String,
+                               stopSequences: [String] = []) throws -> [String: Any] {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let choice = (root["choices"] as? [Any])?.first as? [String: Any] else {
             throw InvalidRequest("Unexpected response from the local server.")
         }
         let msg = choice["message"] as? [String: Any] ?? [:]
         var content: [[String: Any]] = []
-        if let t = msg["content"] as? String, !t.isEmpty { content.append(["type": "text", "text": t]) }
-        for case let call as [String: Any] in msg["tool_calls"] as? [Any] ?? [] {
+        var text = msg["content"] as? String ?? ""
+        let stop = firstStop(in: text, stopSequences)
+        if let stop { text = String(text[..<stop.at]) }
+        if !text.isEmpty { content.append(["type": "text", "text": text]) }
+        for case let call as [String: Any] in (stop == nil ? msg["tool_calls"] as? [Any] : nil) ?? [] {
             guard let f = call["function"] as? [String: Any], let name = f["name"] as? String else { continue }
             content.append(["type": "tool_use", "id": nonEmpty(call["id"] as? String) ?? newToolID(), "name": name,
                             "input": arguments(f["arguments"])])
         }
         let usage = root["usage"] as? [String: Any] ?? [:]
         return ["id": newMessageID(), "type": "message", "role": "assistant", "model": clientModel,
-                "content": content, "stop_reason": stopReason(choice["finish_reason"] as? String),
-                "stop_sequence": NSNull(),
+                "content": content,
+                "stop_reason": stop == nil ? stopReason(choice["finish_reason"] as? String) : "stop_sequence",
+                "stop_sequence": stop.map { $0.seq as Any } ?? NSNull(),
                 "usage": ["input_tokens": nonNegativeInt(usage["prompt_tokens"]) ?? 0,
                           "output_tokens": nonNegativeInt(usage["completion_tokens"]) ?? 0]]
     }
@@ -260,10 +270,22 @@ public struct AnthropicStreamEncoder {
     private var outputTokens = 0
     private var started = false
     private var finished = false
+    private let stopSequences: [String]
+    /// Whitespace that arrived while no text block was open: it prefixes the next non-blank text.
+    private var blank = ""
+    /// Tail of the text that may be the start of a stop sequence, held back until it is decided.
+    private var held = ""
+    /// The stop sequence that ended the turn; text after it is dropped.
+    public private(set) var matchedStop: String?
 
-    public init(model: String, estimatedInputTokens: Int, messageID: String = AnthropicTranslation.newMessageID()) {
+    public init(model: String, estimatedInputTokens: Int, stopSequences: [String] = [],
+                messageID: String = AnthropicTranslation.newMessageID()) {
         self.model = model; self.estimatedInputTokens = estimatedInputTokens; self.messageID = messageID
+        self.stopSequences = stopSequences.filter { !$0.isEmpty }
     }
+
+    /// The upstream said why it stopped. A stream that ends without it was cut off.
+    public var sawFinishReason: Bool { finishReason != nil }
 
     static func event(_ type: String, _ payload: [String: Any]) -> Data {
         var p = payload
@@ -291,6 +313,7 @@ public struct AnthropicStreamEncoder {
         }
         guard let choice = (chunk["choices"] as? [Any])?.first as? [String: Any] else { return out }
         let delta = choice["delta"] as? [String: Any] ?? [:]
+        if matchedStop != nil { return out }   // the turn ended at a stop sequence
         if let thought = (delta["reasoning"] ?? delta["reasoning_content"]) as? String, !thought.isEmpty {
             if case .thinking(let i) = open {
                 out.append(thinkingDelta(i, thought))
@@ -303,17 +326,8 @@ public struct AnthropicStreamEncoder {
             }
         }
         if let text = delta["content"] as? String, !text.isEmpty {
-            if case .text(let i) = open {
-                out.append(textDelta(i, text))
-            } else if text.allSatisfy(\.isWhitespace) {
-                // Whitespace before a block (Qwen's "\n\n" after thinking): no empty text block.
-            } else {
-                out += closeOpen()
-                let i = nextIndex; nextIndex += 1
-                open = .text(i)
-                out.append(Self.event("content_block_start", ["index": i, "content_block": ["type": "text", "text": ""]]))
-                out.append(textDelta(i, text))
-            }
+            out += matchStops(text)
+            if matchedStop != nil { return out }
         }
         for (position, raw) in (delta["tool_calls"] as? [Any] ?? []).enumerated() {
             guard let call = raw as? [String: Any] else { continue }
@@ -344,6 +358,42 @@ public struct AnthropicStreamEncoder {
         return out
     }
 
+    /// Emits text up to a stop sequence, holding back a tail that could still become one.
+    private mutating func matchStops(_ text: String) -> [Data] {
+        guard !stopSequences.isEmpty else { return pushText(text) }
+        let pending = held + text
+        if let stop = AnthropicTranslation.firstStop(in: pending, stopSequences) {
+            held = ""
+            matchedStop = stop.seq
+            return pushText(String(pending[..<stop.at]))
+        }
+        let longest = stopSequences.map(\.count).max() ?? 0
+        var keep = 0
+        for k in stride(from: min(longest - 1, pending.count), to: 0, by: -1)
+        where stopSequences.contains(where: { $0.hasPrefix(pending.suffix(k)) }) {
+            keep = k
+            break
+        }
+        held = String(pending.suffix(keep))
+        return pushText(String(pending.dropLast(keep)))
+    }
+
+    /// Text into the open text block, or a new one. Whitespace with no text block open (Qwen's "\n\n" after
+    /// thinking) waits for non-blank text, so no whitespace-only block is ever sent.
+    private mutating func pushText(_ text: String) -> [Data] {
+        guard !text.isEmpty else { return [] }
+        if case .text(let i) = open { return [textDelta(i, text)] }
+        if text.allSatisfy(\.isWhitespace) { blank += text; return [] }
+        let full = blank + text
+        blank = ""
+        var out = closeOpen()
+        let i = nextIndex; nextIndex += 1
+        open = .text(i)
+        out.append(Self.event("content_block_start", ["index": i, "content_block": ["type": "text", "text": ""]]))
+        out.append(textDelta(i, full))
+        return out
+    }
+
     private func thinkingDelta(_ i: Int, _ text: String) -> Data {
         Self.event("content_block_delta", ["index": i, "delta": ["type": "thinking_delta", "thinking": text]])
     }
@@ -370,11 +420,15 @@ public struct AnthropicStreamEncoder {
     public mutating func finish() -> [Data] {
         guard !finished else { return [] }
         finished = true
-        var out = start() + closeOpen()
-        let stop = toolBlocks.isEmpty ? AnthropicTranslation.stopReason(finishReason)
-            : (finishReason == "length" ? "max_tokens" : "tool_use")
+        var out = start()
+        if matchedStop == nil, !held.isEmpty { out += pushText(held); held = "" }
+        out += closeOpen()
+        let stop: String
+        if matchedStop != nil { stop = "stop_sequence" }
+        else if toolBlocks.isEmpty { stop = AnthropicTranslation.stopReason(finishReason) }
+        else { stop = finishReason == "length" ? "max_tokens" : "tool_use" }
         out.append(Self.event("message_delta", [
-            "delta": ["stop_reason": stop, "stop_sequence": NSNull()],
+            "delta": ["stop_reason": stop, "stop_sequence": matchedStop.map { $0 as Any } ?? NSNull()],
             "usage": ["input_tokens": inputTokens ?? estimatedInputTokens, "output_tokens": outputTokens]]))
         out.append(Self.event("message_stop", [:]))
         return out

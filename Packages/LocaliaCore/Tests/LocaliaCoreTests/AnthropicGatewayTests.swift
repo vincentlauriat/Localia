@@ -121,6 +121,71 @@ final class AnthropicGatewayTests: XCTestCase {
         XCTAssertEqual(code, 200)
     }
 
+    func test_browserRequests_areForbidden() async throws {
+        EngineStubProtocol.handler = { _ in StubResponse(status: 200) }
+        var r = URLRequest(url: base.appendingPathComponent("v1/messages/count_tokens"))
+        r.httpMethod = "POST"
+        r.httpBody = Data((simple + "}").utf8)
+        r.setValue("https://evil.example", forHTTPHeaderField: "Origin")
+        let (_, resp) = try await URLSession.shared.data(for: r)
+        XCTAssertEqual((resp as? HTTPURLResponse)?.statusCode, 403)
+        let rebound = try await raw(Data("GET /health HTTP/1.1\r\nHost: evil.example:\(port)\r\n\r\n".utf8))
+        XCTAssertTrue(rebound.hasPrefix("HTTP/1.1 403"), rebound)
+        let noHost = try await raw(Data("GET /health HTTP/1.1\r\n\r\n".utf8))
+        XCTAssertTrue(noHost.hasPrefix("HTTP/1.1 403"), noHost)
+        let local = try await raw(Data("GET /health HTTP/1.1\r\nHost: localhost:\(port)\r\n\r\n".utf8))
+        XCTAssertTrue(local.hasPrefix("HTTP/1.1 200"), local)
+    }
+
+    func test_slowClient_isDropped_andConnectionsAreCapped() async throws {
+        gateway.stop()
+        port = UInt16.random(in: 30000...50000)
+        gateway = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!,
+                                   session: EngineStubProtocol.session(), readTimeout: 0.5, maxConnections: 1)
+        try await gateway.start()
+        EngineStubProtocol.handler = { _ in StubResponse(status: 200) }
+        // One client holds the only slot without finishing its headers.
+        let slow = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        slow.start(queue: .global())
+        let slowConn = Connection(slow)
+        _ = await slowConn.send(Data("GET /health HTTP/1.1\r\nHost: 127.0".utf8))
+        try await Task.sleep(nanoseconds: 150_000_000)
+        let refused = try await raw(Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n".utf8))
+        XCTAssertTrue(refused.hasPrefix("HTTP/1.1 503"), refused)
+        // The deadline closes the slow one without an answer, and frees the slot.
+        var got = Data()
+        while let chunk = try? await slowConn.receive(max: 4096) { got.append(chunk) }
+        XCTAssertTrue(got.isEmpty)
+        slow.cancel()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let ok = try await raw(Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\n\r\n".utf8))
+        XCTAssertTrue(ok.hasPrefix("HTTP/1.1 200"), ok)
+    }
+
+    func test_truncatedUpstreamStream_endsWithError_notEndTurn() async throws {
+        let cut = Data("data: {\"choices\":[{\"delta\":{\"content\":\"Hal\"}}]}\n\n".utf8)
+        EngineStubProtocol.handler = { _ in StubResponse(body: cut) }
+        let (code, body) = try await post("/v1/messages", simple + #","stream":true}"#)
+        XCTAssertEqual(code, 200)
+        XCTAssertTrue(body.contains("event: error"), body)
+        XCTAssertFalse(body.contains("end_turn"))
+        XCTAssertFalse(body.contains("message_stop"))
+    }
+
+    func test_stopSequence_isMatchedByGateway_notSentUpstream() async throws {
+        let sse = try fixture("mlx-0.32.2-stream-text.sse")
+        EngineStubProtocol.handler = { _ in StubResponse(body: sse) }
+        let req = #"{"model":"local","max_tokens":64,"stream":true,"stop_sequences":["MOUSSE"],"messages":[{"role":"user","content":"hi"}]}"#
+        let (code, body) = try await post("/v1/messages", req)
+        XCTAssertEqual(code, 200)
+        XCTAssertTrue(body.contains(#""stop_reason":"stop_sequence""#), body)
+        XCTAssertTrue(body.contains(#""stop_sequence":"MOUSSE""#), body)
+        XCTAssertFalse(body.contains(#""text":"4""#), "text after the stop sequence is dropped")
+        XCTAssertTrue(body.contains(#""text":"AMPLE""#))
+        let sent = try XCTUnwrap(EngineStubProtocol.recorded.first { $0.path == "/v1/chat/completions" }?.json)
+        XCTAssertNil(sent["stop"])
+    }
+
     func test_portInUse_throws() async {
         let other = AnthropicGateway(port: port, upstream: URL(string: "http://upstream.test:1")!)
         do { try await other.start(); XCTFail("second listener on the same port"); other.stop() } catch {}

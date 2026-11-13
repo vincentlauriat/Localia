@@ -5,7 +5,9 @@ import Network
 /// request, translated, to an OpenAI-style chat completions server (`mlx_lm.server`).
 ///
 /// One request per connection (`Connection: close`). Requests must carry a `Content-Length` no larger than
-/// `maxBodyBytes`; chunked bodies are refused. Routes: `POST /v1/messages`, `POST /v1/messages/count_tokens`,
+/// `maxBodyBytes`; chunked bodies are refused; a request must arrive within `readTimeout`; at most
+/// `maxConnections` are served at once. Browsers are kept out (DNS rebinding, cross-site POST): any `Origin`
+/// header, or a `Host` other than `127.0.0.1:<port>` / `localhost:<port>`, gets 403. Routes: `POST /v1/messages`, `POST /v1/messages/count_tokens`,
 /// `GET /health` (healthy only while the upstream server is), `GET /v1/models`.
 public final class AnthropicGateway: @unchecked Sendable {
     public let port: UInt16
@@ -15,9 +17,12 @@ public final class AnthropicGateway: @unchecked Sendable {
     private let session: URLSession
     private let maxBodyBytes: Int
     private let maxHeaderBytes = 64 << 10
+    private let readTimeout: TimeInterval
+    private let maxConnections: Int
     private let queue = DispatchQueue(label: "fr.vincentlauriat.localia.gateway")
     private let lock = NSLock()
     private var listener: NWListener?
+    private var activeConnections = 0
 
     /// - Parameters:
     ///   - upstream: root of the OpenAI-style server (its `/v1/chat/completions` and `/health`).
@@ -25,9 +30,11 @@ public final class AnthropicGateway: @unchecked Sendable {
     ///   - servedModel: the name listed by `/v1/models`.
     public init(port: UInt16, upstream: URL, upstreamModel: String = "default_model",
                 servedModel: @escaping @Sendable () -> String? = { nil },
-                session: URLSession = .shared, maxBodyBytes: Int = 32 << 20) {
+                session: URLSession = .shared, maxBodyBytes: Int = 32 << 20,
+                readTimeout: TimeInterval = 30, maxConnections: Int = 16) {
         self.port = port; self.upstream = upstream; self.upstreamModel = upstreamModel
         self.servedModel = servedModel; self.session = session; self.maxBodyBytes = maxBodyBytes
+        self.readTimeout = readTimeout; self.maxConnections = maxConnections
     }
 
     public var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return listener != nil }
@@ -68,6 +75,16 @@ public final class AnthropicGateway: @unchecked Sendable {
 
     // MARK: - Connections
 
+    /// Takes a connection slot, nil when all are busy.
+    private func reserveSlot() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard activeConnections < maxConnections else { return false }
+        activeConnections += 1
+        return true
+    }
+
+    private func releaseSlot() { lock.lock(); activeConnections -= 1; lock.unlock() }
+
     private func accept(_ c: NWConnection) {
         let conn = Connection(c)
         c.stateUpdateHandler = { state in
@@ -77,12 +94,33 @@ public final class AnthropicGateway: @unchecked Sendable {
             }
         }
         c.start(queue: queue)
+        guard reserveSlot() else {
+            // Read what the client sent (closing on unread data would reset the connection before it sees
+            // the answer), then refuse. The deadline still bounds a client that sends nothing.
+            queue.asyncAfter(deadline: .now() + readTimeout) { conn.cancel() }
+            Task { [weak self] in
+                _ = try? await conn.receive(max: 64 << 10)
+                await self?.sendJSON(conn, status: 503, AnthropicTranslation.errorBody(type: "overloaded_error", message: "Too many connections"))
+                conn.cancel()
+            }
+            return
+        }
+        // A client that does not send its whole request in time loses the connection (slowloris).
+        queue.asyncAfter(deadline: .now() + readTimeout) { if !conn.requestRead { conn.cancel() } }
         let task = Task { [weak self] in
             guard let self else { conn.cancel(); return }
             await self.serve(conn)
             conn.cancel()
+            self.releaseSlot()
         }
         conn.onClose = { task.cancel() }
+    }
+
+    /// Only Claude Code and similar local clients: no browser (`Origin`), and a loopback `Host`.
+    func isAllowed(_ headers: [String: String]) -> Bool {
+        if headers["origin"] != nil { return false }
+        guard let host = headers["host"]?.lowercased() else { return false }
+        return host == "127.0.0.1:\(port)" || host == "localhost:\(port)"
     }
 
     struct Request {
@@ -142,12 +180,18 @@ public final class AnthropicGateway: @unchecked Sendable {
         let req: Request
         do {
             guard let r = try await readRequest(conn) else { return }
+            conn.requestRead = true
             req = r
         } catch ParseError.status(let code, let msg) {
+            conn.requestRead = true
             await sendJSON(conn, status: code, AnthropicTranslation.errorBody(type: "invalid_request_error", message: msg))
             return
         } catch { return }
 
+        guard isAllowed(req.headers) else {
+            await sendJSON(conn, status: 403, AnthropicTranslation.errorBody(type: "permission_error", message: "Only local clients may use this server."))
+            return
+        }
         switch (req.method, req.path) {
         case ("GET", "/health"), ("HEAD", "/health"), ("GET", "/"), ("HEAD", "/"):
             let ok = await upstreamHealthy()
@@ -199,7 +243,8 @@ public final class AnthropicGateway: @unchecked Sendable {
                     await sendJSON(conn, status: m.status, AnthropicTranslation.errorBody(type: m.type, message: upstreamMessage(data, code)))
                     return
                 }
-                let msg = try AnthropicTranslation.message(fromChatCompletion: data, clientModel: chat.clientModel)
+                let msg = try AnthropicTranslation.message(fromChatCompletion: data, clientModel: chat.clientModel,
+                                                           stopSequences: chat.stopSequences)
                 await sendJSON(conn, status: 200, (try? JSONSerialization.data(withJSONObject: msg)) ?? Data())
             } catch {
                 await sendJSON(conn, status: 502, AnthropicTranslation.errorBody(type: "api_error", message: "The local model server did not answer: \(error.localizedDescription)"))
@@ -224,11 +269,15 @@ public final class AnthropicGateway: @unchecked Sendable {
             return
         }
 
-        var encoder = AnthropicStreamEncoder(model: chat.clientModel, estimatedInputTokens: AnthropicTranslation.estimateTokens(body))
+        // Whenever this stream ends early (client gone, stop sequence, error), stop the upstream generation.
+        defer { bytes.task.cancel() }
+        var encoder = AnthropicStreamEncoder(model: chat.clientModel, estimatedInputTokens: AnthropicTranslation.estimateTokens(body),
+                                             stopSequences: chat.stopSequences)
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
         guard await conn.send(Data(head.utf8)), await conn.send(encoder.start()) else { return }
         var parser = SSEDataParser()
         var pending = Data()
+        var sawDone = false
         do {
             var it = bytes.makeAsyncIterator()
             while let byte = try await it.next() {
@@ -237,7 +286,7 @@ public final class AnthropicGateway: @unchecked Sendable {
                 guard byte == UInt8(ascii: "\n") else { continue }
                 var out: [Data] = []
                 for payload in parser.feed(pending) {
-                    if payload == "[DONE]" { continue }
+                    if payload == "[DONE]" { sawDone = true; continue }
                     guard let chunk = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else { continue }
                     if let err = chunk["error"] {
                         out += encoder.fail((err as? [String: Any])?["message"] as? String ?? String(describing: err))
@@ -249,7 +298,16 @@ public final class AnthropicGateway: @unchecked Sendable {
                 // Upstream keepalive comments (long prefill) become pings, which also notice a client that left.
                 if out.isEmpty, pending.first == UInt8(ascii: ":") { out.append(AnthropicStreamEncoder.event("ping", [:])) }
                 pending.removeAll(keepingCapacity: true)
+                if encoder.matchedStop != nil {   // the turn is over: no need to let the model go on
+                    _ = await conn.send(out + encoder.finish())
+                    return
+                }
                 if !out.isEmpty, !(await conn.send(out)) { return }
+            }
+            // A stream cut before its end must not read as a finished turn.
+            guard sawDone || encoder.sawFinishReason else {
+                _ = await conn.send(encoder.fail("The local model server closed the stream before the answer was complete."))
+                return
             }
             _ = await conn.send(encoder.finish())
         } catch {
@@ -278,8 +336,15 @@ final class Connection: @unchecked Sendable {
     private let lock = NSLock()
     private var isClosed = false
     private var closeHandler: (@Sendable () -> Void)?
+    private var _requestRead = false
 
     init(_ c: NWConnection) { self.c = c }
+
+    /// Set once the whole request was read (or refused), which disarms the read deadline.
+    var requestRead: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _requestRead }
+        set { lock.lock(); _requestRead = newValue; lock.unlock() }
+    }
 
     var onClose: (@Sendable () -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return closeHandler }
