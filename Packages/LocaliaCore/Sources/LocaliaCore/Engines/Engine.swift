@@ -1,7 +1,14 @@
 import Foundation
 
 public enum EngineID: String, Sendable, Codable, CaseIterable {
-    case ollama, llamaCpp
+    case ollama, llamaCpp, mlx
+
+    /// The engine runs one model at a time: loading another one replaces the model a session uses.
+    public var servesOneModel: Bool { self != .ollama }
+
+    /// The engine's `/v1` serves the OpenAI Responses API (Codex). `mlx_lm.server` has only chat completions,
+    /// which the MLX gateway passes through.
+    public var servesResponsesAPI: Bool { self != .mlx }
 }
 
 public enum InstallState: Sendable, Equatable {

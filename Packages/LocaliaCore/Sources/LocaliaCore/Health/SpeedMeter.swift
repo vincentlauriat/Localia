@@ -14,12 +14,17 @@ public struct SpeedMeter: Sendable {
 
     private let session: URLSession
     private let rssProvider: @Sendable (Int32) -> Double?
+    private let footprintProvider: @Sendable (Int32) -> Double?
 
-    /// - Parameter rssBytes: resident set size in bytes for a pid (default: `proc_pid_rusage`).
+    /// - Parameters:
+    ///   - rssBytes: resident set size in bytes for a pid (default: `proc_pid_rusage`).
+    ///   - footprintBytes: physical footprint in bytes for a pid, which counts Metal buffers (MLX).
     public init(session: URLSession = .shared,
-                rssBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemRSSBytes) {
+                rssBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemRSSBytes,
+                footprintBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemFootprintBytes) {
         self.session = session
         self.rssProvider = rssBytes
+        self.footprintProvider = footprintBytes
     }
 
     /// Memory is reported in GiB, like `MachineProfile`. `loadedByLocalia`: only a model Localia loaded
@@ -28,6 +33,7 @@ public struct SpeedMeter: Sendable {
         switch engine.id {
         case .ollama: return try await measureOllama(engine, model, keepAlive: loadedByLocalia)
         case .llamaCpp: return try await measureLlama(engine, model)
+        case .mlx: return try await measureMLX(engine)
         }
     }
 
@@ -73,6 +79,47 @@ public struct SpeedMeter: Sendable {
         return (tps, rss / Self.gib)
     }
 
+    /// `mlx_lm.server` reports no timings: stream the probe and time from the first to the last token, so the
+    /// prompt's prefill is not counted.
+    private func measureMLX(_ engine: any Engine) async throws -> (Double, Double) {
+        guard let mlx = engine as? MLXEngine else { throw SpeedMeterError.unsupportedEngine }
+        var req = URLRequest(url: mlx.upstreamURL.appendingPathComponent("v1/chat/completions"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": "default_model", "stream": true, "stream_options": ["include_usage": true],
+            "max_tokens": Self.probeTokens, "temperature": 0,
+            "messages": [["role": "user", "content": Self.probePrompt]]] as [String: Any])
+        let (bytes, resp) = try await session.bytes(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw EngineError.http(status) }
+        var first: Date?, last: Date?
+        var chunks = 0
+        var completion: Int?
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:"), let obj = try? JSONSerialization.jsonObject(
+                with: Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)) as? [String: Any] else { continue }
+            if let u = obj["usage"] as? [String: Any], let c = AnthropicTranslation.nonNegativeInt(u["completion_tokens"]) {
+                completion = c
+            }
+            guard let delta = ((obj["choices"] as? [Any])?.first as? [String: Any])?["delta"] as? [String: Any],
+                  delta["content"] != nil || delta["reasoning"] != nil else { continue }
+            let now = Date()
+            if first == nil { first = now }
+            last = now
+            chunks += 1
+        }
+        let tokens = completion ?? chunks
+        guard let first, let last, tokens > 1 else { throw SpeedMeterError.badResponse("too few tokens streamed") }
+        let tps = Double(tokens - 1) / max(last.timeIntervalSince(first), 0.001)
+        // MLX keeps the weights in Metal buffers, which the resident size misses: use the physical footprint.
+        guard let pid = await mlx.serverPID(), let bytes = footprintProvider(pid) else {
+            throw SpeedMeterError.badResponse("mlx_lm.server pid / footprint unavailable")
+        }
+        return (tps, bytes / Self.gib)
+    }
+
     private func postJSON(_ url: URL, _ body: [String: Any]) async throws -> [String: Any] {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -83,6 +130,17 @@ public struct SpeedMeter: Sendable {
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw EngineError.http(status) }
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// Physical footprint of `pid` in bytes (what Activity Monitor shows as Memory), or nil if it cannot be read.
+    public static let systemFootprintBytes: @Sendable (Int32) -> Double? = { pid in
+        var info = rusage_info_v4()
+        let rc = withUnsafeMutablePointer(to: &info) { p in
+            p.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, $0)
+            }
+        }
+        return rc == 0 ? Double(info.ri_phys_footprint) : nil
     }
 
     /// Resident set size of `pid` in bytes, or nil if it cannot be read.

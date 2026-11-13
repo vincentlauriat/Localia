@@ -26,6 +26,7 @@ final class AppModelTests: XCTestCase {
                            rows: [LlmfitRow] = [], sizes: FakeSizes = FakeSizes(), hf: FakeHFCatalog = FakeHFCatalog(),
                            availableGB: Double = 100, heavyApps: [String] = [], claudeConfigDir: URL? = nil,
                            cloudLogin: Bool = true, localTools: [any LocalCodingTool] = [],
+                           mlxRepos: FakeMLXRepos = FakeMLXRepos(),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -51,7 +52,8 @@ final class AppModelTests: XCTestCase {
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
             hasCloudLogin: { cloudLogin },
             notify: { [weak self] in self?.notified.append($0) },
-            localTools: localTools)
+            localTools: localTools,
+            mlxRepos: mlxRepos)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -154,6 +156,35 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: base.appendingPathComponent("claude-config/.claude.json").path))
         let inUse = await model.modelsInUse()
         XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
+    }
+
+    func test_codex_refusedOnMLX_openCodeAllowed() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = makeModel(engine: engine, terminal: terminal,
+                              localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
+                                           OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])]) {
+            $0.activeEngine = .mlx
+        }
+        await model.refreshAll()
+        await model.refreshLocalTools()
+        let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
+        XCTAssertEqual(model.unavailableReason(try XCTUnwrap(rows["codex"])),
+                       String(localized: "Needs the Responses API, which \(AppModel.engineName(.mlx)) does not offer"))
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["opencode"])))
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "codex")
+        XCTAssertEqual(model.alert?.title, String(localized: "\("Codex") cannot use \(AppModel.engineName(.mlx))"))
+        XCTAssertTrue(terminal.opened.isEmpty)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [], "nothing is loaded for a launch that cannot work")
+        model.alert = nil
+        await model.launch(folder: try folder(), toolID: "opencode")
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+        // On another engine Codex is offered again.
+        await model.setActiveEngine(.ollama)
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
     }
 
     func test_localTool_refusedOutsideLocalMode() async throws {
@@ -413,6 +444,49 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.installedName(for: c), served)
     }
 
+    // MARK: - MLX
+
+    func test_mlx_candidatesMapToMLXCommunity_missingOnesAreNotDownloaded() async throws {
+        let repos = FakeMLXRepos(["mlx-community/M00-4bit": false, "mlx-community/M01-4bit": true])
+        let sizes = FakeSizes()
+        let engine = FakeEngine(id: .mlx, installed: [])
+        let model = makeModel(engine: engine, rows: try Self.rows(3), sizes: sizes, mlxRepos: repos) { $0.activeEngine = .mlx }
+        await model.refreshAll()
+        await model.refreshRecommendations()
+        let cs = try XCTUnwrap(model.recommendation?.candidates)
+        XCTAssertEqual(model.mlxAvailability(cs[0]), .checking("mlx-community/M00-4bit"))
+
+        await model.checkMLXRepo(cs[0])
+        XCTAssertEqual(model.mlxAvailability(cs[0]), .missing("mlx-community/M00-4bit"))
+        model.download(cs[0])
+        XCTAssertTrue(model.downloads.isEmpty, "no download offered without an MLX conversion")
+
+        await model.checkMLXRepo(cs[1])
+        await model.checkMLXRepo(cs[1])
+        XCTAssertEqual(repos.calls, 2, "a definite answer is not asked again")
+        XCTAssertEqual(model.mlxAvailability(cs[1]), .available("mlx-community/M01-4bit"))
+        model.download(cs[1])
+        for _ in 0..<100 where !model.downloads.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.settings.modelIDs[cs[1].id], cs[1].id)
+        XCTAssertEqual(sizes.calls, 0, "the GGUF manifest says nothing about an MLX download")
+
+        // Hub unreachable: unknown, the download is still offered (the pull says if the repo is missing).
+        await model.checkMLXRepo(cs[2])
+        XCTAssertEqual(model.mlxAvailability(cs[2]), .unknown("mlx-community/M02-4bit"))
+        model.download(cs[2])
+        XCTAssertFalse(model.downloads.isEmpty)
+    }
+
+    func test_mlx_notAskedForOtherEngines() async throws {
+        let repos = FakeMLXRepos()
+        let model = makeModel(engine: FakeEngine(installed: []), rows: try Self.rows(1), mlxRepos: repos)
+        await model.refreshRecommendations()
+        let c = try XCTUnwrap(model.recommendation?.candidates.first)
+        await model.checkMLXRepo(c)
+        XCTAssertEqual(model.mlxAvailability(c), .notMLX)
+        XCTAssertEqual(repos.calls, 0)
+    }
+
     func test_download_refusesAModelThatDoesNotFit() async throws {
         let engine = FakeEngine(installed: [])
         let model = makeModel(engine: engine, rows: try Self.rows(3))
@@ -548,7 +622,7 @@ final class AppModelTests: XCTestCase {
         // Selecting Y is already refused (see test_setDefault_refusedDuringLlamaSession); force it to reach
         // the launch-time guard as well.
         await model.setDefault(try XCTUnwrap(model.installed.first { $0.name == "Y" }))
-        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        XCTAssertEqual(model.alert?.title, String(localized: "\(AppModel.engineName(.llamaCpp)) is busy"))
         model.alert = nil
         model.settings.defaultModel = "Y"
         model.settings.lastModel = "Y"
@@ -856,7 +930,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.runningSessions.map(\.model), ["X"])
 
         await model.setDefault(try row(model, "Y"))
-        XCTAssertEqual(model.alert?.title, String(localized: "llama.cpp is busy"))
+        XCTAssertEqual(model.alert?.title, String(localized: "\(AppModel.engineName(.llamaCpp)) is busy"))
         XCTAssertEqual(model.settings.defaultModel, "X")
         XCTAssertEqual(model.settings.lastModel, "X")
         XCTAssertEqual(model.launchModel, "X")
@@ -882,7 +956,7 @@ final class AppModelTests: XCTestCase {
         await model.setActiveEngine(.llamaCpp)
         await model.refreshAll()
         await model.startEngine()
-        XCTAssertEqual(model.alert?.title, String(localized: "No llama.cpp model"))
+        XCTAssertEqual(model.alert?.title, String(localized: "No \(AppModel.engineName(.llamaCpp)) model"))
         let loads = await llama.loads
         XCTAssertEqual(loads, [])
     }
@@ -916,7 +990,7 @@ actor FakeEngine: Engine {
          state: InstallState = .installed("1.0", managedByLocalia: false), contextWindow: Int = 32768) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
         self.window = contextWindow
-        self.singleModel = id == .llamaCpp
+        self.singleModel = id.servesOneModel
         self.state = state
     }
 
@@ -1061,6 +1135,19 @@ final class FakeHFCatalog: HFCataloging, @unchecked Sendable {
         lock.withLock { _contexts.append(ctx); _queries.append(query) }
         if offline { throw URLError(.notConnectedToInternet) }
         return results
+    }
+}
+
+/// Hub answers by repo; repos not listed are unreachable (nil).
+final class FakeMLXRepos: MLXRepoChecking, @unchecked Sendable {
+    private let lock = NSLock()
+    private let answers: [String: Bool]
+    private var _calls = 0
+    var calls: Int { lock.lock(); defer { lock.unlock() }; return _calls }
+    init(_ answers: [String: Bool] = [:]) { self.answers = answers }
+    func exists(_ repo: String) async -> Bool? {
+        lock.withLock { _calls += 1 }
+        return answers[repo]
     }
 }
 

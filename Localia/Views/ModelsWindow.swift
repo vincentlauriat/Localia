@@ -700,7 +700,7 @@ private struct ModelRow: View {
                     Text(c.displayName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
                     ModelBadges(item: item)
                 }
-                Text(verbatim: "\(c.ggufRepo) · \(c.quant)").font(.caption).foregroundStyle(.secondary)
+                Text(verbatim: repoLine(model, c)).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -710,6 +710,14 @@ private struct ModelRow: View {
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// The repo the active engine downloads: the GGUF and its quant, or the `mlx-community` conversion for MLX.
+@MainActor private func repoLine(_ model: AppModel, _ c: ModelCandidate) -> String {
+    switch model.mlxAvailability(c) {
+    case .notMLX, .missing(nil): "\(c.ggufRepo) · \(c.quant)"
+    case .checking(let r), .available(let r), .unknown(let r), .missing(let r?): "\(r) · \(MLXRepo.quantLabel)"
     }
 }
 
@@ -840,6 +848,13 @@ private struct ModelAction: View {
                 Button(String(localized: "Doesn't fit")) {}
                     .disabled(true)
                     .help(String(localized: "Too big for this Mac's memory: Localia does not download it."))
+            } else if case .missing = model.mlxAvailability(c) {
+                Button(String(localized: "No MLX")) {}
+                    .disabled(true)
+                    .help(String(localized: "mlx-community has no 4-bit MLX conversion of this model. Switch to llama.cpp or Ollama to download it."))
+            } else if case .checking = model.mlxAvailability(c) {
+                ProgressView().controlSize(.small)
+                    .help(String(localized: "Looking for an MLX version on Hugging Face…"))
             } else if large {
                 Button(String(localized: "Download")) { model.download(c) }
                     .buttonStyle(.borderedProminent)
@@ -849,6 +864,7 @@ private struct ModelAction: View {
         }
         .controlSize(large ? .large : .regular)
         .lineLimit(1)
+        .task(id: "\(model.settings.activeEngine.rawValue)|\(c.id)") { await model.checkMLXRepo(c) }
     }
 }
 
@@ -888,7 +904,7 @@ private struct ModelDetailPane: View {
                     Text(c.displayName).font(.headline).lineLimit(1).truncationMode(.middle)
                     ModelBadges(item: item)
                 }
-                Text(verbatim: "\(c.ggufRepo) · \(c.quant)").font(.caption).foregroundStyle(.secondary)
+                Text(verbatim: repoLine(model, c)).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 MemoryBreakdown(item: item, pool: pool)
                 Text(Self.why(item, section: section))

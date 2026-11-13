@@ -40,7 +40,7 @@ public struct ShellShim: ShellShimming {
     public static func startWaitSeconds(_ engine: EngineID) -> Int {
         switch engine {
         case .ollama: return 20
-        case .llamaCpp: return 90
+        case .llamaCpp, .mlx: return 90
         }
     }
     /// Used when `state.env` has no valid `wait=` line (e.g. written by an older version).
@@ -243,7 +243,7 @@ public struct ShellShim: ShellShimming {
     static func healthPath(_ engine: EngineID) -> String {
         switch engine {
         case .ollama: return "api/version"
-        case .llamaCpp: return "health"
+        case .llamaCpp, .mlx: return "health"
         }
     }
 

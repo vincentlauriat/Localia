@@ -1,0 +1,22 @@
+: keepalive 160/177
+
+: keepalive 176/177
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "reasoning": "\n"}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "reasoning": "Okay"}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "reasoning": ","}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "reasoning": " the"}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "content": "\n\n"}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": null, "delta": {"role": "assistant", "tool_calls": [{"function": {"name": "Read", "arguments": "{\"file_path\": \"/notes.txt\"}"}, "type": "function", "id": "af81cad3-8214-4017-9c3c-27cd5a0b6528", "index": 0}]}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion.chunk", "model": "default_model", "created": 1794525304, "choices": [{"index": 0, "finish_reason": "tool_calls", "delta": {"role": "assistant"}}]}
+
+data: {"id": "chatcmpl-5d76d631-061c-4b98-956b-44633a41ecc9", "system_fingerprint": "0.32.2-0.32.4-macOS-27.3-arm64-arm-64bit-applegpu_g17g", "object": "chat.completion", "model": "default_model", "created": 1794525304, "choices": [], "usage": {"prompt_tokens": 177, "completion_tokens": 270, "total_tokens": 447, "prompt_tokens_details": {"cached_tokens": 0}}}
+
+data: [DONE]
+

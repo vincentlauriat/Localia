@@ -40,6 +40,8 @@ struct LocalToolRow: Identifiable, Equatable {
     let id: String
     let displayName: String
     let installPage: URL
+    /// Speaks only the OpenAI Responses API (Codex), which MLX does not serve.
+    var needsResponsesAPI = false
     /// nil when the tool is not installed.
     var path: URL?
     var version: String?
@@ -108,6 +110,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var downloads: [String: DownloadState] = [:]
     /// `InstalledRow.id` of the model being made the default, while `setDefault` runs.
     @Published private(set) var selectingModel: String?
+    /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
+    @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
 
     // Installs
     @Published private(set) var engineStates: [EngineID: InstallState] = [:]
@@ -243,6 +247,10 @@ final class AppModel: ObservableObject {
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
+        if let mlx = engine as? MLXEngine, let model = await mlx.takeFailure() {
+            alert = AppAlert(title: String(localized: "MLX stopped"),
+                             message: String(localized: "MLX ran out of memory again with \(displayName(for: model)), so Localia stopped it. Close other apps or choose a smaller model, then start MLX again."))
+        }
     }
 
     func refreshInstalled() async {
@@ -268,13 +276,15 @@ final class AppModel: ObservableObject {
             for m in models {
                 out.append(InstalledRow(engine: e.id, name: m.name, displayName: displayName(for: m.name),
                                         sizeGB: m.sizeGB, loaded: loadedNames.contains(m.name),
-                                        deletable: e.id == .llamaCpp || m.name.hasSuffix("-localia"),
+                                        deletable: e.id.servesOneModel || m.name.hasSuffix("-localia"),
                                         isDefault: settings.defaultModel == m.name))
             }
             switch e.id {
             case .ollama: usage[e.id] = models.reduce(0) { $0 + $1.sizeGB }   // /api/tags sizes
             case .llamaCpp:
                 usage[e.id] = Self.directorySizeGB(Paths.models(base: deps.appSupportBase).appendingPathComponent("gguf"))
+            case .mlx:
+                usage[e.id] = Self.directorySizeGB(Paths.models(base: deps.appSupportBase).appendingPathComponent("mlx"))
             }
         }
         installed = out
@@ -477,6 +487,7 @@ final class AppModel: ObservableObject {
                     var version = previous?.stamp == stamp ? previous?.version : nil
                     if let path, version == nil { version = await tool.version(at: path) }
                     return (i, LocalToolRow(id: tool.id, displayName: tool.displayName, installPage: tool.installPage,
+                                            needsResponsesAPI: tool.needsResponsesAPI,
                                             path: path, version: version, stamp: stamp))
                 }
             }
@@ -485,6 +496,12 @@ final class AppModel: ObservableObject {
             return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
         localTools = rows
+    }
+
+    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can.
+    func unavailableReason(_ tool: LocalToolRow) -> String? {
+        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI else { return nil }
+        return String(localized: "Needs the Responses API, which \(Self.engineName(settings.activeEngine)) does not offer")
     }
 
     nonisolated static func binaryStamp(_ url: URL) -> String {
@@ -519,6 +536,12 @@ final class AppModel: ObservableObject {
                              message: String(localized: "\(localTool.displayName) runs only with a local model. Turn on local mode, then try again."))
             return
         }
+        if let localTool, localTool.needsResponsesAPI, case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
+            let engine = Self.engineName(engineID)
+            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
+                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
+            return
+        }
         let sessionID = UUID()
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
@@ -538,7 +561,7 @@ final class AppModel: ObservableObject {
                 return
             }
             let key = ModelKey(engine: engineID, model: model)
-            if engineID == .llamaCpp { reserved = key; llamaPending.append(key) }
+            if engineID.servesOneModel { reserved = key; llamaPending.append(key) }
             do {
                 let outcome = try await prepareLocal(engine: engine, model: model)
                 guard outcome != .cancelled else { return }
@@ -617,14 +640,14 @@ final class AppModel: ObservableObject {
 
     enum LoadOutcome: Equatable { case cancelled, loadedByLocalia, alreadyLoaded }
 
-    /// llama.cpp serves one model at a time: loading another one would stop the server a session uses.
+    /// llama.cpp and MLX serve one model at a time: loading another one would stop the server a session uses.
     /// Returns that session's model when `model` would replace it.
     private func llamaConflict(engine: EngineID, model: String) async -> ModelKey? {
-        guard engine == .llamaCpp else { return nil }
-        return await busyKeys().first { $0.engine == .llamaCpp && $0.model != model }
+        guard engine.servesOneModel else { return nil }
+        return await busyKeys().first { $0.engine == engine && $0.model != model }
     }
 
-    /// Models of tracked sessions plus llama.cpp loads in flight, minus one reservation of `own`.
+    /// Models of tracked sessions plus llama.cpp / MLX loads in flight, minus one reservation of `own`.
     private func busyKeys(excluding own: ModelKey? = nil) async -> [ModelKey] {
         var pending = llamaPending
         if let own, let i = pending.firstIndex(of: own) { pending.remove(at: i) }
@@ -638,16 +661,17 @@ final class AppModel: ObservableObject {
     /// Codex, OpenCode and Pi send several thousand tokens of instructions and tool schemas.
     static let minimumToolContext = 16384
 
-    /// Names the tool of the session holding llama.cpp, when a running session does (a launch still loading
-    /// has none yet).
+    /// llama.cpp and MLX run one model at a time. Names the engine, and the tool of the session holding it
+    /// when a running session does (a launch still loading has none yet).
     private func llamaBusyAlert(_ other: ModelKey) async -> AppAlert {
+        let engine = Self.engineName(other.engine)
         let name = displayName(for: other.model)
         let tool = await tracker.runningSessions()
             .first { $0.engine == other.engine && $0.model == other.model }?.tool
         let message = tool.map {
-            String(localized: "llama.cpp runs one model at a time, and a \($0) session is using \(name). Wait for that session to end, or end it, then try again.")
-        } ?? String(localized: "llama.cpp runs one model at a time, and another session is using \(name). Wait for that session to end, or end it, then try again.")
-        return AppAlert(title: String(localized: "llama.cpp is busy"), message: message)
+            String(localized: "\(engine) runs one model at a time, and a \($0) session is using \(name). Wait for that session to end, or end it, then try again.")
+        } ?? String(localized: "\(engine) runs one model at a time, and another session is using \(name). Wait for that session to end, or end it, then try again.")
+        return AppAlert(title: String(localized: "\(engine) is busy"), message: message)
     }
 
     /// Spec 6.4. Detection is best effort (a GUI app does not see keys exported in the shell rc), so this
@@ -770,7 +794,7 @@ final class AppModel: ObservableObject {
 
     // MARK: - Menu actions
 
-    /// `ollama run <model>` or `llama-cli -m <file> -cnv`, in the user's terminal.
+    /// `ollama run <model>`, `llama-cli -m <file> -cnv` or `mlx_lm.chat --model <dir>`, in the user's terminal.
     func chat() async {
         guard let engine = await registry.active else { return }
         await refreshInstalled()
@@ -792,6 +816,12 @@ final class AppModel: ObservableObject {
                 }
                 command = ToolCommand(executable: cli, arguments: ["-m", file.path, "-cnv"],
                                       environment: [:], unsetEnvironment: [])
+            case let m as MLXEngine:
+                guard let cli = await m.cliBinary(), let dir = await m.modelDirectory(model) else {
+                    throw EngineError.notInstalled
+                }
+                command = ToolCommand(executable: cli, arguments: ["--model", dir.path],
+                                      environment: ["HF_HUB_OFFLINE": "1"], unsetEnvironment: [])
             default:
                 throw EngineError.notInstalled
             }
@@ -834,30 +864,31 @@ final class AppModel: ObservableObject {
             loadedByLocalia.remove(key)
             loadedForShim.remove(key)
         }
-        for e in await registry.all where e.id == .llamaCpp && !inUse.contains(where: { $0.engine == e.id }) {
+        for e in await registry.all where e.id.servesOneModel && !inUse.contains(where: { $0.engine == e.id }) {
             try? await e.stopServing()
         }
         await refreshStatus()
     }
 
-    /// Ollama starts its server. llama-server serves exactly one model, so starting llama.cpp loads the
-    /// selected model (as a launch would); without an installed model there is nothing to start.
+    /// Ollama starts its server. llama-server and mlx_lm.server serve exactly one model, so starting them loads
+    /// the selected model (as a launch would); without an installed model there is nothing to start.
     func startEngine() async {
         guard let e = await registry.active else { return }
         do {
-            if e.id == .llamaCpp {
-                guard let m = selectedModel, installed.contains(where: { $0.engine == .llamaCpp && $0.name == m }) else {
-                    alert = AppAlert(title: String(localized: "No llama.cpp model"),
-                                     message: String(localized: "llama.cpp starts with a model. Download one in Models, then start it again."))
+            if e.id.servesOneModel {
+                guard let m = selectedModel, installed.contains(where: { $0.engine == e.id && $0.name == m }) else {
+                    let name = Self.engineName(e.id)
+                    alert = AppAlert(title: String(localized: "No \(name) model"),
+                                     message: String(localized: "\(name) starts with a model. Download one in Models, then start it again."))
                     await refreshStatus()
                     return
                 }
-                if let other = await llamaConflict(engine: .llamaCpp, model: m) {
+                if let other = await llamaConflict(engine: e.id, model: m) {
                     alert = await llamaBusyAlert(other)
                     await refreshStatus()
                     return
                 }
-                let key = ModelKey(engine: .llamaCpp, model: m)
+                let key = ModelKey(engine: e.id, model: m)
                 llamaPending.append(key)
                 defer { release(key) }
                 busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
@@ -919,13 +950,13 @@ final class AppModel: ObservableObject {
             }
             if try await engine.loadedModels().contains(where: { $0.name == model }) { return }
             if let other = await llamaConflict(engine: engine.id, model: model) {
-                log.notice("localia://start: not loading, a session uses \(other.model, privacy: .public) on llama.cpp")
+                log.notice("localia://start: not loading, a session uses \(other.model, privacy: .public) on \(Self.engineName(engine.id), privacy: .public)")
                 return
             }
-            // The shim's load owns llama-server while it runs, like a launch does.
+            // The shim's load owns the one-model server while it runs, like a launch does.
             let key = ModelKey(engine: engine.id, model: model)
-            if engine.id == .llamaCpp { llamaPending.append(key) }
-            defer { if engine.id == .llamaCpp { release(key) } }
+            if engine.id.servesOneModel { llamaPending.append(key) }
+            defer { if engine.id.servesOneModel { release(key) } }
             let needed = requiredGB(for: model, engine: engine.id, fileSizeGB: entry.sizeGB)
             // Headless: only a real shortfall stops the load. Heavy apps alone are worth a log line, not a block.
             if let w = deps.memoryGuard.check(requiredGB: needed, profile: profile) {
@@ -950,13 +981,16 @@ final class AppModel: ObservableObject {
         // A search result too big for this Mac is never downloaded (it could become the default model).
         guard c.fits, downloads[c.id] == nil else { return }
         let engineID = settings.activeEngine
+        // MLX downloads only a conversion known to exist (the row says so otherwise).
+        // MLX never downloads a conversion the Hub said does not exist.
+        if case .missing = mlxAvailability(c) { return }
         downloads[c.id] = DownloadState(candidateID: c.id, displayName: c.displayName, engine: engineID)
         downloadTasks[c.id] = Task { [weak self] in
             guard let self else { return }
             do {
                 guard let engine = await self.registry.engine(engineID) else { throw EngineError.notInstalled }
                 // The size is fetched only now, on the user's click (no network while browsing the list).
-                if let bytes = try? await self.deps.sizes.size(repo: c.ggufRepo, quant: c.quant) {
+                if engineID != .mlx, let bytes = try? await self.deps.sizes.size(repo: c.ggufRepo, quant: c.quant) {
                     self.downloads[c.id]?.expectedBytes = bytes
                 }
                 if engineID == .ollama { try await engine.startServing() }
@@ -978,6 +1012,35 @@ final class AppModel: ObservableObject {
             self.downloads[c.id] = nil
             self.downloadTasks[c.id] = nil
             await self.refreshInstalled()
+        }
+    }
+
+    enum MLXRepoState: Equatable { case exists, missing, unknown }
+
+    /// How the active engine would get this candidate: MLX needs an `mlx-community` conversion.
+    /// `unknown`: the Hub could not be asked (offline, rate limited); the download itself then says if it is missing.
+    enum MLXAvailability: Equatable { case notMLX, checking(String), available(String), unknown(String), missing(String?) }
+
+    func mlxAvailability(_ c: ModelCandidate) -> MLXAvailability {
+        guard settings.activeEngine == .mlx else { return .notMLX }
+        guard let repo = MLXRepo.repo(for: c) else { return .missing(nil) }
+        switch mlxRepoState[repo] {
+        case .exists?: return .available(repo)
+        case .missing?: return .missing(repo)
+        case .unknown?: return .unknown(repo)
+        case nil: return .checking(repo)
+        }
+    }
+
+    /// Asks the Hub whether the candidate's MLX conversion exists (MLX engine only). A definite answer is kept;
+    /// an unknown one is asked again next time the row appears.
+    func checkMLXRepo(_ c: ModelCandidate) async {
+        guard settings.activeEngine == .mlx, let repo = MLXRepo.repo(for: c),
+              [nil, .unknown].contains(mlxRepoState[repo]) else { return }
+        switch await deps.mlxRepos.exists(repo) {
+        case true?: mlxRepoState[repo] = .exists
+        case false?: mlxRepoState[repo] = .missing
+        case nil: mlxRepoState[repo] = .unknown
         }
     }
 
@@ -1050,8 +1113,8 @@ final class AppModel: ObservableObject {
             return
         }
         let key = ModelKey(engine: row.engine, model: row.name)
-        if row.engine == .llamaCpp { llamaPending.append(key) }
-        defer { if row.engine == .llamaCpp { release(key) } }
+        if row.engine.servesOneModel { llamaPending.append(key) }
+        defer { if row.engine.servesOneModel { release(key) } }
         do {
             busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
@@ -1131,6 +1194,8 @@ final class AppModel: ObservableObject {
         switch id {
         case .ollama: url = URL(string: "https://api.github.com/repos/ollama/ollama/releases/latest")!
         case .llamaCpp: url = URL(string: "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5")!
+        // mlx-lm is pinned to a tested version: it changes with Localia updates, never on its own.
+        case .mlx: return MLXEngine.mlxLMVersion
         }
         var req = URLRequest(url: url)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -1197,6 +1262,7 @@ final class AppModel: ObservableObject {
         switch id {
         case .ollama: "Ollama"
         case .llamaCpp: "llama.cpp"
+        case .mlx: "MLX"
         }
     }
 
