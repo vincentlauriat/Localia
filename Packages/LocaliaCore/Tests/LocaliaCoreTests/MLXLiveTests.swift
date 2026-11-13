@@ -93,13 +93,17 @@ final class MLXLiveTests: XCTestCase {
     /// OpenCode and Pi (LOCALIA_LIVE_MLX_TOOLS=1, model already installed) read a file through the gateway's
     /// chat completions pass-through, with the configs Localia writes.
     func test_live_mlx_openCodeAndPi() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["LOCALIA_LIVE_MLX_TOOLS"] == "1", "set LOCALIA_LIVE_MLX_TOOLS=1")
-        let engine = MLXEngine(baseURL: URL(string: "http://127.0.0.1:18436")!,
-                               upstreamURL: URL(string: "http://127.0.0.1:18438")!)
+        let env0 = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env0["LOCALIA_LIVE_MLX_TOOLS"] == "1", "set LOCALIA_LIVE_MLX_TOOLS=1")
+        // Localia's own ports (11436/11437) unless the app may be using them.
+        let engine = env0["LOCALIA_LIVE_MLX_PRIVATE_PORTS"] == "1"
+            ? MLXEngine(baseURL: URL(string: "http://127.0.0.1:18436")!, upstreamURL: URL(string: "http://127.0.0.1:18438")!)
+            : MLXEngine()
         let name = "mlx-community/Qwen3-8B-4bit"
         try await engine.load(name, contextTokens: LocaliaConstants.localContextTokens)
         do {
-            let work = FileManager.default.temporaryDirectory.appendingPathComponent("localia-mlx-tools-\(UUID().uuidString)")
+            let parent = env0["LOCALIA_LIVE_MLX_WORKDIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+            let work = parent.appendingPathComponent("localia-mlx-tools-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: work) }
             try "The secret word is PAMPLEMOUSSE-42.\n".write(to: work.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
@@ -108,7 +112,7 @@ final class MLXLiveTests: XCTestCase {
             let prompt = "Use your read tool to read the file notes.txt in the current directory, then tell me the secret word."
             let tools: [(any LocalCodingTool, [String], [String])] = [
                 (OpenCodeTool(), ["run"], [prompt]),
-                (PiTool(), [], ["-p", prompt]),
+                (PiTool(), [], ["--mode", "json", "-p", prompt]),   // JSON events show the tool calls
             ]
             for (tool, before, after) in tools {
                 guard await tool.locate() != nil else { print("LIVE \(tool.displayName): not installed"); continue }
@@ -135,6 +139,10 @@ final class MLXLiveTests: XCTestCase {
                 p.waitUntilExit()
                 let text = String(decoding: data, as: UTF8.self)
                 print("LIVE \(tool.displayName) exit \(p.terminationStatus) in \(String(format: "%.1fs", Date().timeIntervalSince(t))):\n\(text.suffix(1500))")
+                let plain = text.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+                let toolCall = plain.contains("→ Read") || text.contains("\"toolName\":\"read\"") || text.contains("tool_execution_start")
+                print("LIVE \(tool.displayName) real tool call: \(toolCall)")
+                XCTAssertTrue(toolCall, "\(tool.displayName) should have called its read tool")
                 XCTAssertEqual(p.terminationStatus, 0, tool.displayName)
                 XCTAssertTrue(text.contains("PAMPLEMOUSSE-42"), "\(tool.displayName) should have read the file")
             }
