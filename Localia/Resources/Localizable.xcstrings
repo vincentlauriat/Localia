@@ -3105,18 +3105,18 @@
         }
       }
     },
-    "No MLX version": {
+    "No MLX": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No MLX version"
+            "value": "No MLX"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pas de version MLX"
+            "value": "Pas en MLX"
           }
         }
       }

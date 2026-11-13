@@ -717,7 +717,7 @@ private struct ModelRow: View {
 @MainActor private func repoLine(_ model: AppModel, _ c: ModelCandidate) -> String {
     switch model.mlxAvailability(c) {
     case .notMLX, .missing(nil): "\(c.ggufRepo) · \(c.quant)"
-    case .checking(let r), .available(let r), .missing(let r?): "\(r) · \(MLXRepo.quantLabel)"
+    case .checking(let r), .available(let r), .unknown(let r), .missing(let r?): "\(r) · \(MLXRepo.quantLabel)"
     }
 }
 
@@ -849,7 +849,7 @@ private struct ModelAction: View {
                     .disabled(true)
                     .help(String(localized: "Too big for this Mac's memory: Localia does not download it."))
             } else if case .missing = model.mlxAvailability(c) {
-                Button(String(localized: "No MLX version")) {}
+                Button(String(localized: "No MLX")) {}
                     .disabled(true)
                     .help(String(localized: "mlx-community has no 4-bit MLX conversion of this model. Switch to llama.cpp or Ollama to download it."))
             } else if case .checking = model.mlxAvailability(c) {

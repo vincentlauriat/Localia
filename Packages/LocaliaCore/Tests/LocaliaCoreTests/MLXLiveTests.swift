@@ -33,7 +33,12 @@ final class MLXLiveTests: XCTestCase {
         print("LIVE context window:", ctx, "loaded:", try await engine.loadedModels())
 
         let speed = try await SpeedMeter().measure(engine: engine, model: name, loadedByLocalia: true)
-        print("LIVE SpeedMeter:", String(format: "%.1f tok/s, %.2f GiB RSS", speed.tps, speed.memoryGB))
+        print("LIVE SpeedMeter:", String(format: "%.1f tok/s, %.2f GiB footprint", speed.tps, speed.memoryGB))
+        if let pid = await engine.serverPID() {
+            print("LIVE memory:", String(format: "RSS %.2f GiB, footprint %.2f GiB",
+                                         (SpeedMeter.systemRSSBytes(pid) ?? 0) / 1_073_741_824,
+                                         (SpeedMeter.systemFootprintBytes(pid) ?? 0) / 1_073_741_824))
+        }
 
         // claude -p with exactly what a light Localia launch sets.
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("localia-mlx-live-\(UUID().uuidString)")
@@ -68,7 +73,19 @@ final class MLXLiveTests: XCTestCase {
         XCTAssertEqual(p.terminationStatus, 0)
         XCTAssertTrue(text.contains("PAMPLEMOUSSE-42"), "the model should have read the file with the Read tool")
 
-        try await engine.unload(name)
+        // After an app restart a new engine adopts the recorded server (pid + executable path check)
+        // and can stop it.
+        let restarted = MLXEngine(baseURL: URL(string: "http://127.0.0.1:18436")!,
+                                  upstreamURL: URL(string: "http://127.0.0.1:18438")!)
+        let adoptedPID = await restarted.serverPID()
+        let adoptedLoaded = try await restarted.loadedModels().map(\.name)
+        print("LIVE restart adoption: pid \(String(describing: adoptedPID)), loaded \(adoptedLoaded)")
+        XCTAssertNotNil(adoptedPID)
+        XCTAssertEqual(adoptedLoaded, [name])
+        try await restarted.stopServing()
+        let upstreamUp = (try? await URLSession.shared.data(from: URL(string: "http://127.0.0.1:18438/health")!)) != nil
+        XCTAssertFalse(upstreamUp, "the adopted server was stopped")
+        try await engine.stopServing()
         let still = await engine.isServing()
         XCTAssertFalse(still)
     }

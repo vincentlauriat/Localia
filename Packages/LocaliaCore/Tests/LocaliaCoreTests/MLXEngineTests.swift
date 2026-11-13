@@ -45,9 +45,25 @@ final class MLXEngineTests: XCTestCase {
         try Data(#"{"mlxLM":"0.32.2","uv":"0.13.7"}"#.utf8).write(to: root.appendingPathComponent("installed.json"))
     }
 
-    private func engine(launcher: FakeLauncher = FakeLauncher(), gatewayPort: Int = Int.random(in: 30000...50000),
+    /// A new handle per launch, so a restart gets a running server again.
+    private final class FreshLauncher: ServerLauncher, @unchecked Sendable {
+        private let lock = NSLock()
+        private var handles: [FakeServerHandle] = []
+        var count: Int { lock.lock(); defer { lock.unlock() }; return handles.count }
+        var anyRunning: Bool { lock.lock(); defer { lock.unlock() }; return handles.contains { $0.isRunning } }
+        func launch(executable: URL, arguments: [String], environment: [String: String]) throws -> any ServerHandle {
+            let h = FakeServerHandle()
+            lock.lock(); handles.append(h); lock.unlock()
+            return h
+        }
+    }
+
+    private func engine(launcher: any ServerLauncher = FakeLauncher(), gatewayPort: Int = Int.random(in: 30000...50000),
                         health: (@Sendable () -> Int)? = nil) -> MLXEngine {
-        let health = health ?? { launcher.spawnCount > 0 && launcher.handle.isRunning ? 200 : 503 }
+        let health = health ?? {
+            guard let l = launcher as? FakeLauncher else { return 503 }
+            return l.spawnCount > 0 && l.handle.isRunning ? 200 : 503
+        }
         EngineStubProtocol.handler = { req in
             switch req.path {
             case "/health": return StubResponse(status: health())
@@ -231,6 +247,49 @@ final class MLXEngineTests: XCTestCase {
         XCTAssertEqual(launcher.handle.terminateCount, 1)
         let after = await e.isServing()
         XCTAssertFalse(after)
+    }
+
+    func test_switchingModels_restartsServer_andGatewayComesBack() async throws {
+        try fakeInstall()
+        try fakeModel("mlx-community/A-4bit")
+        try fakeModel("mlx-community/B-4bit")
+        let launcher = FreshLauncher()
+        let port = Int.random(in: 30000...50000)
+        let e = engine(launcher: launcher, gatewayPort: port, health: { launcher.anyRunning ? 200 : 503 })
+        let health = URL(string: "http://127.0.0.1:\(port)/health")!
+        try await e.load("mlx-community/A-4bit", contextTokens: 65536)
+        _ = try await URLSession.shared.data(from: health)   // a connection, as Claude Code would have made
+        try await e.load("mlx-community/B-4bit", contextTokens: 65536)
+        XCTAssertEqual(launcher.count, 2)
+        let (_, resp) = try await URLSession.shared.data(from: health)
+        XCTAssertEqual((resp as? HTTPURLResponse)?.statusCode, 200)
+        let loaded = try await e.loadedModels()
+        XCTAssertEqual(loaded.map(\.name), ["mlx-community/B-4bit"])
+        try await e.stopServing()
+    }
+
+    func test_speedMeter_mlx_usesPhysicalFootprint() async throws {
+        try fakeInstall()
+        try fakeModel("mlx-community/A-4bit")
+        let launcher = FakeLauncher()
+        let e = engine(launcher: launcher)
+        try await e.load("mlx-community/A-4bit", contextTokens: 65536)
+        let sse = try Data(contentsOf: try XCTUnwrap(Bundle.module.url(forResource: "mlx-0.32.2-stream-text.sse", withExtension: nil, subdirectory: "Fixtures")))
+        EngineStubProtocol.handler = { req in
+            switch req.path {
+            case "/health": return StubResponse(status: 200)
+            case "/v1/chat/completions": return StubResponse(body: sse)
+            default: return StubResponse(status: 404)
+            }
+        }
+        let meter = SpeedMeter(session: EngineStubProtocol.session(), rssBytes: { _ in 1 }, footprintBytes: { _ in 5 * 1_073_741_824 })
+        let r = try await meter.measure(engine: e, model: "mlx-community/A-4bit", loadedByLocalia: true)
+        XCTAssertEqual(r.memoryGB, 5, accuracy: 0.001, "Metal-resident weights: footprint, not RSS")
+        XCTAssertGreaterThan(r.tps, 0)
+        let probe = try XCTUnwrap(EngineStubProtocol.recorded.last { $0.path == "/v1/chat/completions" }?.json)
+        XCTAssertEqual(probe["max_tokens"] as? Int, SpeedMeter.probeTokens)
+        XCTAssertEqual(probe["stream"] as? Bool, true)
+        try await e.stopServing()
     }
 
     func test_load_refusesForeignServer_andNeedsInstall() async throws {

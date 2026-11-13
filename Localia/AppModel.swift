@@ -108,8 +108,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var downloads: [String: DownloadState] = [:]
     /// `InstalledRow.id` of the model being made the default, while `setDefault` runs.
     @Published private(set) var selectingModel: String?
-    /// MLX: whether a candidate's `mlx-community` repo exists, by repo (absent: not checked yet, or offline).
-    @Published private(set) var mlxRepoExists: [String: Bool] = [:]
+    /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
+    @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
 
     // Installs
     @Published private(set) var engineStates: [EngineID: InstallState] = [:]
@@ -963,9 +963,8 @@ final class AppModel: ObservableObject {
         guard c.fits, downloads[c.id] == nil else { return }
         let engineID = settings.activeEngine
         // MLX downloads only a conversion known to exist (the row says so otherwise).
-        if engineID == .mlx {
-            guard case .available = mlxAvailability(c) else { return }
-        }
+        // MLX never downloads a conversion the Hub said does not exist.
+        if case .missing = mlxAvailability(c) { return }
         downloads[c.id] = DownloadState(candidateID: c.id, displayName: c.displayName, engine: engineID)
         downloadTasks[c.id] = Task { [weak self] in
             guard let self else { return }
@@ -997,24 +996,33 @@ final class AppModel: ObservableObject {
         }
     }
 
+    enum MLXRepoState: Equatable { case exists, missing, unknown }
+
     /// How the active engine would get this candidate: MLX needs an `mlx-community` conversion.
-    enum MLXAvailability: Equatable { case notMLX, checking(String), available(String), missing(String?) }
+    /// `unknown`: the Hub could not be asked (offline, rate limited); the download itself then says if it is missing.
+    enum MLXAvailability: Equatable { case notMLX, checking(String), available(String), unknown(String), missing(String?) }
 
     func mlxAvailability(_ c: ModelCandidate) -> MLXAvailability {
         guard settings.activeEngine == .mlx else { return .notMLX }
         guard let repo = MLXRepo.repo(for: c) else { return .missing(nil) }
-        switch mlxRepoExists[repo] {
-        case true?: return .available(repo)
-        case false?: return .missing(repo)
+        switch mlxRepoState[repo] {
+        case .exists?: return .available(repo)
+        case .missing?: return .missing(repo)
+        case .unknown?: return .unknown(repo)
         case nil: return .checking(repo)
         }
     }
 
-    /// Asks the Hub once per repo whether the candidate's MLX conversion exists (MLX engine only).
+    /// Asks the Hub whether the candidate's MLX conversion exists (MLX engine only). A definite answer is kept;
+    /// an unknown one is asked again next time the row appears.
     func checkMLXRepo(_ c: ModelCandidate) async {
-        guard settings.activeEngine == .mlx, let repo = MLXRepo.repo(for: c), mlxRepoExists[repo] == nil,
-              let exists = await deps.mlxRepos.exists(repo) else { return }
-        mlxRepoExists[repo] = exists
+        guard settings.activeEngine == .mlx, let repo = MLXRepo.repo(for: c),
+              [nil, .unknown].contains(mlxRepoState[repo]) else { return }
+        switch await deps.mlxRepos.exists(repo) {
+        case true?: mlxRepoState[repo] = .exists
+        case false?: mlxRepoState[repo] = .missing
+        case nil: mlxRepoState[repo] = .unknown
+        }
     }
 
     func cancelDownload(_ id: String) {

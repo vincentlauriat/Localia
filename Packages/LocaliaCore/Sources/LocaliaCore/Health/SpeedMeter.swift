@@ -14,12 +14,17 @@ public struct SpeedMeter: Sendable {
 
     private let session: URLSession
     private let rssProvider: @Sendable (Int32) -> Double?
+    private let footprintProvider: @Sendable (Int32) -> Double?
 
-    /// - Parameter rssBytes: resident set size in bytes for a pid (default: `proc_pid_rusage`).
+    /// - Parameters:
+    ///   - rssBytes: resident set size in bytes for a pid (default: `proc_pid_rusage`).
+    ///   - footprintBytes: physical footprint in bytes for a pid, which counts Metal buffers (MLX).
     public init(session: URLSession = .shared,
-                rssBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemRSSBytes) {
+                rssBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemRSSBytes,
+                footprintBytes: @escaping @Sendable (Int32) -> Double? = SpeedMeter.systemFootprintBytes) {
         self.session = session
         self.rssProvider = rssBytes
+        self.footprintProvider = footprintBytes
     }
 
     /// Memory is reported in GiB, like `MachineProfile`. `loadedByLocalia`: only a model Localia loaded
@@ -106,14 +111,13 @@ public struct SpeedMeter: Sendable {
             chunks += 1
         }
         let tokens = completion ?? chunks
-        guard let first, let last, tokens > 1, last > first else {
-            throw SpeedMeterError.badResponse("too few tokens streamed")
+        guard let first, let last, tokens > 1 else { throw SpeedMeterError.badResponse("too few tokens streamed") }
+        let tps = Double(tokens - 1) / max(last.timeIntervalSince(first), 0.001)
+        // MLX keeps the weights in Metal buffers, which the resident size misses: use the physical footprint.
+        guard let pid = await mlx.serverPID(), let bytes = footprintProvider(pid) else {
+            throw SpeedMeterError.badResponse("mlx_lm.server pid / footprint unavailable")
         }
-        let tps = Double(tokens - 1) / last.timeIntervalSince(first)
-        guard let pid = await mlx.serverPID(), let rss = rssProvider(pid) else {
-            throw SpeedMeterError.badResponse("mlx_lm.server pid / RSS unavailable")
-        }
-        return (tps, rss / Self.gib)
+        return (tps, bytes / Self.gib)
     }
 
     private func postJSON(_ url: URL, _ body: [String: Any]) async throws -> [String: Any] {
@@ -126,6 +130,17 @@ public struct SpeedMeter: Sendable {
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw EngineError.http(status) }
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// Physical footprint of `pid` in bytes (what Activity Monitor shows as Memory), or nil if it cannot be read.
+    public static let systemFootprintBytes: @Sendable (Int32) -> Double? = { pid in
+        var info = rusage_info_v4()
+        let rc = withUnsafeMutablePointer(to: &info) { p in
+            p.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, $0)
+            }
+        }
+        return rc == 0 ? Double(info.ri_phys_footprint) : nil
     }
 
     /// Resident set size of `pid` in bytes, or nil if it cannot be read.

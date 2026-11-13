@@ -220,7 +220,10 @@ public actor MLXEngine: Engine {
     static func serverArguments(modelDir: URL, port: Int) -> [String] {
         ["-m", "mlx_lm.server", "--model", modelDir.path, "--host", "127.0.0.1", "--port", String(port),
          // Claude Code always sends max_tokens; this only applies to clients that do not.
-         "--max-tokens", "8192"]
+         "--max-tokens", "8192",
+         // Defaults for fields a request leaves out, set to llama-server's so both engines sample alike
+         // (mlx_lm.server's own default is greedy, temp 0). Values a request sends still win.
+         "--temp", "0.8", "--top-p", "0.95", "--top-k", "40", "--min-p", "0.05"]
     }
 
     static func serverEnvironment(_ base: [String: String]) -> [String: String] {

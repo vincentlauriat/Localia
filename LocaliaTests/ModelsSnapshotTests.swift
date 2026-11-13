@@ -89,7 +89,7 @@ final class ModelsSnapshotTests: XCTestCase {
         hf("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", mem: 21.4, tps: 9, verdict: nil),
     ]
 
-    private func makeModel(engine: FakeEngine, hf: FakeHFCatalog) throws -> AppModel {
+    private func makeModel(engine: FakeEngine, hf: FakeHFCatalog, mlxRepos: FakeMLXRepos? = nil) throws -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         let defaults = UserDefaults(suiteName: suite)!
@@ -97,6 +97,7 @@ final class ModelsSnapshotTests: XCTestCase {
         settings.modelIDs = ["gemma4:e4b-localia": "google/gemma-4-E4B-it",
                              "qwen2.5-coder:7b-localia": "Qwen/Qwen2.5-Coder-7B-Instruct"]
         settings.defaultModel = "gemma4:e4b-localia"
+        if mlxRepos != nil { settings.activeEngine = .mlx }
         settings.measurements = Measurements(tps: ["mistralai/Ministral-8B-Instruct-2410": 23],
                                              memoryGB: ["mistralai/Ministral-8B-Instruct-2410": 9.1])
         let deps = AppDependencies(
@@ -108,7 +109,7 @@ final class ModelsSnapshotTests: XCTestCase {
             profile: MachineProfile(chip: "Apple M3 Pro", totalRAMGB: 24, gpuWorkingSetGB: 18, isAppleSilicon: true),
             appSupportBase: base, claudeConfigDir: base.appendingPathComponent("claude-config"),
             llmfit: LlmfitManager(bundled: URL(fileURLWithPath: "/nonexistent/llmfit"), appSupportBase: base),
-            hasCloudLogin: { true }, notify: { _ in })
+            hasCloudLogin: { true }, notify: { _ in }, mlxRepos: mlxRepos ?? FakeMLXRepos())
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -159,6 +160,20 @@ final class ModelsSnapshotTests: XCTestCase {
         await offline.loadHFRecent()
         XCTAssertEqual(offline.hfRecentState, .unavailable)
 
+        // MLX active: rows show the mlx-community repo, and "No MLX version" where none exists.
+        let mlx = try makeModel(engine: FakeEngine(id: .mlx, installed: []), hf: FakeHFCatalog(offline: true),
+                                mlxRepos: FakeMLXRepos(["mlx-community/Qwen3-8B-4bit": true, "mlx-community/gemma-4-E4B-it-4bit": true,
+                                                        "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit": true,
+                                                        "mlx-community/Llama-3.1-8B-Instruct-4bit": false,
+                                                        "mlx-community/granite-3.3-8b-instruct-4bit": false]))
+        await mlx.refreshAll()
+        await mlx.refreshRecommendations()
+        for c in mlx.recommendation?.candidates ?? [] { await mlx.checkMLXRepo(c) }
+        let qwen8 = try XCTUnwrap(mlx.recommendation?.candidates.first { $0.id == "Qwen/Qwen3-8B" })
+        XCTAssertEqual(mlx.mlxAvailability(qwen8), .available("mlx-community/Qwen3-8B-4bit"))
+        var mlxBrowser = ModelsBrowserState()
+        mlxBrowser.selectedID = "Qwen/Qwen3-8B"
+
         struct Shot {
             let name: String
             let model: AppModel
@@ -193,6 +208,7 @@ final class ModelsSnapshotTests: XCTestCase {
             Shot(name: "hf-offline", model: offline, section: .newOnHF),
             Shot(name: "installed", model: online, section: .installed),
             Shot(name: "downloads", model: online, section: .downloads),
+            Shot(name: "mlx-for-this-mac", model: mlx, section: .forThisMac, browser: mlxBrowser),
             Shot(name: "min-size", model: online, section: .forThisMac, browser: measured, size: ModelsWindow.minSize),
         ]
         for shot in shots {
