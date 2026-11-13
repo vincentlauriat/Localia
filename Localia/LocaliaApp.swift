@@ -27,7 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         let deps = AppDependencies.live()
-        let model = AppModel(deps: deps, confirmMemory: { warning in MemoryAlert.confirm(warning) })
+        let settings = deps.settings
+        let model = AppModel(deps: deps, confirmMemory: { warning in
+            MemoryAlert.confirm(warning, simple: !settings.advancedMode)
+        })
         self.model = model
         self.windows = WindowManager(model: model)
         self.updater = Updater(enabled: !Self.isRunningTests)
@@ -68,16 +71,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// The memory warning before a model load (Continue / Cancel).
 @MainActor
 enum MemoryAlert {
-    static func confirm(_ w: MemoryWarning) -> Bool {
+    static func confirm(_ w: MemoryWarning, simple: Bool = false) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Memory is short")
         var lines: [String] = []
-        if w.notEnoughMemory {
-            lines.append(String(localized: "This model needs about \(Fmt.gb(w.requiredGB)), and about \(Fmt.gb(w.availableGB)) is free. The Mac may slow down."))
-        }
-        if !w.heavyApps.isEmpty {
-            lines.append(String(localized: "Memory-hungry apps are open: \(w.heavyApps.joined(separator: ", ")). Quitting them makes the model faster."))
+        if simple {
+            // What to do, without sizes.
+            alert.messageText = String(localized: "Memory is tight")
+            lines.append(w.heavyApps.isEmpty
+                ? String(localized: "Your AI may be slow. Quit some apps to free memory, or continue anyway.")
+                : String(localized: "Quit \(w.heavyApps.formatted(.list(type: .and).locale(Fmt.appLocale))) to free memory, or continue anyway."))
+        } else {
+            if w.notEnoughMemory {
+                lines.append(String(localized: "This model needs about \(Fmt.gb(w.requiredGB)), and about \(Fmt.gb(w.availableGB)) is free. The Mac may slow down."))
+            }
+            if !w.heavyApps.isEmpty {
+                lines.append(String(localized: "Memory-hungry apps are open: \(w.heavyApps.joined(separator: ", ")). Quitting them makes the model faster."))
+            }
         }
         alert.informativeText = lines.joined(separator: "\n\n")
         alert.addButton(withTitle: String(localized: "Continue"))

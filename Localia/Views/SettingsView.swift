@@ -161,7 +161,7 @@ private struct EngineRow: View {
 }
 
 /// Shows the exact block that goes into the shell rc files before anything is written.
-private struct EveryClaudeConfirmation: View {
+struct EveryClaudeConfirmation: View {
     let block: String
     let onCancel: () -> Void
     let onConfirm: () -> Void

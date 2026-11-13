@@ -16,6 +16,8 @@ struct AppAlert: Identifiable {
     let title: String
     let message: String
     var action: Action? = nil
+    /// What simple mode tells the user to do instead of `message` (nil: "Try again").
+    var hint: SimpleHint? = nil
 }
 
 /// A model download in progress (bytes).
@@ -93,6 +95,8 @@ final class AppModel: ObservableObject {
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
+    /// Simple mode: the Models window shows the full view ("See all models…") until the app quits.
+    @Published var modelsShowAll = false
 
     // Models
     @Published private(set) var recommendation: Recommendation?
@@ -112,6 +116,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectingModel: String?
     /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
     @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
+
+    // Simple mode first run
+    @Published private(set) var simpleSetup: SimpleSetupPhase = .idle
+    /// The steps the running (or last) first run had to do, for its single progress bar.
+    @Published private(set) var simpleSetupPlan = SimpleSetupPlan()
+    /// The model the first run installs.
+    @Published private(set) var simpleSetupPick: ModelCandidate?
 
     // Installs
     @Published private(set) var engineStates: [EngineID: InstallState] = [:]
@@ -232,9 +243,14 @@ final class AppModel: ObservableObject {
     /// Generation speed of a served model in words per second (about 0.75 words per token): the measured
     /// tok/s when there is one, else llmfit's estimate. Nil when neither is known.
     func wordsPerSecond(for served: String) -> (value: Double, measured: Bool)? {
+        tokensPerSecond(for: served).map { ($0.value * Self.wordsPerToken, $0.measured) }
+    }
+
+    /// Generation speed of a served model in tokens per second: measured, else llmfit's estimate.
+    func tokensPerSecond(for served: String) -> (value: Double, measured: Bool)? {
         let id = candidateID(for: served)
-        if let tps = settings.measurements.tps[id] { return (tps * Self.wordsPerToken, true) }
-        if let c = knownCandidate(id) { return (c.estimatedTPS * Self.wordsPerToken, false) }
+        if let tps = settings.measurements.tps[id] { return (tps, true) }
+        if let c = knownCandidate(id) { return (c.estimatedTPS, false) }
         return nil
     }
 
@@ -249,7 +265,8 @@ final class AppModel: ObservableObject {
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
         if let mlx = engine as? MLXEngine, let model = await mlx.takeFailure() {
             alert = AppAlert(title: String(localized: "MLX stopped"),
-                             message: String(localized: "MLX ran out of memory again with \(displayName(for: model)), so Localia stopped it. Close other apps or choose a smaller model, then start MLX again."))
+                             message: String(localized: "MLX ran out of memory again with \(displayName(for: model)), so Localia stopped it. Close other apps or choose a smaller model, then start MLX again."),
+                             hint: .lighterModel)
         }
     }
 
@@ -526,7 +543,8 @@ final class AppModel: ObservableObject {
             } else {
                 claudePath = nil
                 alert = AppAlert(title: String(localized: "Claude Code is not installed"),
-                                 message: String(localized: "Install it from the welcome window or Settings, then try again."))
+                                 message: String(localized: "Install it from the welcome window or Settings, then try again."),
+                                 hint: .installClaude)
             }
             return
         }
@@ -553,7 +571,8 @@ final class AppModel: ObservableObject {
         if case let .local(engineID, _, model, _) = target {
             guard !model.isEmpty, let engine = await registry.engine(engineID) else {
                 alert = AppAlert(title: String(localized: "No local model"),
-                                 message: String(localized: "Download a model in the Models window first."))
+                                 message: String(localized: "Download a model in the Models window first."),
+                                 hint: .setUp)
                 return
             }
             if let other = await llamaConflict(engine: engineID, model: model) {
@@ -671,7 +690,7 @@ final class AppModel: ObservableObject {
         let message = tool.map {
             String(localized: "\(engine) runs one model at a time, and a \($0) session is using \(name). Wait for that session to end, or end it, then try again.")
         } ?? String(localized: "\(engine) runs one model at a time, and another session is using \(name). Wait for that session to end, or end it, then try again.")
-        return AppAlert(title: String(localized: "\(engine) is busy"), message: message)
+        return AppAlert(title: String(localized: "\(engine) is busy"), message: message, hint: .closeOtherSession)
     }
 
     /// Spec 6.4. Detection is best effort (a GUI app does not see keys exported in the shell rc), so this
@@ -681,7 +700,8 @@ final class AppModel: ObservableObject {
                  message: String(localized: "No Claude login was found on this Mac, so Claude Code may ask you to log in. To work without an account, switch to local mode."),
                  action: .init(title: String(localized: "Switch to Local Mode")) { [weak self] in
                      await self?.setLocalMode(true)
-                 })
+                 },
+                 hint: .cloudLogin)
     }
 
     private func engineInUse(_ id: EngineID, excluding own: ModelKey? = nil) async -> Bool {
@@ -1006,7 +1026,7 @@ final class AppModel: ObservableObject {
                 if self.settings.defaultModel == nil { self.settings.defaultModel = name }
             } catch {
                 if !Task.isCancelled, !(error is CancellationError), (error as? URLError)?.code != .cancelled {
-                    self.show(error, title: String(localized: "Download failed"))
+                    self.show(error, title: String(localized: "Download failed"), hint: .checkConnection)
                 }
             }
             self.downloads[c.id] = nil
@@ -1046,6 +1066,11 @@ final class AppModel: ObservableObject {
 
     func cancelDownload(_ id: String) {
         downloadTasks[id]?.cancel()
+    }
+
+    /// Returns once the download of `id` has ended (installed, failed or cancelled); at once when none runs.
+    func waitForDownload(_ id: String) async {
+        await downloadTasks[id]?.value
     }
 
     func delete(_ row: InstalledRow) async {
@@ -1128,6 +1153,65 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
+    // MARK: - Simple mode first run
+
+    /// Simple mode's one-click setup: installs the active engine (Ollama unless the user chose another) and
+    /// Claude Code when missing, downloads the model the recommendation picks for this Mac, makes it the
+    /// model Claude uses and turns local mode on. Every step is the existing install / download path; a
+    /// failure stops the run with one plain sentence (the technical alert is kept as its detail).
+    func runSimpleSetup() async {
+        if case .running = simpleSetup { return }
+        let engineID = settings.activeEngine
+        simpleSetupPlan = SimpleSetupPlan(engine: !isEngineInstalled(engineID), claude: claudePath == nil, model: true)
+        simpleSetup = .running(.engine)
+        if simpleSetupPlan.engine {
+            await installEngine(engineID)
+            guard isEngineInstalled(settings.activeEngine) else { return failSimpleSetup(.checkConnection) }
+        }
+        if simpleSetupPlan.claude {
+            simpleSetup = .running(.claude)
+            await installClaude()
+            guard claudePath != nil else { return failSimpleSetup(.checkConnection) }
+        }
+        simpleSetup = .running(.model)
+        if recommendation == nil { await refreshRecommendations() }
+        guard let r = recommendation, let pick = SimplePicks.firstRunPick(r) else {
+            return failSimpleSetup(recommendation?.emptyReason != nil ? .noModelFits : .tryAgain,
+                                   detail: recommendationError)
+        }
+        simpleSetupPick = pick
+        if installedName(for: pick) == nil {
+            if downloads[pick.id] == nil { download(pick) }
+            await waitForDownload(pick.id)
+            guard installedName(for: pick) != nil else { return failSimpleSetup(.checkConnection) }
+        }
+        if let name = installedName(for: pick),
+           let row = installed.first(where: { $0.engine == settings.activeEngine && $0.name == name }) {
+            await setDefault(row)
+        }
+        if !isLocalModeOn { await setLocalMode(true) }
+        if alert != nil { return failSimpleSetup(.tryAgain) }
+        finishOnboarding()
+        simpleSetup = .done
+    }
+
+    /// Back to the welcome screen of the first run (its window was closed before it finished).
+    func resetSimpleSetup() {
+        if case .running = simpleSetup { return }
+        simpleSetup = .idle
+    }
+
+    private func failSimpleSetup(_ hint: SimpleHint, detail: String? = nil) {
+        let technical = alert.map { "\($0.title): \($0.message)" } ?? detail
+        alert = nil
+        simpleSetup = .failed(SimpleIssue(hint: hint, heavyApps: heavyApps, detail: technical))
+    }
+
+    func isEngineInstalled(_ id: EngineID) -> Bool {
+        if case .installed = engineStates[id] ?? .notInstalled { return true }
+        return false
+    }
+
     // MARK: - Installs and updates
 
     func installEngine(_ id: EngineID) async {
@@ -1136,7 +1220,7 @@ final class AppModel: ObservableObject {
         do {
             try await e.install { p in Task { @MainActor [weak self] in self?.engineInstallProgress[id] = p } }
         } catch {
-            show(error, title: String(localized: "Could not install \(Self.engineName(id))"))
+            show(error, title: String(localized: "Could not install \(Self.engineName(id))"), hint: .checkConnection)
         }
         engineInstallProgress[id] = nil
         engineStates[id] = await e.installState()
@@ -1210,7 +1294,7 @@ final class AppModel: ObservableObject {
         installingClaude = true
         defer { installingClaude = false }
         do { try await deps.tool.install { _ in } } catch {
-            show(error, title: String(localized: "Could not install Claude Code"))
+            show(error, title: String(localized: "Could not install Claude Code"), hint: .checkConnection)
         }
         claudePath = await deps.tool.locate()
     }
@@ -1266,8 +1350,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func show(_ error: Error, title: String) {
-        alert = AppAlert(title: title, message: describe(error))
+    private func show(_ error: Error, title: String, hint: SimpleHint? = nil) {
+        alert = AppAlert(title: title, message: describe(error), hint: hint)
     }
 
     func describe(_ error: Error) -> String {
