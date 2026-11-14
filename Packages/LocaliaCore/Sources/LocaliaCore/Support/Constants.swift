@@ -6,7 +6,8 @@ public enum LocaliaConstants {
     /// Minimum acceptable generation speed (tokens/second) for a recommendation.
     public static let speedFloorTPS = 15
     /// Below this size (billions of parameters), a model is marked "simple tasks" for Claude Code.
-    public static let claudeCodeMinParamsB = 14.0
+    /// 14B was disproved on 2026-11-14 (Qwen3-14B failed a multi-file task), hence 30B.
+    public static let claudeCodeMinParamsB = 30.0
     public static let defaultQuant = "Q4_K_M"
     /// GPU memory (GB) kept free for Metal / the system.
     public static let gpuHeadroomGB = 1.5

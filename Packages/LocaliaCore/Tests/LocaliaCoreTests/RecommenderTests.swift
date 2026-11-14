@@ -181,7 +181,7 @@ final class RecommenderTests: XCTestCase {
             XCTAssertEqual(c.simpleTasksOnly, p < LocaliaConstants.claudeCodeMinParamsB, c.id)
         }
         XCTAssertTrue(all.contains { $0.simpleTasksOnly }, "small models are marked")
-        XCTAssertTrue(all.contains { !$0.simpleTasksOnly }, "14B and up are not")
+        XCTAssertTrue(all.contains { !$0.simpleTasksOnly }, "30B and up are not")
         let unknown = ModelCandidate(id: "x", displayName: "x", ggufRepo: "x", quant: "Q4_K_M", weightsGB: 1,
                                      memoryGB: 2, estimatedTPS: 30, fit: .good, slow: false, supportsTools: true,
                                      memoryIsMeasured: false, speedIsMeasured: false, quality: 1)
