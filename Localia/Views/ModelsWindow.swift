@@ -739,7 +739,7 @@ private struct ModelBadges: View {
             if item.candidate.slow { Badge(text: String(localized: "slow"), color: Theme.orange) }
             if item.candidate.supportsTools, item.candidate.simpleTasksOnly {
                 Badge(text: String(localized: "simple tasks"), color: .gray)
-                    .help(String(localized: "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more."))
+                    .help(String(localized: "Fine for small fixes with Claude Code. For work across several files, prefer a model of 30B parameters or more."))
             }
         }
         .fixedSize()

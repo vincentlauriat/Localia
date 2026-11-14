@@ -2241,18 +2241,18 @@
         }
       }
     },
-    "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more.": {
+    "Fine for small fixes with Claude Code. For work across several files, prefer a model of 30B parameters or more.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fine for small fixes with Claude Code. For work across several files, prefer a model of 14B parameters or more."
+            "value": "Fine for small fixes with Claude Code. For work across several files, prefer a model of 30B parameters or more."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Convient aux petites corrections avec Claude Code. Pour un travail sur plusieurs fichiers, préférez un modèle de 14B paramètres ou plus."
+            "value": "Convient aux petites corrections avec Claude Code. Pour un travail sur plusieurs fichiers, préférez un modèle de 30B paramètres ou plus."
           }
         }
       }
