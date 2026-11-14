@@ -6,8 +6,13 @@
 #
 # Shared Apple credentials (same for all Mac apps, see the macos-app-release skill):
 #   - Developer ID Application: Vincent LAURIAT (KFLACS69T9)
-#   - notarytool keychain profile "AppliMacVincentGithub"
-# Overridable via env: SIGNING_IDENTITY, NOTARY_PROFILE, SPARKLE_ACCOUNT.
+#   - notarization credentials, in this order:
+#     1. an App Store Connect API key (.p8) when NOTARY_KEY_ID, NOTARY_ISSUER_ID and
+#        NOTARY_KEY_PATH are set, or read from NOTARY_ENV_FILE
+#        (default ~/.config/notarytool/api-key.env, three KEY=value lines). The key file
+#        lives outside the keychain, so it does not vanish with it.
+#     2. otherwise the notarytool keychain profile "AppliMacVincentGithub".
+# Overridable via env: SIGNING_IDENTITY, NOTARY_PROFILE, NOTARY_ENV_FILE, SPARKLE_ACCOUNT.
 # Distributable releases (NOTARIZE != 0) need an explicit BUILD_NUMBER (monotonic, it is Sparkle's
 # version), must run from the main branch, and need a non-empty SUPublicEDKey unless ALLOW_NO_UPDATES=1.
 # NOTARIZE=0 builds and signs the DMG only (local check; the result is NOT distributable).
@@ -44,12 +49,34 @@ mkdir -p "$RELEASE_DIR"
 
 echo "> Releasing $APP_NAME $VERSION (build $BUILD_NUMBER)"
 
-# Fail early if the notary profile is missing (before spending time on the build).
-[ "$NOTARIZE" = "0" ] || xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || {
-  echo "x Notary profile \"$NOTARY_PROFILE\" not found. Recreate it manually:" >&2
+# Notary credentials: API key (.p8) first, keychain profile otherwise.
+NOTARY_ENV_FILE="${NOTARY_ENV_FILE:-$HOME/.config/notarytool/api-key.env}"
+if [ -z "${NOTARY_KEY_ID:-}" ] && [ -f "$NOTARY_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$NOTARY_ENV_FILE"
+fi
+if [ -n "${NOTARY_KEY_ID:-}" ] || [ -n "${NOTARY_ISSUER_ID:-}" ] || [ -n "${NOTARY_KEY_PATH:-}" ]; then
+  NOTARY_KEY_PATH="${NOTARY_KEY_PATH/#\~/$HOME}"
+  [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISSUER_ID:-}" ] && [ -f "${NOTARY_KEY_PATH:-}" ] || {
+    echo "x Incomplete API key: NOTARY_KEY_ID, NOTARY_ISSUER_ID and an existing NOTARY_KEY_PATH are all required." >&2
+    exit 1
+  }
+  NOTARY_AUTH=(--key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+  NOTARY_DESC="API key $NOTARY_KEY_ID"
+else
+  NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
+  NOTARY_DESC="keychain profile \"$NOTARY_PROFILE\""
+fi
+
+# Fail early if the credentials do not work (before spending time on the build).
+[ "$NOTARIZE" = "0" ] || xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1 || {
+  echo "x Notary credentials rejected or missing ($NOTARY_DESC)." >&2
+  echo "  Either create an App Store Connect API key and write $NOTARY_ENV_FILE with" >&2
+  echo "  NOTARY_KEY_ID=..., NOTARY_ISSUER_ID=..., NOTARY_KEY_PATH=..., or recreate the profile:" >&2
   echo "    xcrun notarytool store-credentials \"$NOTARY_PROFILE\" --apple-id <your-apple-id> --team-id KFLACS69T9" >&2
   exit 1
 }
+[ "$NOTARIZE" = "0" ] || echo "> Notarizing with $NOTARY_DESC"
 
 # 1. Regenerate the Xcode project. The pre-build phase runs Scripts/fetch-llmfit.sh,
 #    which fails the build when the pinned llmfit checksum does not match.
@@ -158,10 +185,10 @@ fi
 
 # 6. Notarize: only "Accepted" on THIS dmg counts.
 echo "> notarytool submit --wait"
-NOTARY_OUT="$(xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)" || true
+NOTARY_OUT="$(xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait 2>&1)" || true
 echo "$NOTARY_OUT"
 if ! echo "$NOTARY_OUT" | grep -q "status: Accepted"; then
-  echo "x Notarization was not Accepted. Read the log with: xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE" >&2
+  echo "x Notarization was not Accepted. Read the log with: xcrun notarytool log <id> ${NOTARY_AUTH[*]}" >&2
   exit 1
 fi
 xcrun stapler staple "$DMG"
