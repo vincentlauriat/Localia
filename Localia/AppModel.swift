@@ -638,8 +638,16 @@ final class AppModel: ObservableObject {
             return
         }
         let sessionID = UUID()
-        // The first proxy check may still be running: wait for it rather than route direct by default.
-        if case .local = target, case .unknown = proxy.state { await ensureProxy() }
+        if case .local = target {
+            if case .unknown = proxy.state {
+                // The first proxy check may still be running: wait for it rather than route direct by default.
+                await ensureProxy()
+            } else if await proxy.answers() != proxy.isHealthy {
+                // The state is stale (the service died, or came back since): check again (which restarts a
+                // silent service once), then route per the result.
+                await ensureProxy()
+            }
+        }
         target = controller.routed(target, session: sessionID.uuidString)
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?

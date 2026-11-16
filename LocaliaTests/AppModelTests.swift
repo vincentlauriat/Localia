@@ -80,6 +80,45 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.proxyRestarting)
     }
 
+    /// Settings "Restart" forces a restart of the service, not just another check.
+    func test_restartProxy_forcesARestart() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
+        await model.restartProxy()
+        XCTAssertEqual(proxy.restarts, 1)
+        XCTAssertEqual(proxy.checks, 0)
+    }
+
+    /// A `.running` state that no longer answers (the service died since) is checked again before a launch,
+    /// and the launch follows the result: direct here.
+    func test_launch_staleRunningProxy_isRechecked_andRoutesPerTheResult() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.answering = false
+        proxy.stateAfterCheck = .unavailable(reason: "gone")
+        let engine = FakeEngine(installed: ["m1"]), tool = FakeTool()
+        let model = makeModel(engine: engine, tool: tool, proxy: proxy)
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        XCTAssertEqual(proxy.checks, 1)
+        guard case let .local(_, baseURL, _, _) = tool.targets.last else { return XCTFail("\(tool.targets)") }
+        XCTAssertEqual(baseURL, engine.baseURL)
+        XCTAssertEqual(model.proxyState, .unavailable(reason: "gone"))
+    }
+
+    /// A proxy that answers is used as is: no check on the launch path.
+    func test_launch_answeringProxy_routesThroughIt_withoutACheck() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let engine = FakeEngine(installed: ["m1"]), tool = FakeTool()
+        let model = makeModel(engine: engine, tool: tool, proxy: proxy)
+        await model.setLocalMode(true)
+        let checksBefore = proxy.checks
+        await model.launch(folder: try folder())
+        XCTAssertEqual(proxy.checks, checksBefore)
+        XCTAssertGreaterThanOrEqual(proxy.probes, 1)
+        guard case let .local(_, baseURL, _, _) = tool.targets.last else { return XCTFail("\(tool.targets)") }
+        XCTAssertEqual(baseURL.port, LocaliaConstants.proxyPort)
+    }
+
     func test_changingRoute_refreshesTheShimState() async {
         let shim = FakeShim()
         let model = makeModel(engine: FakeEngine(installed: []), shim: shim)
@@ -1220,9 +1259,15 @@ final class FakeProxyService: ProxyServiceControlling {
     private(set) var pushed: [ProxyConfig] = []
     private(set) var erased: [(log: Bool, stats: Bool)] = []
     var eraseError: Error?
+    /// What a quick probe sees; nil follows `state`.
+    var answering: Bool?
+    /// The state a check or a restart leaves; nil keeps it.
+    var stateAfterCheck: ProxyState?
+    private(set) var checks = 0, restarts = 0, probes = 0
     init(state: ProxyState) { self.state = state }
-    func ensureRunning() async {}
-    func restart() async {}
+    func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
+    func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
+    func answers() async -> Bool { probes += 1; return answering ?? isHealthy }
     func push(_ config: ProxyConfig) async { pushed.append(config) }
     func erase(log: Bool, stats: Bool) async throws {
         if let eraseError { throw eraseError }

@@ -37,6 +37,8 @@ protocol ProxyServiceControlling: AnyObject {
     /// Settings "Restart": re-registers the agent even when a check found it running (never when the user
     /// turned it off in Login Items).
     func restart() async
+    /// A quick health probe (about 1 s), so a launch never trusts a stale `.running`.
+    func answers() async -> Bool
     func push(_ config: ProxyConfig) async
     func erase(log: Bool, stats: Bool) async throws
     /// Unregisters the LaunchAgent, so deleting the app leaves no agent behind.
@@ -51,6 +53,7 @@ final class InertProxyService: ProxyServiceControlling, Sendable {
     var isHealthy: Bool { false }
     func ensureRunning() async {}
     func restart() async {}
+    func answers() async -> Bool { false }
     func push(_ config: ProxyConfig) async {}
     func erase(log: Bool, stats: Bool) async throws {}
     func uninstall() async {}
@@ -136,6 +139,8 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         if let inflight { await inflight.value }
         await run(force: true)
     }
+
+    func answers() async -> Bool { await healthVersion() != nil }
 
     private func run(force: Bool) async {
         let task = Task { await self.check(force: force) }
