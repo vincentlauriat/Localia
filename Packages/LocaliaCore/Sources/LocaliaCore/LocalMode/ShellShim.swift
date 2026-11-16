@@ -15,6 +15,8 @@ public enum ShellShimError: Error, Equatable {
 public protocol ShellShimming: Sendable {
     func install() throws
     func uninstall() throws
+    /// Rewrites the shim files when they differ from this build's (an update), without touching rc files.
+    func refreshShimFiles() throws
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws
 }
@@ -267,10 +269,15 @@ public struct ShellShim: ShellShimming {
 
     // MARK: - Shim files
 
+    public func refreshShimFiles() throws { try writeShimFiles() }
+
+    /// Writes each file whose content differs from this build's; an up-to-date file is left as is.
     private func writeShimFiles() throws {
         try FileManager.default.createDirectory(at: shimDir, withIntermediateDirectories: true)
         for (name, text) in [("claude.zsh", shimScript(zsh: true)), ("claude.bash", shimScript(zsh: false))] {
-            try Data(text.utf8).write(to: shimDir.appendingPathComponent(name), options: .atomic)
+            let url = shimDir.appendingPathComponent(name), data = Data(text.utf8)
+            if (try? Data(contentsOf: url)) == data { continue }
+            try data.write(to: url, options: .atomic)
         }
     }
 

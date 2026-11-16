@@ -31,6 +31,14 @@ final class SessionAttributionTests: XCTestCase {
         XCTAssertEqual(SessionAttribution.read(session: UUID().uuidString, dir: dir), Attribution(tool: nil, folder: nil))
     }
 
+    /// The unattributed `shell` session never reaches the file system, even if such a file exists.
+    func test_shellSession_isUnknown_noFileLookup() throws {
+        try "engine=ollama\nmodel=m\nfolder=/Users/me/shim\npid=1\n"
+            .write(to: dir.appendingPathComponent("shell.session"), atomically: true, encoding: .utf8)
+        try "tool=X\nfolder=/y\n".write(to: dir.appendingPathComponent("shell.attrib"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(SessionAttribution.read(session: ProxyPath.unattributedSession, dir: dir), Attribution(tool: nil, folder: nil))
+    }
+
     func test_traversalSession_isNilNil() throws {
         try "tool=X\nfolder=/y\n".write(to: dir.deletingLastPathComponent().appendingPathComponent("x.attrib"),
                                        atomically: true, encoding: .utf8)

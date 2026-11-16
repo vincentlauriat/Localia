@@ -19,7 +19,10 @@ public enum SessionAttribution {
 
     public static func read(session: String, dir: URL) -> Attribution {
         // The id comes from a request path: only the proxy's own pattern may reach the file system.
-        guard ProxyPath.isValidSession(session) else { return Attribution(tool: nil, folder: nil) }
+        // `shell` names no run (no uuidgen, or a pre-proxy shim): never looked up on disk.
+        guard ProxyPath.isValidSession(session), session != ProxyPath.unattributedSession else {
+            return Attribution(tool: nil, folder: nil)
+        }
         if let f = fields(dir.appendingPathComponent("\(session).attrib")) {
             return Attribution(tool: f["tool"], folder: f["folder"])
         }

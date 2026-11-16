@@ -184,6 +184,27 @@ final class ProxyServerTests: XCTestCase {
         XCTAssertNil(r.error)
     }
 
+    /// A pre-proxy shim sends the session placeholder literally (or percent-encoded): forwarded to the engine
+    /// and recorded under `shell`, with no tool or folder.
+    func test_sessionPlaceholder_forwarded_recordedAsShell() async throws {
+        let json = try fixture("anthropic-nonstream.json")
+        EngineStubProtocol.handler = { _ in StubResponse(body: json) }
+        for (i, ph) in ["@LOCALIA_SESSION@", "%40LOCALIA_SESSION%40"].enumerated() {
+            let (code, body) = try await post("/s/\(ph)/ollama/v1/messages", #"{"model":"m","messages":[]}"#)
+            XCTAssertEqual(code, 200, ph)
+            XCTAssertEqual(Data(body.utf8), json, ph)
+            let rs = try await waitForRecords(i + 1)
+            XCTAssertEqual(rs.count, i + 1, ph)
+            for r in rs {
+                XCTAssertEqual(r.session, "shell", ph)
+                XCTAssertNil(r.tool, ph)
+                XCTAssertNil(r.folder, ph)
+                XCTAssertEqual(r.engine, .ollama, ph)
+            }
+        }
+        XCTAssertEqual(EngineStubProtocol.recorded.map(\.path), ["/v1/messages", "/v1/messages"])
+    }
+
     func test_nonStreamedMessages_usageFromJSON() async throws {
         let json = try fixture("anthropic-nonstream.json")
         EngineStubProtocol.handler = { _ in StubResponse(body: json) }

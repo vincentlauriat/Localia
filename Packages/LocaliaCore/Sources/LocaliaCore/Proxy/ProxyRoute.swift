@@ -14,11 +14,16 @@ public struct ProxyPath: Equatable, Sendable {
         self.session = session; self.engine = engine; self.rest = rest
     }
 
+    /// The session of requests that name no run (the shim's own fallback id, the pre-proxy shim's placeholder).
+    public static let unattributedSession = "shell"
+
     public static func parse(_ path: String) -> ProxyPath? {
         let parts = path.split(separator: "/", maxSplits: 4, omittingEmptySubsequences: false)
         // ["", "s", session, engine, rest...]
         guard parts.count >= 4, parts[0].isEmpty, parts[1] == "s" else { return nil }
-        let session = String(parts[2])
+        var session = String(parts[2])
+        // A shell still running the pre-proxy shim function sends the placeholder unreplaced.
+        if session == ProxyURL.sessionPlaceholder || session == "%40LOCALIA_SESSION%40" { session = unattributedSession }
         guard isValidSession(session), let engine = EngineID(rawValue: String(parts[3])) else { return nil }
         let rest = parts.count == 5 ? "/" + parts[4] : ""
         return ProxyPath(session: session, engine: engine, rest: rest)

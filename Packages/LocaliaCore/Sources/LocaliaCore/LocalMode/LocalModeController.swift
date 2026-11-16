@@ -149,6 +149,13 @@ public final class LocalModeController: ObservableObject {
         settings.localModeScope = newScope
     }
 
+    /// At app start: in `.everyClaude` scope, brings the shim files up to this build (an update changes
+    /// them, and `install()` only runs when the scope is chosen). rc files are left alone.
+    public func refreshShimFiles() throws {
+        guard scope == .everyClaude else { return }
+        try shim.refreshShimFiles()
+    }
+
     /// Remembers the model and, when the shim is live, points it at that model.
     public func noteModelUsed(_ model: String) async throws {
         settings.lastModel = model

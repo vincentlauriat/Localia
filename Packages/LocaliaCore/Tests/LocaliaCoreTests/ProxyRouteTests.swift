@@ -13,6 +13,21 @@ final class ProxyRouteTests: XCTestCase {
         }
     }
 
+    /// A shell that still holds the pre-proxy shim function sends the placeholder as is (or percent-encoded):
+    /// it is routed under the unattributed `shell` session instead of a 404.
+    func test_parse_acceptsSessionPlaceholder_asShellSession() {
+        for ph in ["@LOCALIA_SESSION@", "%40LOCALIA_SESSION%40"] {
+            XCTAssertEqual(ProxyPath.parse("/s/\(ph)/ollama/api/version"),
+                           ProxyPath(session: ProxyPath.unattributedSession, engine: .ollama, rest: "/api/version"), ph)
+        }
+        XCTAssertEqual(ProxyPath.unattributedSession, "shell")
+        for bad in ["/s/x@LOCALIA_SESSION@/ollama/x", "/s/@LOCALIA_SESSION@x/ollama/x", "/s/@other@/ollama/x",
+                    "/s/%40LOCALIA_SESSION@/ollama/x"] {
+            XCTAssertNil(ProxyPath.parse(bad), bad)
+        }
+        XCTAssertFalse(ProxyPath.isValidSession("@LOCALIA_SESSION@"))
+    }
+
     func test_baseURL() {
         XCTAssertEqual(ProxyURL.base(session: "abc", engine: .llamaCpp).absoluteString,
                        "http://127.0.0.1:11438/s/abc/llamaCpp")

@@ -33,7 +33,8 @@ private struct FakeSource: LocalModelSource {
 
 private final class FakeShim: ShellShimming, @unchecked Sendable {
     struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; var contextTokens = 32768; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID; var proxyProbe: URL? = nil }
-    var installs = 0, uninstalls = 0
+    var installs = 0, uninstalls = 0, refreshes = 0
+    func refreshShimFiles() throws { refreshes += 1 }
     var states: [State] = []
     var failInstall = false
     func install() throws {
@@ -132,6 +133,19 @@ final class LocalModeControllerTests: XCTestCase {
         XCTAssertEqual(shim.uninstalls, 1)
         XCTAssertEqual(shim.states.last?.on, false)
         XCTAssertEqual(s.localModeScope, .localiaOnly)
+    }
+
+    /// App start refreshes the shim files only in `.everyClaude` scope (an update changes them).
+    func test_refreshShimFiles_onlyInEveryClaudeScope() async throws {
+        let (c, shim, _) = make()
+        try c.refreshShimFiles()
+        XCTAssertEqual(shim.refreshes, 0)
+        let s = InMemoryLocalModeSettings(); s.localModeScope = .everyClaude
+        let (c2, shim2, _) = make(settings: s)
+        try c2.refreshShimFiles()
+        XCTAssertEqual(shim2.refreshes, 1)
+        XCTAssertEqual(shim2.installs, 0)
+        XCTAssertTrue(shim2.states.isEmpty)
     }
 
     func test_failedInstall_keepsScope() async throws {

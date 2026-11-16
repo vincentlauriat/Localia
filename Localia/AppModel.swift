@@ -201,6 +201,10 @@ final class AppModel: ObservableObject {
 
     /// Starts background work (status polling, recommendations, offline monitor). Not called in tests.
     func start() async {
+        // Shells opened from now on get this build's shim function (an update may have changed it).
+        do { try controller.refreshShimFiles() } catch {
+            log.error("cannot refresh the shell shim: \(String(describing: error), privacy: .public)")
+        }
         await registry.setActive(settings.activeEngine)
         await refreshAll()
         statusTask = Task { [weak self] in
