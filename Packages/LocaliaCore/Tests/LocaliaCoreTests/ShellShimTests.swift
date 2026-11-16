@@ -811,6 +811,71 @@ final class ShellShimTests: XCTestCase {
         }
     }
 
+    /// Direct state, autoStart, the engine never answers: the messages are exactly the pre-proxy ones.
+    func test_shim_direct_autoStart_messages_golden() throws {
+        try installAndState(on: true, policy: .autoStart)
+        let text = try XCTUnwrap(stateText).replacingOccurrences(of: "\nwait=20\n", with: "\nwait=1\n")
+        try text.write(to: shimDir.appendingPathComponent("state.env"), atomically: true, encoding: .utf8)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertEqual(r.stderr, "Localia: starting the local engine...\n"
+                           + "Localia: the local engine did not start within 1 s.\n"
+                           + "Run 'command claude' to use the cloud version.\n", shell)
+        }
+        touch("open_fails")
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertEqual(r.stderr, "Localia: the local engine is not running and could not start Localia (was the app removed?).\n"
+                           + "Run 'command claude' to use the cloud version.\n", shell)
+        }
+    }
+
+    /// Proxy down, autoStart: every message names the Localia proxy, not the engine.
+    func test_shim_proxyDown_autoStart_namesTheProxy() throws {
+        try proxyAwareCurl()
+        touch("healthy")   // the engine is up, the proxy never comes up
+        try proxiedState(policy: .autoStart, wait: 1)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertEqual(r.stderr, "Localia: starting the Localia proxy...\n"
+                           + "Localia: the Localia proxy did not start within 1 s.\n"
+                           + "Run 'command claude' to use the cloud version.\n", shell)
+        }
+        touch("open_fails")
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertEqual(r.stderr, "Localia: the Localia proxy is not running and could not start Localia (was the app removed?).\n"
+                           + "Run 'command claude' to use the cloud version.\n", shell)
+        }
+    }
+
+    /// The app gives up on the proxy during the wait and writes a direct state: the shim follows it and runs
+    /// against the engine instead of waiting for a proxy that is no longer used.
+    func test_shim_autoStart_followsFlipToDirectDuringWait() throws {
+        try proxyAwareCurl()
+        try shim().writeState(on: true, baseURL: base, model: "m", contextTokens: 32768, policy: .autoStart,
+                              profile: .full, engine: .ollama)
+        let direct = try XCTUnwrap(stateText)
+        try direct.write(to: home.appendingPathComponent("direct.env"), atomically: true, encoding: .utf8)
+        try exe("open", """
+        for a in "$@"; do printf '%s\\n' "$a"; done >> "$HOME/open.log"
+        cp "$HOME/direct.env" "$HOME/Library/Application Support/Localia/shell/state.env"
+        touch "$HOME/healthy"
+        exit 0
+        """)
+        for shell in ["zsh", "bash"] {
+            try proxiedState(policy: .autoStart, wait: 3)
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("healthy"))
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            XCTAssertEqual(claudeLog()?.env["ANTHROPIC_BASE_URL"], base.absoluteString, shell)
+        }
+    }
+
     /// The proxy is up but the engine behind it is down: the existing engine messages still apply.
     func test_shim_proxyUp_engineDown_keepsEngineMessage() throws {
         try proxyAwareCurl()

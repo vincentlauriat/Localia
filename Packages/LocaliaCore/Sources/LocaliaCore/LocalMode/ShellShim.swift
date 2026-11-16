@@ -309,7 +309,7 @@ public struct ShellShim: ShellShimming {
         # crashed, quit or deleted app can never leave `claude` pointing at a dead local server.
         # `command claude` always runs the real binary (the cloud version).
         function claude {
-        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_out _l_v
+        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_out _l_v _l_what
           _l_state=\(state)
           _l_on=0; _l_probe=; _l_pprobe=; _l_pdown=0; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_rec=
           if [ -r "$_l_state" ]; then
@@ -361,23 +361,42 @@ public struct ShellShim: ShellShimming {
                 ;;
               autoStart)
                 case $_l_start in localia://*) ;; *) _l_start= ;; esac
+                if [ "$_l_pdown" = 1 ]; then _l_what='the Localia proxy'; else _l_what='the local engine'; fi
                 if [ -z "$_l_start" ] || ! command open -g "$_l_start" >/dev/null 2>&1; then
-                  printf '%s\\n' 'Localia: the local engine is not running and could not start Localia (was the app removed?).' \\
+                  printf '%s\\n' "Localia: $_l_what is not running and could not start Localia (was the app removed?)." \\
                     "Run 'command claude' to use the cloud version." >&2
                   return 1
                 fi
-                printf '%s\\n' 'Localia: starting the local engine...' >&2
+                printf '%s\\n' "Localia: starting $_l_what..." >&2
                 _l_end=$((SECONDS + $_l_wait))
                 while [ "$SECONDS" -lt "$_l_end" ]; do
                   command sleep 0.5
-                  if { [ -z "$_l_pprobe" ] || command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; } \\
-                     && [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+                  # The app may switch the route meanwhile (it gives up on the proxy): follow the state as it is now.
+                  _l_probe=; _l_pprobe=
+                  if [ -r "$_l_state" ]; then
+                    while IFS= read -r _l_line || [ -n "$_l_line" ]; do
+                      case $_l_line in
+                        probe=*) _l_probe=${_l_line#probe=} ;;
+                        proxyprobe=*) _l_pprobe=${_l_line#proxyprobe=} ;;
+                        base=*) _l_base=${_l_line#base=} ;;
+                      esac
+                    done < "$_l_state"
+                  fi
+        \(Self.substituteSession("_l_probe", indent: "          "))
+        \(Self.substituteSession("_l_base", indent: "          "))
+                  case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
+                  case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
+                  _l_pdown=0
+                  if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
+                    _l_pdown=1
+                  elif [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi
                 done
                 if [ "$_l_ready" != 1 ]; then
-                  printf '%s\\n' "Localia: the local engine did not start within $_l_wait s." \\
+                  if [ "$_l_pdown" = 1 ]; then _l_what='the Localia proxy'; else _l_what='the local engine'; fi
+                  printf '%s\\n' "Localia: $_l_what did not start within $_l_wait s." \\
                     "Run 'command claude' to use the cloud version." >&2
                   return 1
                 fi
