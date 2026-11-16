@@ -157,7 +157,7 @@ final class PanelSnapshotTests: XCTestCase {
         let dir = outputDir
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let lang = Bundle.main.preferredLocalizations.first ?? "en"
-        let model = makeModel(proxy: FakeProxyService(state: .unavailable(reason: String(localized: "The Localia proxy did not answer."))))
+        let model = makeModel(proxy: FakeProxyService(state: .unavailable(reason: String(localized: "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items."))))
         await model.ensureProxy()
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             let url = dir.appendingPathComponent("settings-proxy-\(suffix)-\(lang).png")
