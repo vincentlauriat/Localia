@@ -9,6 +9,8 @@ private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     private let lock = NSLock()
     private var _status: SMAppService.Status
     private(set) var registers = 0
+    private var _lastRegister: Date?
+    var lastRegister: Date? { lock.withLock { _lastRegister } }
     private(set) var unregisters = 0
     var registerError: Error?
     /// Status after a successful `register()`.
@@ -21,6 +23,7 @@ private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     func register() throws {
         lock.lock(); defer { lock.unlock() }
         registers += 1
+        _lastRegister = Date()
         if let registerError { throw registerError }
         _status = statusAfterRegister
     }
@@ -38,16 +41,19 @@ private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
 private final class StubHTTP: @unchecked Sendable {
     private let lock = NSLock()
     private var versions: [String?]
+    /// When set, answers instead of `versions` (e.g. from the registrar's state).
+    private let respond: (@Sendable () -> String?)?
     private(set) var requests: [URLRequest] = []
     var postStatus = 204
 
-    init(versions: [String?]) { self.versions = versions }
+    init(versions: [String?]) { self.versions = versions; respond = nil }
+    init(_ respond: @escaping @Sendable () -> String?) { versions = []; self.respond = respond }
 
     func fetch(_ req: URLRequest) async throws -> (Data, Int) {
         try lock.withLock {
             requests.append(req)
             guard req.url?.path == "/localia/health" else { return (Data(), postStatus) }
-            let v = versions.count > 1 ? versions.removeFirst() : versions.first ?? nil
+            let v = respond.map { $0() } ?? (versions.count > 1 ? versions.removeFirst() : versions.first ?? nil)
             guard let v else { throw URLError(.cannotConnectToHost) }
             return (Data(#"{"ok":true,"version":"\#(v)"}"#.utf8), 200)
         }
@@ -65,10 +71,30 @@ final class ProxyServiceManagerTests: XCTestCase {
 
     override func tearDown() async throws { try? FileManager.default.removeItem(at: dir) }
 
-    private func make(_ registrar: FakeRegistrar, _ http: StubHTTP, appVersion: String? = "6") -> ProxyServiceManager {
+    private func make(_ registrar: FakeRegistrar, _ http: StubHTTP, appVersion: String? = "6",
+                      deadline: Duration = .milliseconds(200),
+                      restartDeadline: Duration = .milliseconds(200)) -> ProxyServiceManager {
         ProxyServiceManager(registrar: registrar, fetch: { try await http.fetch($0) }, appVersion: appVersion,
                             tokenURL: dir.appendingPathComponent("token"),
-                            pollInterval: .milliseconds(5), deadline: .milliseconds(200))
+                            pollInterval: .milliseconds(5), deadline: deadline, restartDeadline: restartDeadline)
+    }
+
+    /// launchd may hold a respawn back ~10 s: after a restart the poll waits longer than the first one.
+    func test_defaultRestartDeadline_outlastsTheLaunchdThrottle() {
+        XCTAssertGreaterThanOrEqual(ProxyServiceManager.defaultRestartDeadline, .seconds(12))
+    }
+
+    func test_restart_waitsForItsOwnDeadline_notTheFirstOne() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        // The old build answers until the restart; the new one only after 300 ms, beyond the first deadline.
+        let http = StubHTTP { [registrar] in
+            guard let t = registrar.lastRegister else { return "5" }
+            return Date().timeIntervalSince(t) > 0.3 ? "6" : nil
+        }
+        let m = make(registrar, http, deadline: .milliseconds(100), restartDeadline: .seconds(3))
+        await m.ensureRunning()
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .running(version: "6"))
     }
 
     func test_versionMismatch_restarts() async {

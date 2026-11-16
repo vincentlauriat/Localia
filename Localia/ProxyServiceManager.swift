@@ -83,6 +83,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     private let port: Int
     private let pollInterval: Duration
     private let deadline: Duration
+    private let restartDeadline: Duration
     private var inflight: Task<Void, Never>?
     private let log = Logger(subsystem: "fr.vincentlauriat.localia", category: "proxy")
 
@@ -92,7 +93,8 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
          tokenURL: URL = Paths.proxy().appendingPathComponent("token"),
          port: Int = LocaliaConstants.proxyPort,
          pollInterval: Duration = .milliseconds(250),
-         deadline: Duration = .seconds(5)) {
+         deadline: Duration = .seconds(5),
+         restartDeadline: Duration = ProxyServiceManager.defaultRestartDeadline) {
         self.registrar = registrar
         self.fetch = fetch
         self.appVersion = appVersion
@@ -100,7 +102,11 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         self.port = port
         self.pollInterval = pollInterval
         self.deadline = deadline
+        self.restartDeadline = restartDeadline
     }
+
+    /// After a restart: launchd may hold the respawn back ~10 s when the old process still held the port.
+    nonisolated static let defaultRestartDeadline: Duration = .seconds(12)
 
     /// Ephemeral session, 1 s per request: a health poll never waits on a hung connection.
     nonisolated static func liveFetch() -> Fetch {
@@ -126,7 +132,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
 
     private func check() async {
         if let reason = registerIfNeeded() { return state = .unavailable(reason: reason) }
-        guard let first = await pollHealth(until: { _ in true }) else {
+        guard let first = await pollHealth(deadline: deadline, until: { _ in true }) else {
             return state = .unavailable(reason: String(localized: "The Localia proxy did not answer."))
         }
         if matches(first) { return state = .running(version: first) }
@@ -139,7 +145,8 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
             return state = .unavailable(reason: String(localized: "Could not restart the Localia proxy: \(error.localizedDescription)"))
         }
         // The old process can still answer for a moment: wait for the new version, not the first answer.
-        let second = await pollHealth(until: { [appVersion] v in v == appVersion || appVersion == nil })
+        let second = await pollHealth(deadline: restartDeadline,
+                                      until: { [appVersion] v in v == appVersion || appVersion == nil })
         if let second, matches(second) { return state = .running(version: second) }
         state = .unavailable(reason: String(localized: "The Localia proxy is version \(second ?? first), the app is \(appVersion ?? "?")."))
     }
@@ -169,7 +176,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
 
     /// Polls `/localia/health` until it answers with a version `accept` takes, or the deadline. Returns the
     /// last version seen (nil: never answered).
-    private func pollHealth(until accept: (String) -> Bool) async -> String? {
+    private func pollHealth(deadline: Duration, until accept: (String) -> Bool) async -> String? {
         let clock = ContinuousClock()
         let end = clock.now.advanced(by: deadline)
         var last: String?
