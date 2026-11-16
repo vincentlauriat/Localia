@@ -7136,6 +7136,118 @@
           }
         }
       }
+    },
+    "The Localia proxy has not created its access token yet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy has not created its access token yet."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia n'a pas encore créé son jeton d'accès."
+          }
+        }
+      }
+    },
+    "The Localia proxy answered with HTTP %lld.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy answered with HTTP %lld."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia a répondu avec le code HTTP %lld."
+          }
+        }
+      }
+    },
+    "The Localia proxy did not answer.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy did not answer."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia ne répond pas."
+          }
+        }
+      }
+    },
+    "Could not restart the Localia proxy: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not restart the Localia proxy: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de redémarrer le proxy Localia : %@"
+          }
+        }
+      }
+    },
+    "The Localia proxy is version %@, the app is %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy is version %@, the app is %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia est en version %@, l'app est en version %@."
+          }
+        }
+      }
+    },
+    "Could not start the Localia proxy: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not start the Localia proxy: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de démarrer le proxy Localia : %@"
+          }
+        }
+      }
+    },
+    "The Localia proxy is disabled in Login Items": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy is disabled in Login Items"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia est désactivé dans les éléments de connexion"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
