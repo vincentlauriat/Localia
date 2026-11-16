@@ -125,7 +125,7 @@ final class ProxyServiceManagerTests: XCTestCase {
         let m = make(registrar, StubHTTP(versions: ["6"]))
         await m.ensureRunning()
         XCTAssertEqual(registrar.registers, 0)
-        XCTAssertEqual(m.state, .unavailable(reason: "The Localia proxy is disabled in Login Items"))
+        XCTAssertEqual(m.state, .unavailable(reason: String(localized: "The Localia proxy is disabled in Login Items")))
     }
 
     func test_noAnswer_isUnavailable() async {
