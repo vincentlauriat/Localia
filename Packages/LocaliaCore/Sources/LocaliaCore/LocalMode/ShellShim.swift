@@ -16,7 +16,7 @@ public protocol ShellShimming: Sendable {
     func install() throws
     func uninstall() throws
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
-                    profile: LaunchProfile, engine: EngineID) throws
+                    profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws
 }
 
 /// The reversible "every `claude`" shim.
@@ -199,8 +199,11 @@ public struct ShellShim: ShellShimming {
 
     // MARK: - State
 
+    /// `proxyProbe` is the Localia proxy's health URL, given only when `baseURL` goes through the proxy
+    /// (it then holds `ProxyURL.sessionPlaceholder`, which the shim replaces per run). Nil adds nothing,
+    /// so a direct state is exactly what it was before the proxy existed.
     public func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
-                           profile: LaunchProfile, engine: EngineID) throws {
+                           profile: LaunchProfile, engine: EngineID, proxyProbe: URL? = nil) throws {
         let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: model, contextTokens: contextTokens,
                                                   profile: profile,
                                                   configDir: profile == .light ? configDir : nil)
@@ -215,6 +218,9 @@ public struct ShellShim: ShellShimming {
             "policy=\(policy.rawValue)",
             "profile=\(profile.rawValue)",
             "probe=\(probe)",
+        ]
+        if let proxyProbe { lines.append("proxyprobe=\(proxyProbe.absoluteString)") }
+        lines += [
             "start=localia://start?model=\(Self.percentEncode(model))",
             "wait=\(Self.startWaitSeconds(engine))",
         ]
@@ -268,6 +274,21 @@ public struct ShellShim: ShellShimming {
         }
     }
 
+    /// Shell text that replaces every `ProxyURL.sessionPlaceholder` in `$<name>` with `$_l_id`. Plain
+    /// parameter expansion over a quoted (literal) pattern: nothing in the value is ever evaluated.
+    static func substituteSession(_ name: String, indent: String) -> String {
+        let ph = ProxyURL.sessionPlaceholder
+        return [
+            "_l_out=",
+            "while :; do",
+            "  case $\(name) in",
+            "    *\"\(ph)\"*) _l_out=$_l_out${\(name)%%\"\(ph)\"*}$_l_id; \(name)=${\(name)#*\"\(ph)\"} ;;",
+            "    *) \(name)=$_l_out$\(name); break ;;",
+            "  esac",
+            "done",
+        ].map { indent + $0 }.joined(separator: "\n")
+    }
+
     /// POSIX sh body shared by both files. The zsh file only adds `emulate -L sh` so the user's zsh
     /// options (no word splitting, KSH_ARRAYS, NO_UNSET...) cannot change its meaning.
     /// `function claude {` (instead of `claude() {`) keeps a user alias named `claude` from breaking the parse.
@@ -281,14 +302,15 @@ public struct ShellShim: ShellShimming {
         # crashed, quit or deleted app can never leave `claude` pointing at a dead local server.
         # `command claude` always runs the real binary (the cloud version).
         function claude {
-        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_rec _l_id _l_rc
+        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_out _l_v
           _l_state=\(state)
-          _l_on=0; _l_probe=; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_rec=
+          _l_on=0; _l_probe=; _l_pprobe=; _l_pdown=0; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_rec=
           if [ -r "$_l_state" ]; then
             while IFS= read -r _l_line || [ -n "$_l_line" ]; do
               case $_l_line in
                 on=*) _l_on=${_l_line#on=} ;;
                 probe=*) _l_probe=${_l_line#probe=} ;;
+                proxyprobe=*) _l_pprobe=${_l_line#proxyprobe=} ;;
                 policy=*) _l_policy=${_l_line#policy=} ;;
                 start=*) _l_start=${_l_line#start=} ;;
                 base=*) _l_base=${_l_line#base=} ;;
@@ -305,13 +327,28 @@ public struct ShellShim: ShellShimming {
             command claude "$@"
             return
           fi
+          # This run's session id, also the name of its `.session` record. A proxied state carries a
+          # placeholder (in env values, base and probe) that becomes this id, so the proxy can tell runs apart.
+          _l_id=$(command uuidgen 2>/dev/null) || _l_id=
+          case $_l_id in ''|*[!A-Za-z0-9-]*) _l_id=shell ;; esac
+        \(Self.substituteSession("_l_probe", indent: "  "))
+        \(Self.substituteSession("_l_base", indent: "  "))
           case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
-          if [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+          case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
+          # The Localia proxy first (when the state goes through it), then the engine behind it.
+          if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
+            _l_pdown=1
+          fi
+          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
             _l_ready=1
           else
             case $_l_policy in
               fallBackToCloud)
-                printf '%s\\n' 'Localia: local engine down, using cloud' >&2
+                if [ "$_l_pdown" = 1 ]; then
+                  printf '%s\\n' 'Localia: the Localia proxy is not running, using cloud' >&2
+                else
+                  printf '%s\\n' 'Localia: local engine down, using cloud' >&2
+                fi
                 command claude "$@"
                 return
                 ;;
@@ -326,7 +363,8 @@ public struct ShellShim: ShellShimming {
                 _l_end=$((SECONDS + $_l_wait))
                 while [ "$SECONDS" -lt "$_l_end" ]; do
                   command sleep 0.5
-                  if [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+                  if { [ -z "$_l_pprobe" ] || command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; } \\
+                     && [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi
@@ -338,6 +376,11 @@ public struct ShellShim: ShellShimming {
                 fi
                 ;;
               *)
+                if [ "$_l_pdown" = 1 ]; then
+                  printf '%s\\n' 'Localia: the Localia proxy is not running.' \\
+                    "Run 'command claude' to use the cloud version." >&2
+                  return 1
+                fi
                 printf '%s\\n' "Localia: the local engine is not running at ${_l_base:-its address}." \\
                   "Start it from the Localia menu, or run 'command claude' to use the cloud version." >&2
                 return 1
@@ -349,7 +392,7 @@ public struct ShellShim: ShellShimming {
           # claude exits; the app also drops it once that pid is gone. Best effort: never blocks `claude`.
           # No record when $PWD holds a control character (it would break the line format).
           case $PWD in *[[:cntrl:]]*) ;; *)
-            if [ -n "$_l_engine" ] && [ -n "$_l_model" ] && _l_id=$(command uuidgen 2>/dev/null) && [ -n "$_l_id" ] \\
+            if [ -n "$_l_engine" ] && [ -n "$_l_model" ] && [ "$_l_id" != shell ] \\
                && command mkdir -p \(sessions) 2>/dev/null; then
               _l_rec=\(sessions)/$_l_id.session
             fi ;;
@@ -371,7 +414,9 @@ public struct ShellShim: ShellShimming {
                   _l_line=${_l_line#env=}
                   _l_k=${_l_line%%=*}
                   case $_l_k in *[!A-Za-z0-9_]*) continue ;; esac
-                  export "$_l_k=${_l_line#*=}"
+                  _l_v=${_l_line#*=}
+        \(Self.substituteSession("_l_v", indent: "          "))
+                  export "$_l_k=$_l_v"
                   ;;
                 unset=ANTHROPIC_*|unset=CLAUDE_*)
                   _l_k=${_l_line#unset=}

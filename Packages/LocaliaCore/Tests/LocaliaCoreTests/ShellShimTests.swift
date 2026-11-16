@@ -612,4 +612,212 @@ final class ShellShimTests: XCTestCase {
             XCTAssertEqual(claudeLog()?.env["ANTHROPIC_BASE_URL"], base.absoluteString, shell)
         }
     }
+
+    // MARK: Localia proxy
+
+    private let proxied = URL(string: "http://127.0.0.1:11438/s/@LOCALIA_SESSION@/ollama")!
+    private let proxyHealth = URL(string: "http://127.0.0.1:11438/localia/health")!
+    private var stateText: String? { read("Library/Application Support/Localia/shell/state.env") }
+
+    /// curl: the proxy health answers when `$HOME/proxy_up` exists, any other URL when `$HOME/healthy` exists.
+    private func proxyAwareCurl() throws {
+        try exe("curl", """
+        for a in "$@"; do printf '%s\\n' "$a"; done >> "$HOME/curl.log"
+        for a in "$@"; do case $a in */localia/health) [ -f "$HOME/proxy_up" ] && exit 0; exit 7 ;; esac; done
+        [ -f "$HOME/healthy" ] && exit 0
+        exit 7
+        """)
+    }
+
+    /// A proxied state with a short start wait (writeState's own wait is 20 s for Ollama).
+    private func proxiedState(policy: EngineDownPolicy, wait: Int? = nil) throws {
+        try shim().install()
+        try shim().writeState(on: true, baseURL: proxied, model: "m", contextTokens: 32768, policy: policy,
+                              profile: .full, engine: .ollama, proxyProbe: proxyHealth)
+        if let wait {
+            let text = try XCTUnwrap(stateText).replacingOccurrences(of: "\nwait=20\n", with: "\nwait=\(wait)\n")
+            try text.write(to: shimDir.appendingPathComponent("state.env"), atomically: true, encoding: .utf8)
+        }
+    }
+
+    func test_state_containsProxyProbe_whenProxied() throws {
+        try proxiedState(policy: .fail)
+        let text = try XCTUnwrap(stateText)
+        XCTAssertTrue(text.contains("\nprobe=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/ollama/api/version\nproxyprobe=http://127.0.0.1:11438/localia/health\n"), text)
+        XCTAssertTrue(text.contains("\nenv=ANTHROPIC_BASE_URL=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/ollama\n"), text)
+    }
+
+    /// Without a proxy probe the file is exactly what it was before the proxy existed.
+    func test_state_noProxyProbe_whenDirect() throws {
+        try shim().writeState(on: true, baseURL: base, model: "m", contextTokens: 32768, policy: .fail,
+                              profile: .full, engine: .ollama, proxyProbe: nil)
+        let expected = """
+        # Localia local-mode state. Data only: the shim reads it line by line and never sources it.
+        version=1
+        on=1
+        engine=ollama
+        base=http://127.0.0.1:11434
+        model=m
+        policy=fail
+        profile=full
+        probe=http://127.0.0.1:11434/api/version
+        start=localia://start?model=m
+        wait=20
+        env=ANTHROPIC_API_KEY=\(ClaudeCodeTool.apiKey)
+        env=ANTHROPIC_BASE_URL=http://127.0.0.1:11434
+        env=ANTHROPIC_DEFAULT_HAIKU_MODEL=m
+        env=ANTHROPIC_DEFAULT_OPUS_MODEL=m
+        env=ANTHROPIC_DEFAULT_SONNET_MODEL=m
+        env=ANTHROPIC_MODEL=m
+        env=CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+        env=CLAUDE_CODE_MAX_CONTEXT_TOKENS=32768
+        env=CLAUDE_CODE_SUBAGENT_MODEL=m
+        unset=ANTHROPIC_AUTH_TOKEN
+
+        """
+        XCTAssertEqual(stateText, expected)
+        // The default argument is the same as passing nil.
+        try shim().writeState(on: true, baseURL: base, model: "m", contextTokens: 32768, policy: .fail,
+                              profile: .full, engine: .ollama)
+        XCTAssertEqual(stateText, expected)
+    }
+
+    /// The placeholder becomes this run's session id: in the env, in the engine probe, and it is the id
+    /// of the `.session` record.
+    func test_shim_replacesSessionPlaceholder() throws {
+        try exe("claude", """
+        printf '%s\\n' "$ANTHROPIC_BASE_URL" > "$HOME/base.txt"
+        ls "$HOME/Library/Application Support/Localia/sessions" > "$HOME/records.txt"
+        exit 7
+        """)
+        try proxyAwareCurl()
+        touch("healthy"); touch("proxy_up")
+        try proxiedState(policy: .fail)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("curl.log"))
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            let url = try XCTUnwrap(read("base.txt")).trimmingCharacters(in: .newlines)
+            XCTAssertTrue(url.contains("/s/"), url)
+            XCTAssertFalse(url.contains("@LOCALIA_SESSION@"), url)
+            let prefix = "http://127.0.0.1:11438/s/", suffix = "/ollama"
+            XCTAssertTrue(url.hasPrefix(prefix) && url.hasSuffix(suffix), url)
+            let id = String(url.dropFirst(prefix.count).dropLast(suffix.count))
+            XCTAssertNotNil(ProxyPath.parse("/s/\(id)/ollama"), "\(shell): invalid session id \(id)")
+            XCTAssertNotEqual(id, "shell", shell)
+            XCTAssertEqual(read("records.txt"), "\(id).session\n", shell)
+            let curl = try XCTUnwrap(read("curl.log"))
+            XCTAssertFalse(curl.contains("@LOCALIA_SESSION@"), curl)
+            XCTAssertTrue(curl.contains("http://127.0.0.1:11438/localia/health\n"), curl)
+            XCTAssertTrue(curl.contains("http://127.0.0.1:11438/s/\(id)/ollama/api/version\n"), curl)
+            // The proxy is probed before the engine.
+            let p = try XCTUnwrap(curl.range(of: "/localia/health")), e = try XCTUnwrap(curl.range(of: "/api/version"))
+            XCTAssertLessThan(p.lowerBound, e.lowerBound, curl)
+        }
+    }
+
+    /// Without uuidgen the id is `shell` (and, as before, no session record is written).
+    func test_shim_uuidgenFails_usesShellAsSession() throws {
+        try exe("uuidgen", "exit 1\n")
+        try proxyAwareCurl()
+        touch("healthy"); touch("proxy_up")
+        try proxiedState(policy: .fail)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            XCTAssertEqual(claudeLog()?.env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:11438/s/shell/ollama", shell)
+            XCTAssertTrue(read("curl.log")?.contains("http://127.0.0.1:11438/s/shell/ollama/api/version\n") ?? false, shell)
+        }
+    }
+
+    /// The replacement is plain text: other special characters in a value are kept as they are.
+    func test_shim_placeholderReplacement_keepsOtherCharacters() throws {
+        try proxyAwareCurl()
+        touch("healthy"); touch("proxy_up")
+        try shim().install()
+        let state = """
+        on=1
+        probe=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/ollama/api/version
+        proxyprobe=http://127.0.0.1:11438/localia/health
+        policy=fail
+        env=ANTHROPIC_BASE_URL=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/ollama
+        env=ANTHROPIC_MODEL=a*b?[c]$(x)`y`\\n@LOCALIA_SESSION@%@LOCALIA_SESSION@@ & ' "
+        """
+        try state.write(to: shimDir.appendingPathComponent("state.env"), atomically: true, encoding: .utf8)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell)
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            let log = try XCTUnwrap(claudeLog())
+            let base = try XCTUnwrap(log.env["ANTHROPIC_BASE_URL"])
+            let id = String(base.dropFirst("http://127.0.0.1:11438/s/".count).dropLast("/ollama".count))
+            XCTAssertEqual(log.env["ANTHROPIC_MODEL"], "a*b?[c]$(x)`y`\\n\(id)%\(id)@ & ' \"", shell)
+        }
+    }
+
+    func test_shim_proxyDown_failPolicy_message() throws {
+        try proxyAwareCurl()
+        touch("healthy")   // the engine is up, the proxy is not
+        try proxiedState(policy: .fail)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertEqual(r.stderr, "Localia: the Localia proxy is not running.\nRun 'command claude' to use the cloud version.\n", shell)
+            XCTAssertNil(read("claude.log"), shell)
+        }
+    }
+
+    func test_shim_proxyDown_fallBackToCloud_message() throws {
+        try proxyAwareCurl()
+        touch("healthy")
+        try proxiedState(policy: .fallBackToCloud)
+        for shell in ["zsh", "bash"] {
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 7, shell)
+            XCTAssertEqual(r.stderr, "Localia: the Localia proxy is not running, using cloud\n", shell)
+            XCTAssertNil(claudeLog()?.env["ANTHROPIC_BASE_URL"], shell)
+            XCTAssertEqual(claudeLog()?.args, ["q"], shell)
+        }
+    }
+
+    /// autoStart opens the app, then waits until the proxy AND the engine behind it answer.
+    func test_shim_proxyDown_autoStart_waitsForBothProbes() throws {
+        try proxyAwareCurl()
+        // The app brings the engine up but not the proxy: still not ready when the wait runs out.
+        try exe("open", """
+        for a in "$@"; do printf '%s\\n' "$a"; done >> "$HOME/open.log"
+        touch "$HOME/healthy"
+        [ -f "$HOME/open_starts_proxy" ] && touch "$HOME/proxy_up"
+        exit 0
+        """)
+        try proxiedState(policy: .autoStart, wait: 1)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("healthy"))
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 1, shell)
+            XCTAssertTrue(r.stderr.contains("did not start within 1 s"), "\(shell): \(r.stderr)")
+            XCTAssertTrue(r.stderr.contains("command claude"), r.stderr)
+            XCTAssertTrue(read("open.log")?.contains("localia://start?model=m") ?? false)
+            XCTAssertNil(read("claude.log"), shell)
+        }
+        // The app brings both up: runs locally through the proxy.
+        touch("open_starts_proxy")
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("healthy"))
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("proxy_up"))
+            let r = try run(shell, ["q"])
+            XCTAssertEqual(r.status, 7, "\(shell): \(r.stderr)")
+            XCTAssertTrue(claudeLog()?.env["ANTHROPIC_BASE_URL"]?.hasPrefix("http://127.0.0.1:11438/s/") ?? false, shell)
+            XCTAssertLessThan(r.seconds, 6, shell)
+        }
+    }
+
+    /// The proxy is up but the engine behind it is down: the existing engine messages still apply.
+    func test_shim_proxyUp_engineDown_keepsEngineMessage() throws {
+        try proxyAwareCurl()
+        touch("proxy_up")
+        try proxiedState(policy: .fallBackToCloud)
+        let r = try run("zsh", ["q"])
+        XCTAssertEqual(r.status, 7)
+        XCTAssertEqual(r.stderr, "Localia: local engine down, using cloud\n")
+    }
 }

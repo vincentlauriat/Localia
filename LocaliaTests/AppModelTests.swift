@@ -1105,7 +1105,7 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
-                    profile: LaunchProfile, engine: EngineID) throws {
+                    profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
         lock.withLock { _states.append(on) }
     }

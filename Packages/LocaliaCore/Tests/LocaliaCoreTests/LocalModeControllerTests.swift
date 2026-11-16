@@ -32,7 +32,7 @@ private struct FakeSource: LocalModelSource {
 }
 
 private final class FakeShim: ShellShimming, @unchecked Sendable {
-    struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; var contextTokens = 32768; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID }
+    struct State: Equatable { let on: Bool; let baseURL: URL; let model: String; var contextTokens = 32768; let policy: EngineDownPolicy; let profile: LaunchProfile; let engine: EngineID; var proxyProbe: URL? = nil }
     var installs = 0, uninstalls = 0
     var states: [State] = []
     var failInstall = false
@@ -41,8 +41,8 @@ private final class FakeShim: ShellShimming, @unchecked Sendable {
         installs += 1
     }
     func uninstall() throws { uninstalls += 1 }
-    func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy, profile: LaunchProfile, engine: EngineID) throws {
-        states.append(State(on: on, baseURL: baseURL, model: model, contextTokens: contextTokens, policy: policy, profile: profile, engine: engine))
+    func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy, profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
+        states.append(State(on: on, baseURL: baseURL, model: model, contextTokens: contextTokens, policy: policy, profile: profile, engine: engine, proxyProbe: proxyProbe))
     }
 }
 
@@ -274,10 +274,12 @@ final class LocalModeControllerTests: XCTestCase {
         try await c.setOn(true)
         XCTAssertEqual(shim.states.last?.baseURL, ProxyURL.base(session: ProxyURL.sessionPlaceholder, engine: .ollama))
         XCTAssertEqual(shim.states.last?.engine, .ollama)
+        XCTAssertEqual(shim.states.last?.proxyProbe, URL(string: "http://127.0.0.1:11438/localia/health")!)
 
         let (direct, directShim) = makeRouted(healthy: false)
         try await direct.setScope(.everyClaude)
         try await direct.setOn(true)
         XCTAssertEqual(directShim.states.last?.baseURL, url)
+        XCTAssertNil(directShim.states.last?.proxyProbe)
     }
 }

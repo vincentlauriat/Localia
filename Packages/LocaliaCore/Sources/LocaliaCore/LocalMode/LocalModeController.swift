@@ -169,13 +169,16 @@ public final class LocalModeController: ObservableObject {
         var engine = r?.engine, baseURL = r?.baseURL
         if engine == nil, let active = await source.activeEngine() { engine = active.id; baseURL = active.baseURL }
         let engineBase = baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!
+        let stateBase = routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
+                                         session: ProxyURL.sessionPlaceholder)
+        let proxied = stateBase.absoluteString.hasPrefix("http://127.0.0.1:\(LocaliaConstants.proxyPort)/s/")
         try shim.writeState(on: on,
-                            baseURL: routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
-                                                      session: ProxyURL.sessionPlaceholder),
+                            baseURL: stateBase,
                             model: r?.model ?? settings.lastModel ?? "",
                             contextTokens: r?.contextTokens ?? LocaliaConstants.localContextTokens,
                             policy: settings.engineDownPolicy,
                             profile: settings.launchProfile,
-                            engine: engine ?? .ollama)
+                            engine: engine ?? .ollama,
+                            proxyProbe: proxied ? URL(string: "http://127.0.0.1:\(LocaliaConstants.proxyPort)/localia/health") : nil)
     }
 }
