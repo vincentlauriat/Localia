@@ -24,8 +24,11 @@ final class ConfigBox: @unchecked Sendable {
 }
 
 /// `CFBundleVersion` of the enclosing Localia.app (`.../Localia.app/Contents/MacOS/<exe>`), else "dev".
+/// The path comes from the kernel: launchd (`BundleProgram`) passes a relative argv[0] with cwd `/`.
 func appVersion() -> String {
-    let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    guard proc_pidpath(getpid(), &buf, UInt32(buf.count)) > 0 else { return "dev" }
+    let exe = URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath()
     let app = exe.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     guard app.pathExtension == "app", let bundle = Bundle(url: app),
           let v = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String, !v.isEmpty else { return "dev" }

@@ -112,12 +112,21 @@ final class ProxyServiceManagerTests: XCTestCase {
         XCTAssertEqual(m.state, .running(version: "6"))
     }
 
-    func test_devServiceVersion_matches() async {
+    func test_devServiceVersion_matches_whenAppVersionUnknown() async {
         let registrar = FakeRegistrar(status: .enabled)
-        let m = make(registrar, StubHTTP(versions: ["dev"]))
+        let m = make(registrar, StubHTTP(versions: ["dev"]), appVersion: nil)
         await m.ensureRunning()
         XCTAssertEqual(m.state, .running(version: "dev"))
         XCTAssertEqual(registrar.unregisters, 0)
+    }
+
+    func test_devServiceVersion_withRealAppBuild_isMismatch_restartsOnce() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let m = make(registrar, StubHTTP(versions: ["dev", "6"]))
+        await m.ensureRunning()
+        XCTAssertEqual(registrar.unregisters, 1)
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .running(version: "6"))
     }
 
     func test_disabledInLoginItems_isUnavailable_noRegister() async {

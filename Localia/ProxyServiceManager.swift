@@ -71,16 +71,13 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     /// POST with the admin token.
     typealias Fetch = @Sendable (URLRequest) async throws -> (Data, Int)
 
-    /// The service reports this when it does not run from inside an app bundle (development).
-    static let devVersion = "dev"
-
     @Published private(set) var state: ProxyState = .unknown
 
     var isHealthy: Bool { if case .running = state { true } else { false } }
 
     private let registrar: any ServiceRegistering
     private let fetch: Fetch
-    /// `CFBundleVersion` of the app; nil accepts any service version.
+    /// `CFBundleVersion` of the app; nil accepts any service version, including a bundle-less "dev" service.
     private let appVersion: String?
     private let tokenURL: URL
     private let port: Int
@@ -142,7 +139,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
             return state = .unavailable(reason: String(localized: "Could not restart the Localia proxy: \(error.localizedDescription)"))
         }
         // The old process can still answer for a moment: wait for the new version, not the first answer.
-        let second = await pollHealth(until: { [appVersion] v in v == appVersion || v == Self.devVersion || appVersion == nil })
+        let second = await pollHealth(until: { [appVersion] v in v == appVersion || appVersion == nil })
         if let second, matches(second) { return state = .running(version: second) }
         state = .unavailable(reason: String(localized: "The Localia proxy is version \(second ?? first), the app is \(appVersion ?? "?")."))
     }
@@ -167,7 +164,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
 
     private func matches(_ version: String) -> Bool {
         guard let appVersion else { return true }
-        return version == appVersion || version == Self.devVersion
+        return version == appVersion
     }
 
     /// Polls `/localia/health` until it answers with a version `accept` takes, or the deadline. Returns the
