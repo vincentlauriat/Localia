@@ -1,4 +1,5 @@
 import LocaliaCore
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -201,6 +202,12 @@ struct ProxySettingsSection: View {
                 if model.proxyRestarting { ProgressView().controlSize(.small) }
                 Button(String(localized: "Restart")) { Task { await model.restartProxy() } }
                     .disabled(model.proxyRestarting)
+            }
+            if case .unavailable = model.proxyState {
+                HStack {
+                    Spacer()
+                    Button(String(localized: "Open Login Items…")) { SMAppService.openSystemSettingsLoginItems() }
+                }
             }
 
             ForEach([EngineID.ollama, .llamaCpp], id: \.self) { id in

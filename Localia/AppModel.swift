@@ -494,10 +494,11 @@ final class AppModel: ObservableObject {
 
     /// Checks (registers, restarts) the proxy service, pushes the settings to it when it runs, and switches
     /// proxied engines to direct, visibly, when it cannot run. The shim state follows the routing.
-    func ensureProxy() async {
+    /// `force` (Settings "Restart") re-registers the service even when it answers.
+    func ensureProxy(force: Bool = false) async {
         let wasHealthy = routing.resolver.proxyHealthy
         let wasFallback = proxyFallbackActive
-        await proxy.ensureRunning()
+        if force { await proxy.restart() } else { await proxy.ensureRunning() }
         proxyState = proxy.state
         switch proxy.state {
         case .running:
@@ -512,10 +513,10 @@ final class AppModel: ObservableObject {
         if routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) { await refreshShim() }
     }
 
-    /// Settings "Restart": a fresh check, which registers or restarts the service and pushes the settings.
+    /// Settings "Restart": re-registers the service (unless it is off in Login Items) and pushes the settings.
     func restartProxy() async {
         proxyRestarting = true
-        await ensureProxy()
+        await ensureProxy(force: true)
         proxyRestarting = false
     }
 

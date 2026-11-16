@@ -173,10 +173,61 @@ final class ProxyServiceManagerTests: XCTestCase {
         XCTAssertEqual(m.state, .unavailable(reason: String(localized: "The Localia proxy is disabled in Login Items")))
     }
 
-    func test_noAnswer_isUnavailable() async {
-        let m = make(FakeRegistrar(status: .enabled), StubHTTP(versions: [nil]))
+    private var silentReason: String {
+        String(localized: "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items.")
+    }
+
+    /// Enabled but silent (crashed, wedged): one re-register brings it back.
+    func test_enabledSilent_reregistersOnce() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let m = make(registrar, StubHTTP { [registrar] in registrar.lastRegister == nil ? nil : "6" })
         await m.ensureRunning()
+        XCTAssertEqual(registrar.unregisters, 1)
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .running(version: "6"))
+    }
+
+    /// Still silent after the re-register: unavailable with an actionable reason, and no second attempt.
+    func test_enabledSilent_stillSilentAfterReregister_isUnavailable_noSecondReregister() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let m = make(registrar, StubHTTP(versions: [nil]))
+        await m.ensureRunning()
+        XCTAssertEqual(registrar.unregisters, 1)
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .unavailable(reason: silentReason))
+    }
+
+    /// Just registered and not answering yet: no immediate second registration.
+    func test_justRegistered_silent_noReregister() async {
+        let registrar = FakeRegistrar(status: .notRegistered)
+        let m = make(registrar, StubHTTP(versions: [nil]))
+        await m.ensureRunning()
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(registrar.unregisters, 0)
         guard case .unavailable = m.state else { return XCTFail("\(m.state)") }
+    }
+
+    /// Settings "Restart" re-registers even when the check before it found the service running.
+    func test_forcedRestart_reregistersEvenAfterACheck() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let m = make(registrar, StubHTTP(versions: ["6"]))
+        await m.ensureRunning()
+        XCTAssertEqual(m.state, .running(version: "6"))
+        XCTAssertEqual(registrar.registers, 0)
+        await m.restart()
+        XCTAssertEqual(registrar.unregisters, 1)
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .running(version: "6"))
+    }
+
+    /// Turned off in Login Items: even "Restart" does not register it behind the user's back.
+    func test_forcedRestart_honoursLoginItems() async {
+        let registrar = FakeRegistrar(status: .requiresApproval)
+        let m = make(registrar, StubHTTP(versions: ["6"]))
+        await m.restart()
+        XCTAssertEqual(registrar.registers, 0)
+        XCTAssertEqual(registrar.unregisters, 0)
+        XCTAssertEqual(m.state, .unavailable(reason: String(localized: "The Localia proxy is disabled in Login Items")))
     }
 
     func test_concurrentChecks_shareOneRestart() async {

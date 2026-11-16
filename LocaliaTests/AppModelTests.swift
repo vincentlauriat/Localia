@@ -1222,6 +1222,7 @@ final class FakeProxyService: ProxyServiceControlling {
     var eraseError: Error?
     init(state: ProxyState) { self.state = state }
     func ensureRunning() async {}
+    func restart() async {}
     func push(_ config: ProxyConfig) async { pushed.append(config) }
     func erase(log: Bool, stats: Bool) async throws {
         if let eraseError { throw eraseError }

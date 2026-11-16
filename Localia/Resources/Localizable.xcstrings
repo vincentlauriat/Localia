@@ -7264,6 +7264,22 @@
           }
         }
       }
+    },
+    "Open Login Items…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Login Items…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir les éléments de connexion…"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

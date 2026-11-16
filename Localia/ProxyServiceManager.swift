@@ -34,6 +34,9 @@ protocol ProxyServiceControlling: AnyObject {
     var state: ProxyState { get }
     var isHealthy: Bool { get }
     func ensureRunning() async
+    /// Settings "Restart": re-registers the agent even when a check found it running (never when the user
+    /// turned it off in Login Items).
+    func restart() async
     func push(_ config: ProxyConfig) async
     func erase(log: Bool, stats: Bool) async throws
     /// Unregisters the LaunchAgent, so deleting the app leaves no agent behind.
@@ -47,6 +50,7 @@ final class InertProxyService: ProxyServiceControlling, Sendable {
     var state: ProxyState { .unknown }
     var isHealthy: Bool { false }
     func ensureRunning() async {}
+    func restart() async {}
     func push(_ config: ProxyConfig) async {}
     func erase(log: Bool, stats: Bool) async throws {}
     func uninstall() async {}
@@ -124,26 +128,50 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     /// Concurrent callers (app start, `localia://start`, a launch) share one check.
     func ensureRunning() async {
         if let inflight { return await inflight.value }
-        let task = Task { await self.check() }
+        await run(force: false)
+    }
+
+    /// Waits for a check in flight, then runs its own forced one: joining it would not restart anything.
+    func restart() async {
+        if let inflight { await inflight.value }
+        await run(force: true)
+    }
+
+    private func run(force: Bool) async {
+        let task = Task { await self.check(force: force) }
         inflight = task
         await task.value
         inflight = nil
     }
 
-    private func check() async {
+    /// At most one unregister → register per check, so a dead service never makes it loop.
+    private func check(force: Bool) async {
+        let wasEnabled = registrar.status == .enabled
         if let reason = registerIfNeeded() { return state = .unavailable(reason: reason) }
-        guard let first = await pollHealth(deadline: deadline, until: { _ in true }) else {
-            return state = .unavailable(reason: String(localized: "The Localia proxy did not answer."))
+        if !force || !wasEnabled {
+            if let first = await pollHealth(deadline: deadline, until: { _ in true }) {
+                if matches(first) { return state = .running(version: first) }
+                // An older build still runs (the app was updated): restart it once from this bundle.
+                log.notice("proxy version \(first, privacy: .public) differs from the app's, restarting it")
+            } else if !wasEnabled {
+                // Registered just now and not up yet: a second registration would not help.
+                return state = .unavailable(reason: String(localized: "The Localia proxy did not answer."))
+            } else {
+                // Enabled but silent (crashed, wedged, a stale registration): restart it once.
+                log.notice("proxy is enabled but does not answer, restarting it")
+            }
         }
-        if matches(first) { return state = .running(version: first) }
-        // An older build still runs (the app was updated): restart it once from this bundle.
-        log.notice("proxy version \(first, privacy: .public) differs from the app's, restarting it")
+        await reregister()
+    }
+
+    private func reregister() async {
         do { try await registrar.unregister() } catch {
             log.error("unregister failed: \(String(describing: error), privacy: .public)")
         }
         do { try registrar.register() } catch {
             return state = .unavailable(reason: String(localized: "Could not restart the Localia proxy: \(error.localizedDescription)"))
         }
+        if registrar.status == .requiresApproval { return state = .unavailable(reason: Self.disabledReason) }
         // The old process can still answer for a moment: wait for the new version, not the first answer.
         let second = await pollHealth(deadline: restartDeadline,
                                       until: { [appVersion] v in v == appVersion || appVersion == nil })
