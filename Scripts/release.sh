@@ -142,6 +142,9 @@ codesign_ts() {
 echo "> codesign Contents/Helpers/llmfit (before the app)"
 codesign_ts "$STAGING/Contents/Helpers/llmfit"
 
+echo "> codesign Contents/MacOS/LocaliaProxyService (before the app)"
+codesign_ts "$STAGING/Contents/MacOS/LocaliaProxyService"
+
 SPARKLE_FW="$STAGING/Contents/Frameworks/Sparkle.framework"
 if [ -d "$SPARKLE_FW" ]; then
   echo "> codesign Sparkle.framework (nested code first)"
