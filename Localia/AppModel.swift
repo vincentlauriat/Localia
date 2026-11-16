@@ -76,6 +76,8 @@ final class AppModel: ObservableObject {
     private let recent: RecentFolders
     private let confirmMemory: @MainActor (MemoryWarning) async -> Bool
     private let shim: any ShellShimming
+    private let proxy: any ProxyServiceControlling
+    private let routing: RoutingSource
 
     // Status
     @Published private(set) var activeServing = false
@@ -92,6 +94,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningSessions: [RunningSession] = []
     /// True while local mode is being switched on or off.
     @Published private(set) var switchingLocalMode = false
+    /// The proxy service is unavailable: proxied engines are used directly until it runs again.
+    @Published private(set) var proxyFallbackActive = false {
+        didSet { routing.fallback = proxyFallbackActive }
+    }
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
@@ -173,7 +179,12 @@ final class AppModel: ObservableObject {
         let registry = EngineRegistry(engines: deps.engines, defaults: registryDefaults)
         self.registry = registry
         let bridge = ModelSourceBridge(registry: registry)
-        self.controller = LocalModeController(settings: deps.settings, shim: deps.shim, source: bridge)
+        self.proxy = deps.proxy
+        let routing = RoutingSource(settings: deps.settings, proxy: deps.proxy)
+        self.routing = routing
+        // The controller is main-actor isolated and calls this synchronously.
+        self.controller = LocalModeController(settings: deps.settings, shim: deps.shim, source: bridge,
+                                              routes: { MainActor.assumeIsolated { routing.resolver } })
         self.tracker = SessionTracker(statusDir: Paths.sessions(base: deps.appSupportBase))
         self.recent = RecentFolders(store: deps.settings)
         bridge.model = self
@@ -195,6 +206,7 @@ final class AppModel: ObservableObject {
             }
         }
         startPathMonitor()
+        Task { await ensureProxy() }
         Task { await refreshRecommendations() }
         // Login shells and `--version` can be slow: never on the path of the engine status.
         Task { await refreshLocalTools(refresh: true) }
@@ -472,6 +484,25 @@ final class AppModel: ObservableObject {
         Task { await refreshShim() }
     }
 
+    /// Checks (registers, restarts) the proxy service, pushes the settings to it when it runs, and switches
+    /// proxied engines to direct, visibly, when it cannot run. The shim state follows the routing.
+    func ensureProxy() async {
+        let wasHealthy = routing.resolver.proxyHealthy
+        let wasFallback = proxyFallbackActive
+        await proxy.ensureRunning()
+        switch proxy.state {
+        case .running:
+            proxyFallbackActive = false
+            await proxy.push(settings.proxyConfig)
+        case let .unavailable(reason):
+            if !wasFallback { log.error("proxy unavailable, engines go direct: \(reason, privacy: .public)") }
+            proxyFallbackActive = true
+        case .unknown:
+            break
+        }
+        if routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) { await refreshShim() }
+    }
+
     /// In `everyClaude` scope a failed write would leave `claude` pointing at the old state: say so.
     private func refreshShim() async {
         do { try await controller.refreshShimState() } catch {
@@ -563,6 +594,9 @@ final class AppModel: ObservableObject {
             return
         }
         let sessionID = UUID()
+        // The first proxy check may still be running: wait for it rather than route direct by default.
+        if case .local = target, case .unknown = proxy.state { await ensureProxy() }
+        target = controller.routed(target, session: sessionID.uuidString)
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
         defer { if let reserved { release(reserved) } }
@@ -884,6 +918,8 @@ final class AppModel: ObservableObject {
         } catch {
             show(error, title: String(localized: "Could not remove Localia from your shell"))
         }
+        // Deleting the app afterwards must leave no LaunchAgent behind.
+        await proxy.uninstall()
     }
 
     /// Unloads every model Localia loaded that no session still uses, and stops Localia's own llama-server
@@ -966,6 +1002,8 @@ final class AppModel: ObservableObject {
 
     func handleStart(model: String) async {
         let log = self.log
+        // A shim `claude` is about to use the proxy: make sure it runs (not on the model load's path).
+        Task { await ensureProxy() }
         var allowed = Set([settings.lastModel].compactMap { $0 })
         if case let .local(_, _, current, _) = await controller.launchTarget() { allowed.insert(current) }
         guard !model.isEmpty, allowed.contains(model) else {
@@ -1455,5 +1493,23 @@ private final class ModelSourceBridge: LocalModelSource, @unchecked Sendable {
     func activeEngine() async -> (any Engine)? { await registry.active }
     func preferredModels() async -> [String] {
         await MainActor.run { model?.preferredServedNames() ?? [] }
+    }
+}
+
+/// What `LocalModeController` routes with: the per-engine choice, healthy only while the proxy runs and
+/// no fallback is active.
+@MainActor
+final class RoutingSource {
+    private let settings: SettingsStore
+    private let proxy: any ProxyServiceControlling
+    var fallback = false
+
+    init(settings: SettingsStore, proxy: any ProxyServiceControlling) {
+        self.settings = settings
+        self.proxy = proxy
+    }
+
+    var resolver: RouteResolver {
+        RouteResolver(routes: settings.engineRoutes, proxyHealthy: !fallback && proxy.isHealthy)
     }
 }

@@ -233,4 +233,51 @@ final class LocalModeControllerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: zshrc, encoding: .utf8), "a\n")
         XCTAssertEqual(try String(contentsOf: bashrc, encoding: .utf8), "b\n")
     }
+
+    // MARK: proxy routing
+
+    private func makeRouted(healthy: Bool, routes: [EngineID: EngineRoute] = [.ollama: .proxy])
+        -> (LocalModeController, FakeShim) {
+        let shim = FakeShim()
+        let c = LocalModeController(settings: InMemoryLocalModeSettings(), shim: shim,
+                                    source: FakeSource(engine: ModelEngine(id: .ollama, baseURL: url, models: ["a"])),
+                                    routes: { RouteResolver(routes: routes, proxyHealthy: healthy) })
+        return (c, shim)
+    }
+
+    func test_target_usesProxyURL_whenHealthy() async throws {
+        let (c, _) = makeRouted(healthy: true)
+        try await c.setOn(true)
+        let target = await c.launchTarget()
+        // Without a session the controller hands out the engine's own base; the launch rewrites it.
+        guard case let .local(_, unrouted, _, _) = target else { return XCTFail() }
+        XCTAssertEqual(unrouted, url)
+        guard case let .local(engine, baseURL, model, window) = c.routed(target, session: "S-1") else { return XCTFail() }
+        XCTAssertEqual(engine, .ollama); XCTAssertEqual(model, "a"); XCTAssertEqual(window, 32768)
+        XCTAssertEqual(baseURL, URL(string: "http://127.0.0.1:11438/s/S-1/ollama")!)
+    }
+
+    func test_target_usesEngineURL_whenUnhealthy() async throws {
+        for (healthy, routes) in [(false, [EngineID.ollama: EngineRoute.proxy]), (true, [.ollama: .direct])] {
+            let (c, _) = makeRouted(healthy: healthy, routes: routes)
+            try await c.setOn(true)
+            guard case let .local(_, baseURL, _, _) = c.routed(await c.launchTarget(), session: "S-1") else { return XCTFail() }
+            XCTAssertEqual(baseURL, url)
+        }
+        let (off, _) = makeRouted(healthy: true)
+        guard case .cloud = off.routed(await off.launchTarget(), session: "S-1") else { return XCTFail() }
+    }
+
+    func test_shimState_usesPlaceholderSession() async throws {
+        let (c, shim) = makeRouted(healthy: true)
+        try await c.setScope(.everyClaude)
+        try await c.setOn(true)
+        XCTAssertEqual(shim.states.last?.baseURL, ProxyURL.base(session: ProxyURL.sessionPlaceholder, engine: .ollama))
+        XCTAssertEqual(shim.states.last?.engine, .ollama)
+
+        let (direct, directShim) = makeRouted(healthy: false)
+        try await direct.setScope(.everyClaude)
+        try await direct.setOn(true)
+        XCTAssertEqual(directShim.states.last?.baseURL, url)
+    }
 }

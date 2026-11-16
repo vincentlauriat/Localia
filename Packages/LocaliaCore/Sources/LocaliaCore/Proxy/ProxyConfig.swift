@@ -7,7 +7,10 @@ public struct ProxyConfig: Codable, Equatable, Sendable {
     public var logContent: Bool = false
     public var retentionDays: Int = 7 { didSet { retentionDays = Self.clamp(retentionDays) } }
 
-    public init() {}
+    public init(logContent: Bool = false, retentionDays: Int = 7) {
+        self.logContent = logContent
+        self.retentionDays = Self.clamp(retentionDays)   // didSet does not run in init
+    }
 
     private enum CodingKeys: String, CodingKey { case logContent, retentionDays }
 

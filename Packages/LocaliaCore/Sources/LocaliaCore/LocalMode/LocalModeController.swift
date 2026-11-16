@@ -59,11 +59,16 @@ public final class LocalModeController: ObservableObject {
     private let settings: LocalModeSettings
     private let shim: ShellShimming
     private let source: LocalModelSource
+    /// How tools reach each engine right now (proxy or direct). The default reports the proxy unhealthy,
+    /// so every engine is reached directly.
+    private let routes: @Sendable () -> RouteResolver
 
-    public init(settings: LocalModeSettings, shim: ShellShimming, source: LocalModelSource) {
+    public init(settings: LocalModeSettings, shim: ShellShimming, source: LocalModelSource,
+                routes: @escaping @Sendable () -> RouteResolver = { RouteResolver(routes: [:], proxyHealthy: false) }) {
         self.settings = settings
         self.shim = shim
         self.source = source
+        self.routes = routes
         self.isOn = settings.localModeOn
         self.scope = settings.localModeScope
     }
@@ -105,6 +110,14 @@ public final class LocalModeController: ObservableObject {
         return .local(engine: engine?.id ?? .ollama,
                       baseURL: engine?.baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
                       model: settings.lastModel ?? "", contextTokens: LocaliaConstants.localContextTokens)
+    }
+
+    /// The launch target with its base URL routed for `session`: the proxy URL when the engine goes
+    /// through the healthy proxy, else unchanged. `.cloud` is returned as is.
+    public func routed(_ target: LaunchTarget, session: String) -> LaunchTarget {
+        guard case let .local(engine, baseURL, model, contextTokens) = target else { return target }
+        return .local(engine: engine, baseURL: routes().baseURL(engine: engine, engineBase: baseURL, session: session),
+                      model: model, contextTokens: contextTokens)
     }
 
     /// Turning on needs an engine and an installed model (or, engine down, a last-used model). Turning off always succeeds in memory, and the
@@ -150,12 +163,15 @@ public final class LocalModeController: ObservableObject {
     }
 
     /// Every write names the active engine (its id picks the probe path, its baseURL the port). Only when
-    /// no engine is registered at all does it fall back to Ollama's default address.
+    /// no engine is registered at all does it fall back to Ollama's default address. A proxied engine gets
+    /// the proxy URL with the session placeholder, which the shim replaces per `claude` run.
     private func writeShimState(on: Bool, _ r: Resolved?) async throws {
         var engine = r?.engine, baseURL = r?.baseURL
         if engine == nil, let active = await source.activeEngine() { engine = active.id; baseURL = active.baseURL }
+        let engineBase = baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!
         try shim.writeState(on: on,
-                            baseURL: baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!,
+                            baseURL: routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
+                                                      session: ProxyURL.sessionPlaceholder),
                             model: r?.model ?? settings.lastModel ?? "",
                             contextTokens: r?.contextTokens ?? LocaliaConstants.localContextTokens,
                             policy: settings.engineDownPolicy,
