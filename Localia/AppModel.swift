@@ -631,6 +631,15 @@ final class AppModel: ObservableObject {
         do {
             let url: URL
             do {
+                // The proxy tells sessions apart by this record; a failure must not block the launch.
+                if session != nil {
+                    do {
+                        try SessionAttribution.write(session: sessionID, tool: tool.displayName, folder: folder,
+                                                     dir: Paths.sessions(base: deps.appSupportBase))
+                    } catch {
+                        log.error("Could not record the session attribution: \(error.localizedDescription)")
+                    }
+                }
                 let script = try LaunchScriptBuilder().script(folder: folder, command: command, sessionID: sessionID,
                                                               statusDir: Paths.sessions(base: deps.appSupportBase))
                 url = try TerminalLauncher.writeScript(script, sessionID: sessionID, base: deps.appSupportBase)
