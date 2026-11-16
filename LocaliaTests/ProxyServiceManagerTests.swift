@@ -118,6 +118,16 @@ final class ProxyServiceManagerTests: XCTestCase {
         XCTAssertFalse(m.isHealthy)
     }
 
+    /// Nothing answers after the restart: the reason says so, not the version the old process had.
+    func test_restartThenSilent_saysItDidNotAnswer() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let http = StubHTTP { [registrar] in registrar.lastRegister == nil ? "5" : nil }
+        let m = make(registrar, http)
+        await m.ensureRunning()
+        XCTAssertEqual(registrar.registers, 1)
+        XCTAssertEqual(m.state, .unavailable(reason: String(localized: "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items.")))
+    }
+
     func test_registerFailure_isUnavailable() async {
         let registrar = FakeRegistrar(status: .notRegistered)
         registrar.registerError = CocoaError(.fileNoSuchFile)

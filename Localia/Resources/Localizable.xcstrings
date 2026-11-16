@@ -7248,6 +7248,22 @@
           }
         }
       }
+    },
+    "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le proxy Localia n'a pas répondu après un redémarrage. Vérifiez qu'il est autorisé dans les éléments de connexion."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

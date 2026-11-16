@@ -17,7 +17,7 @@ final class ProxyStringsTests: XCTestCase {
         let keys = try NSRegularExpression(pattern: #"String\(localized: "(.*)"\)"#)
             .matches(in: source, range: NSRange(source.startIndex..., in: source))
             .compactMap { Range($0.range(at: 1), in: source).map { String(source[$0]) } }
-        XCTAssertEqual(keys.count, 7)   // one line each; an interpolation may hold quotes, hence the greedy match
+        XCTAssertEqual(keys.count, 8)   // one line each; an interpolation may hold quotes, hence the greedy match
 
         let data = try Data(contentsOf: Self.root.appendingPathComponent("Localia/Resources/Localizable.xcstrings"))
         let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

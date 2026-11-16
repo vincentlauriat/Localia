@@ -147,8 +147,9 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         // The old process can still answer for a moment: wait for the new version, not the first answer.
         let second = await pollHealth(deadline: restartDeadline,
                                       until: { [appVersion] v in v == appVersion || appVersion == nil })
-        if let second, matches(second) { return state = .running(version: second) }
-        state = .unavailable(reason: String(localized: "The Localia proxy is version \(second ?? first), the app is \(appVersion ?? "?")."))
+        guard let second else { return state = .unavailable(reason: Self.silentAfterRestartReason) }
+        if matches(second) { return state = .running(version: second) }
+        state = .unavailable(reason: String(localized: "The Localia proxy is version \(second), the app is \(appVersion ?? "?")."))
     }
 
     /// nil when the agent is (now) enabled, else why it cannot run. A user who turned it off in Login
@@ -163,6 +164,10 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
             return String(localized: "Could not start the Localia proxy: \(error.localizedDescription)")
         }
         return registrar.status == .requiresApproval ? Self.disabledReason : nil
+    }
+
+    private static var silentAfterRestartReason: String {
+        String(localized: "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items.")
     }
 
     private static var disabledReason: String {
