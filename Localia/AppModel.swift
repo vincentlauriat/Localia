@@ -98,6 +98,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var proxyFallbackActive = false {
         didSet { routing.fallback = proxyFallbackActive }
     }
+    /// What the Settings status row shows: the service state after the last check.
+    @Published private(set) var proxyState: ProxyState = .unknown
+    /// A check started from the Settings "Restart" button is running.
+    @Published private(set) var proxyRestarting = false
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
@@ -490,6 +494,7 @@ final class AppModel: ObservableObject {
         let wasHealthy = routing.resolver.proxyHealthy
         let wasFallback = proxyFallbackActive
         await proxy.ensureRunning()
+        proxyState = proxy.state
         switch proxy.state {
         case .running:
             proxyFallbackActive = false
@@ -501,6 +506,40 @@ final class AppModel: ObservableObject {
             break
         }
         if routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) { await refreshShim() }
+    }
+
+    /// Settings "Restart": a fresh check, which registers or restarts the service and pushes the settings.
+    func restartProxy() async {
+        proxyRestarting = true
+        await ensureProxy()
+        proxyRestarting = false
+    }
+
+    /// Per-engine route picker. The shim state follows, since it names which engines go through the proxy.
+    func setRoute(_ route: EngineRoute, for engine: EngineID) async {
+        settings.engineRoutes[engine] = route
+        await refreshShim()
+    }
+
+    func setLogContent(_ on: Bool) async {
+        settings.logContent = on
+        await pushProxyConfig()
+    }
+
+    func setLogRetentionDays(_ days: Int) async {
+        settings.logRetentionDays = days
+        await pushProxyConfig()
+    }
+
+    /// Only while the service runs: otherwise `ensureProxy` pushes the settings at its next successful check.
+    private func pushProxyConfig() async {
+        guard proxy.isHealthy else { return }
+        await proxy.push(settings.proxyConfig)
+    }
+
+    /// Settings "Erase…": throws the service's error, which the sheet shows inline.
+    func eraseProxyData(log: Bool, stats: Bool) async throws {
+        try await proxy.erase(log: log, stats: stats)
     }
 
     /// In `everyClaude` scope a failed write would leave `claude` pointing at the old state: say so.

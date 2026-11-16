@@ -56,6 +56,8 @@ struct SettingsView: View {
                 ForEach(EngineID.allCases, id: \.self) { EngineRow(model: model, id: $0) }
             }
 
+            ProxySettingsSection(model: model)
+
             Section(String(localized: "Before deleting Localia")) {
                 HStack {
                     Text(String(localized: "Turns local mode off and removes the block Localia added to your shell startup files."))
@@ -173,5 +175,128 @@ struct EveryClaudeConfirmation: View {
         }
         .padding(20)
         .frame(width: 480)
+    }
+}
+
+
+/// The Localia proxy: service status, per-engine route, what the log keeps. Part of the Advanced tab, so
+/// simple mode never shows engines, ports or tokens.
+struct ProxySettingsSection: View {
+    @ObservedObject var model: AppModel
+    @State private var erasing = false
+
+    private var settings: SettingsStore { model.settings }
+
+    var body: some View {
+        Section(String(localized: "Localia proxy")) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.statusText(model.proxyState)).foregroundStyle(statusColor)
+                    if case let .unavailable(reason) = model.proxyState {
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if model.proxyRestarting { ProgressView().controlSize(.small) }
+                Button(String(localized: "Restart")) { Task { await model.restartProxy() } }
+                    .disabled(model.proxyRestarting)
+            }
+
+            ForEach([EngineID.ollama, .llamaCpp], id: \.self) { id in
+                Picker(AppModel.engineName(id), selection: Binding(
+                    get: { settings.engineRoutes[id] ?? .proxy },
+                    set: { route in Task { await model.setRoute(route, for: id) } })) {
+                    Text(String(localized: "Direct")).tag(EngineRoute.direct)
+                    Text(String(localized: "Via Localia")).tag(EngineRoute.proxy)
+                }
+            }
+            LabeledContent(AppModel.engineName(.mlx), value: String(localized: "Always via Localia"))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(String(localized: "Record request content"), isOn: Binding(
+                    get: { settings.logContent }, set: { on in Task { await model.setLogContent(on) } }))
+                Text(String(localized: "The content of requests stays on this Mac."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Stepper(String(localized: "Keep the log for \(settings.logRetentionDays) days"),
+                    value: Binding(get: { settings.logRetentionDays },
+                                   set: { days in Task { await model.setLogRetentionDays(days) } }),
+                    in: ProxyConfig.retentionRange)
+
+            HStack {
+                Spacer()
+                Button(String(localized: "Erase…")) { erasing = true }
+            }
+        }
+        .sheet(isPresented: $erasing) { ProxyEraseSheet(model: model) { erasing = false } }
+    }
+
+    static func statusText(_ state: ProxyState) -> String {
+        switch state {
+        case .unknown: String(localized: "Checking…")
+        case .running: String(localized: "Running")
+        case .unavailable: String(localized: "Not available — statistics are off")
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.proxyState {
+        case .running: Theme.local
+        case .unavailable: Theme.orange
+        case .unknown: .secondary
+        }
+    }
+}
+
+/// "Erase…": what to delete, then the outcome inline (no modal alert).
+struct ProxyEraseSheet: View {
+    @ObservedObject var model: AppModel
+    let close: () -> Void
+    @State private var log = false
+    @State private var stats = false
+    @State private var working = false
+    @State private var outcome: Outcome?
+
+    private enum Outcome { case done, failed(String) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(String(localized: "Erase proxy data")).font(.headline)
+            Toggle(String(localized: "Request log"), isOn: $log)
+            Toggle(String(localized: "Statistics"), isOn: $stats)
+            switch outcome {
+            case .done:
+                Label(String(localized: "Erased."), systemImage: "checkmark.circle.fill").foregroundStyle(Theme.local)
+            case let .failed(text):
+                Label(text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            case nil:
+                EmptyView()
+            }
+            HStack {
+                Spacer()
+                if working { ProgressView().controlSize(.small) }
+                Button(String(localized: "Close"), action: close).keyboardShortcut(.cancelAction)
+                Button(String(localized: "Erase"), role: .destructive) { erase() }
+                    .disabled(!log && !stats || working)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private func erase() {
+        working = true
+        outcome = nil
+        Task {
+            do {
+                try await model.eraseProxyData(log: log, stats: stats)
+                outcome = .done
+            } catch {
+                outcome = .failed(error.localizedDescription)
+            }
+            working = false
+        }
     }
 }
