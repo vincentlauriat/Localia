@@ -147,6 +147,7 @@ final class FlowGraphTests: XCTestCase {
         let node = g.nodes.first { $0.kind == .model }
         XCTAssertEqual(node?.label, "Qwen3 8B")
         XCTAssertEqual(node?.detail, "qwen3:8b-localia")
+        XCTAssertEqual(node.map { FlowGraph.accessibilityLabel($0, in: g) }, "Qwen3 8B, qwen3:8b-localia")
     }
 
     func test_everyClaudeScope_addsTerminal_andColumnsAreOrdered() {
