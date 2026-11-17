@@ -38,4 +38,9 @@ pub trait StreamEncoder: Send {
     fn finish(&mut self) -> Vec<Bytes>;
     /// The dialect's error event. The stream must end after it.
     fn fail(&mut self, message: &str) -> Vec<Bytes>;
+    /// An event that keeps the client's idle timer alive while the engine is silent (an SSE comment does not
+    /// reset some clients' timers); nothing once the stream ended. Dialects that need none send nothing.
+    fn keepalive(&mut self) -> Vec<Bytes> {
+        Vec::new()
+    }
 }

@@ -14,7 +14,7 @@ use crate::ir::{
 };
 use axum::body::Bytes;
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const PREVIOUS_RESPONSE_ID_MESSAGE: &str =
     "previous_response_id is not supported by local models; send the full input";
@@ -274,6 +274,10 @@ fn new_message_id() -> String {
     format!("msg_{}", random_hex())
 }
 
+fn new_reasoning_id() -> String {
+    format!("rs_{}", random_hex())
+}
+
 fn new_item_id() -> String {
     format!("fc_{}", random_hex())
 }
@@ -310,6 +314,16 @@ fn message_item(id: &str, status: &str, content: Vec<Value>) -> Value {
     json!({"id": id, "type": "message", "status": status, "role": "assistant", "content": content})
 }
 
+/// A reasoning item as Codex parses it (`ResponseItem::Reasoning`: `summary` is required). Codex sends it
+/// back in the next request's input, where `decode` drops it.
+fn reasoning_item(id: &str, text: Option<&str>) -> Value {
+    let content: Vec<Value> = text
+        .map(|t| json!({"type": "reasoning_text", "text": t}))
+        .into_iter()
+        .collect();
+    json!({"id": id, "type": "reasoning", "summary": [], "content": content})
+}
+
 fn function_call_item(id: &str, call_id: &str, name: &str, arguments: &str, status: &str) -> Value {
     json!({
         "id": id, "type": "function_call", "status": status, "call_id": call_id, "name": name,
@@ -336,13 +350,16 @@ fn response_object(
     })
 }
 
-/// A whole answer as a Responses `response`: a message item per text part and a `function_call` item per
-/// tool call, in order. Reasoning is left out, as in the stream.
+/// A whole answer as a Responses `response`: a reasoning item per thinking part, a message item per text
+/// part and a `function_call` item per tool call, in order.
 pub fn encode_response(r: &ChatResponse, model: &str) -> Value {
     let output: Vec<Value> = r
         .parts
         .iter()
         .filter_map(|p| match p {
+            Part::Thinking(t) if !t.is_empty() => {
+                Some(reasoning_item(&new_reasoning_id(), Some(t)))
+            }
             Part::Text(t) if !t.is_empty() => Some(message_item(
                 &new_message_id(),
                 "completed",
@@ -381,8 +398,19 @@ pub fn error_body(type_: &str, message: &str) -> Value {
 
 // MARK: - Streaming
 
-/// The message item being streamed.
-struct OpenText {
+/// How often, at least, a real event is sent while tool calls are being gathered. Codex drops a stream after
+/// 300 s without an event (`DEFAULT_STREAM_IDLE_TIMEOUT_MS`), and SSE comments do not count.
+pub const DEFAULT_KEEPALIVE: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ItemKind {
+    Message,
+    Reasoning,
+}
+
+/// The message or reasoning item being streamed.
+struct OpenItem {
+    kind: ItemKind,
     output_index: usize,
     id: String,
     text: String,
@@ -399,10 +427,13 @@ struct Call {
 /// Internal stream events as Responses SSE: `response.created`, `response.in_progress`, the output items,
 /// then `response.completed` (or `response.failed`), every event numbered by `sequence_number`.
 ///
-/// Text streams live as one message item. Tool calls are gathered whole, by engine index, and sent at the
-/// end of the answer, in the order they started: output items do not interleave here, and parallel calls
-/// whose fragments interleave (or calls that text interrupts) must still come out complete. Clients act on a
-/// call at `response.output_item.done`, so little is lost by waiting. Reasoning is not sent.
+/// Text streams live as message items, and the engine's reasoning as reasoning items
+/// (`response.reasoning_text.delta`, which Codex parses as raw reasoning), never mixed into the text. Tool
+/// calls are gathered whole, by engine index, and sent at the end of the answer, in the order they started:
+/// output items do not interleave here, and parallel calls whose fragments interleave (or calls that text
+/// interrupts) must still come out complete. Clients act on a call at `response.output_item.done`, so
+/// little is lost by waiting; meanwhile a `response.in_progress` goes out at least every keepalive interval,
+/// so the client's idle timer never fires while arguments are still arriving.
 pub struct Encoder {
     model: String,
     id: String,
@@ -411,7 +442,7 @@ pub struct Encoder {
     sequence: u64,
     /// Items already done, in output order; `response.completed` lists them.
     done: Vec<Value>,
-    text: Option<OpenText>,
+    open: Option<OpenItem>,
     /// Whitespace that arrived while no message was open: it prefixes the next non-blank text.
     blank: String,
     calls: Vec<Call>,
@@ -419,6 +450,8 @@ pub struct Encoder {
     output: u64,
     started: bool,
     finished: bool,
+    keepalive_every: Duration,
+    last_sent: Instant,
 }
 
 impl Encoder {
@@ -431,13 +464,15 @@ impl Encoder {
             input_estimate: 0,
             sequence: 0,
             done: Vec::new(),
-            text: None,
+            open: None,
             blank: String::new(),
             calls: Vec::new(),
             input: None,
             output: 0,
             started: false,
             finished: false,
+            keepalive_every: DEFAULT_KEEPALIVE,
+            last_sent: Instant::now(),
         }
     }
 
@@ -452,6 +487,12 @@ impl Encoder {
         self
     }
 
+    /// The longest silence allowed while tool calls are gathered (default `DEFAULT_KEEPALIVE`).
+    pub fn with_keepalive(mut self, every: Duration) -> Self {
+        self.keepalive_every = every;
+        self
+    }
+
     pub fn with_response_id(mut self, id: &str) -> Self {
         self.id = id.to_string();
         self
@@ -461,6 +502,7 @@ impl Encoder {
         payload["type"] = json!(kind);
         payload["sequence_number"] = json!(self.sequence);
         self.sequence += 1;
+        self.last_sent = Instant::now();
         Bytes::from(format!("event: {kind}\ndata: {payload}\n\n"))
     }
 
@@ -476,26 +518,23 @@ impl Encoder {
         )
     }
 
-    /// Text into the open message, or a new one. Whitespace with no message open (Qwen's "\n\n" after
-    /// thinking) waits for non-blank text, so no whitespace-only message is ever sent.
-    fn text(&mut self, text: &str) -> Vec<Bytes> {
-        if text.is_empty() {
-            return Vec::new();
-        }
-        let mut out = Vec::new();
-        let delta = if self.text.is_some() {
-            text.to_string()
-        } else {
-            if text.chars().all(char::is_whitespace) {
-                self.blank.push_str(text);
-                return Vec::new();
-            }
-            let id = new_message_id();
-            let output_index = self.done.len();
-            out.push(self.sse(
-                "response.output_item.added",
-                json!({"output_index": output_index, "item": message_item(&id, "in_progress", vec![])}),
-            ));
+    /// Opens a message or reasoning item, closing the one that was open.
+    fn open_item(&mut self, kind: ItemKind) -> Vec<Bytes> {
+        let mut out = self.close_open();
+        let id = match kind {
+            ItemKind::Message => new_message_id(),
+            ItemKind::Reasoning => new_reasoning_id(),
+        };
+        let output_index = self.done.len();
+        let item = match kind {
+            ItemKind::Message => message_item(&id, "in_progress", vec![]),
+            ItemKind::Reasoning => reasoning_item(&id, None),
+        };
+        out.push(self.sse(
+            "response.output_item.added",
+            json!({"output_index": output_index, "item": item}),
+        ));
+        if kind == ItemKind::Message {
             out.push(self.sse(
                 "response.content_part.added",
                 json!({
@@ -503,58 +542,128 @@ impl Encoder {
                     "part": output_text_part(""),
                 }),
             ));
-            self.text = Some(OpenText {
-                output_index,
-                id,
-                text: String::new(),
-            });
-            std::mem::take(&mut self.blank) + text
-        };
-        let Some(open) = self.text.as_mut() else {
-            return out;
-        };
-        open.text.push_str(&delta);
-        let (id, output_index) = (open.id.clone(), open.output_index);
-        out.push(self.sse(
-            "response.output_text.delta",
-            json!({
-                "item_id": id, "output_index": output_index, "content_index": 0, "delta": delta,
-                "logprobs": [],
-            }),
-        ));
+        }
+        self.open = Some(OpenItem {
+            kind,
+            output_index,
+            id,
+            text: String::new(),
+        });
         out
     }
 
-    fn close_text(&mut self) -> Vec<Bytes> {
-        let Some(OpenText {
+    /// A delta into the open item, which must be of `kind`.
+    fn delta(&mut self, delta: &str) -> Vec<Bytes> {
+        let Some(open) = self.open.as_mut() else {
+            return Vec::new();
+        };
+        open.text.push_str(delta);
+        let (kind, id, output_index) = (open.kind, open.id.clone(), open.output_index);
+        let payload = json!({
+            "item_id": id, "output_index": output_index, "content_index": 0, "delta": delta,
+        });
+        match kind {
+            ItemKind::Message => {
+                let mut payload = payload;
+                payload["logprobs"] = json!([]);
+                vec![self.sse("response.output_text.delta", payload)]
+            }
+            ItemKind::Reasoning => vec![self.sse("response.reasoning_text.delta", payload)],
+        }
+    }
+
+    /// Text into the open message, or a new one. Whitespace with no message open (Qwen's "\n\n" after
+    /// thinking) waits for non-blank text, so no whitespace-only message is ever sent.
+    fn text(&mut self, text: &str) -> Vec<Bytes> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|o| o.kind == ItemKind::Message)
+        {
+            return self.delta(text);
+        }
+        if text.chars().all(char::is_whitespace) {
+            self.blank.push_str(text);
+            return Vec::new();
+        }
+        let full = std::mem::take(&mut self.blank) + text;
+        let mut out = self.open_item(ItemKind::Message);
+        out.extend(self.delta(&full));
+        out
+    }
+
+    fn thinking(&mut self, thought: &str) -> Vec<Bytes> {
+        if thought.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if !self
+            .open
+            .as_ref()
+            .is_some_and(|o| o.kind == ItemKind::Reasoning)
+        {
+            out = self.open_item(ItemKind::Reasoning);
+        }
+        out.extend(self.delta(thought));
+        out
+    }
+
+    fn close_open(&mut self) -> Vec<Bytes> {
+        let Some(OpenItem {
+            kind,
             output_index,
             id,
             text,
-        }) = self.text.take()
+        }) = self.open.take()
         else {
             return Vec::new();
         };
-        let item = message_item(&id, "completed", vec![output_text_part(&text)]);
-        let out = vec![
-            self.sse(
-                "response.output_text.done",
-                json!({
-                    "item_id": id, "output_index": output_index, "content_index": 0, "text": text,
-                    "logprobs": [],
-                }),
-            ),
-            self.sse(
-                "response.content_part.done",
-                json!({
-                    "item_id": id, "output_index": output_index, "content_index": 0,
-                    "part": output_text_part(&text),
-                }),
-            ),
-            self.sse(
-                "response.output_item.done",
-                json!({"output_index": output_index, "item": item.clone()}),
-            ),
-        ];
+        let (item, out) = match kind {
+            ItemKind::Message => {
+                let item = message_item(&id, "completed", vec![output_text_part(&text)]);
+                let out = vec![
+                    self.sse(
+                        "response.output_text.done",
+                        json!({
+                            "item_id": id, "output_index": output_index, "content_index": 0,
+                            "text": text, "logprobs": [],
+                        }),
+                    ),
+                    self.sse(
+                        "response.content_part.done",
+                        json!({
+                            "item_id": id, "output_index": output_index, "content_index": 0,
+                            "part": output_text_part(&text),
+                        }),
+                    ),
+                    self.sse(
+                        "response.output_item.done",
+                        json!({"output_index": output_index, "item": item.clone()}),
+                    ),
+                ];
+                (item, out)
+            }
+            ItemKind::Reasoning => {
+                let item = reasoning_item(&id, Some(&text));
+                let out = vec![
+                    self.sse(
+                        "response.reasoning_text.done",
+                        json!({
+                            "item_id": id, "output_index": output_index, "content_index": 0,
+                            "text": text,
+                        }),
+                    ),
+                    self.sse(
+                        "response.output_item.done",
+                        json!({"output_index": output_index, "item": item.clone()}),
+                    ),
+                ];
+                (item, out)
+            }
+        };
         self.done.push(item);
         out
     }
@@ -631,7 +740,7 @@ impl StreamEncoder for Encoder {
         let mut out = self.start();
         match e {
             StreamEvent::TextDelta(t) => out.extend(self.text(t)),
-            StreamEvent::ThinkingDelta(_) => {}
+            StreamEvent::ThinkingDelta(t) => out.extend(self.thinking(t)),
             StreamEvent::ToolCallStart { index, id, name } => self.tool_start(*index, id, name),
             StreamEvent::ToolCallArgs { index, fragment } => self.tool_args(*index, fragment),
             StreamEvent::Usage { input, output } => {
@@ -642,8 +751,12 @@ impl StreamEncoder for Encoder {
                     self.output = *o;
                 }
             }
-            // The response is `completed` whatever the finish reason (see the report on `Length`).
+            // `completed` whatever the finish reason, `length` included: Codex treats `response.incomplete`
+            // as a terminal error (older builds retry it 5 times), and keeps a completed turn's output.
             StreamEvent::Finish(_) => {}
+        }
+        if out.is_empty() && self.last_sent.elapsed() >= self.keepalive_every {
+            out = self.keepalive();
         }
         out
     }
@@ -654,7 +767,7 @@ impl StreamEncoder for Encoder {
         }
         let mut out = self.start();
         self.finished = true;
-        out.extend(self.close_text());
+        out.extend(self.close_open());
         out.extend(self.flush_calls());
         let usage = usage(self.input.unwrap_or(self.input_estimate), self.output);
         let completed = self.response("completed", usage, Value::Null);
@@ -675,5 +788,18 @@ impl StreamEncoder for Encoder {
         );
         out.push(self.sse("response.failed", json!({"response": failed})));
         out
+    }
+
+    /// A `response.in_progress`: a spec event Codex accepts and ignores, which resets its idle timer.
+    fn keepalive(&mut self) -> Vec<Bytes> {
+        if self.finished {
+            return Vec::new();
+        }
+        let out = self.start();
+        if !out.is_empty() {
+            return out;
+        }
+        let progress = self.response("in_progress", Value::Null, Value::Null);
+        vec![self.sse("response.in_progress", json!({"response": progress}))]
     }
 }

@@ -1,13 +1,16 @@
 //! The OpenAI Responses dialect: request decoding, the streamed and whole answers, and golden streams.
 
+mod common;
+
 use axum::body::Bytes;
+use common::{is_id, pipeline};
 use localia_router::dialect::responses::{decode, encode_response, error_body, Encoder};
 use localia_router::dialect::{DialectError, StreamEncoder};
-use localia_router::engine::{chat_body, decode_chat_response, ChatStreamDecoder, EngineKind};
+use localia_router::engine::{chat_body, decode_chat_response, EngineKind};
 use localia_router::ir::{FinishReason, Part, Role, StreamEvent, ToolChoice};
-use localia_router::sse::SseParser;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/responses")
@@ -47,38 +50,6 @@ fn find<'a>(ev: &'a [(String, Value)], name: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// An engine's SSE bytes through the parser (split every `chunk` bytes), the decoder and the encoder, ending
-/// as the relay will: a stop sequence ends the answer, an upstream error or a cut stream fails it.
-fn pipeline(sse: &[u8], chunk: usize, stops: &[&str], enc: &mut dyn StreamEncoder) -> Vec<Bytes> {
-    let stops: Vec<String> = stops.iter().map(|s| s.to_string()).collect();
-    let mut parser = SseParser::new();
-    let mut dec = ChatStreamDecoder::new(&stops);
-    let mut out = enc.start();
-    for piece in sse.chunks(chunk) {
-        for payload in parser.feed(piece) {
-            for e in dec.feed(&payload) {
-                out.extend(enc.event(&e));
-            }
-            if let Some(err) = dec.take_error() {
-                out.extend(enc.fail(&err));
-                return out;
-            }
-            if dec.matched_stop().is_some() {
-                out.extend(enc.finish());
-                return out;
-            }
-        }
-    }
-    if !dec.saw_end() {
-        out.extend(
-            enc.fail("The local model server closed the stream before the answer was complete."),
-        );
-        return out;
-    }
-    out.extend(enc.finish());
-    out
-}
-
 /// Stream events straight into an encoder, then its end.
 fn encode(events: &[StreamEvent], enc: &mut Encoder) -> Vec<Bytes> {
     let mut out = enc.start();
@@ -89,10 +60,10 @@ fn encode(events: &[StreamEvent], enc: &mut Encoder) -> Vec<Bytes> {
     out
 }
 
-/// Random ids (`resp_`, `msg_`, `fc_`, `call_` + 32 hex) become `<prefix><n>`, numbered per prefix in order
+/// Random ids (`resp_`, `msg_`, `fc_`, `call_`, `rs_` + 32 hex) become `<prefix><n>`, numbered per prefix in order
 /// of appearance.
 fn normalise_ids(s: &str) -> String {
-    const PREFIXES: [&str; 4] = ["resp_", "msg_", "fc_", "call_"];
+    const PREFIXES: [&str; 5] = ["resp_", "msg_", "fc_", "call_", "rs_"];
     let mut seen: Vec<Vec<String>> = vec![Vec::new(); PREFIXES.len()];
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -126,14 +97,6 @@ fn normalise_ids(s: &str) -> String {
     out
 }
 
-fn is_id(s: &str, prefix: &str) -> bool {
-    s.strip_prefix(prefix).is_some_and(|h| {
-        h.len() == 32
-            && h.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
-}
-
 // MARK: - Request
 
 #[test]
@@ -145,6 +108,7 @@ fn decode_maps_input_items_and_tools() {
            {"type":"message","role":"developer","content":[{"type":"input_text","text":"Sandbox: read-only."}]},
            {"role":"user","content":"List the files"},
            {"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"xyz"},
+           {"type":"reasoning","id":"rs_2","summary":[],"content":[{"type":"reasoning_text","text":"Hidden thought."}]},
            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking."}]},
            {"type":"function_call","call_id":"call_a","name":"shell","arguments":"{\"cmd\":\"ls\"}"},
            {"type":"function_call","call_id":"call_b","name":"shell","arguments":"{\"cmd\":\"pwd\"}"},
@@ -238,6 +202,12 @@ fn decode_maps_input_items_and_tools() {
         ["system", "user", "assistant", "tool", "tool", "user"]
     );
     assert_eq!(m[2]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(m[3]["tool_call_id"], "call_a");
+    assert_eq!(m[4]["tool_call_id"], "call_b");
+    assert!(
+        !c.to_string().contains("Hidden thought."),
+        "reasoning sent back is not replayed"
+    );
     assert_eq!(c["max_tokens"], 2048);
     assert_eq!(c["tool_choice"]["function"]["name"], "shell");
 }
@@ -343,13 +313,22 @@ fn encode_response_with_tool_calls() {
     assert_eq!(v["model"], "gpt-x");
     let out = v["output"].as_array().unwrap();
     let kinds: Vec<&str> = out.iter().map(|o| o["type"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["message", "function_call", "function_call"]);
-    assert_eq!(out[0]["content"][0]["text"], "Reading.");
-    assert!(is_id(out[1]["call_id"].as_str().unwrap(), "call_"));
-    assert!(is_id(out[1]["id"].as_str().unwrap(), "fc_"));
-    assert_eq!(out[1]["arguments"], r#"{"file_path":"a"}"#);
-    assert_eq!(out[2]["call_id"], "call_engine");
-    assert_eq!(out[2]["arguments"], "{}");
+    assert_eq!(
+        kinds,
+        ["reasoning", "message", "function_call", "function_call"]
+    );
+    assert!(is_id(out[0]["id"].as_str().unwrap(), "rs_"));
+    assert_eq!(
+        out[0]["content"],
+        json!([{"type": "reasoning_text", "text": "hmm"}])
+    );
+    assert_eq!(out[0]["summary"], json!([]));
+    assert_eq!(out[1]["content"][0]["text"], "Reading.");
+    assert!(is_id(out[2]["call_id"].as_str().unwrap(), "call_"));
+    assert!(is_id(out[2]["id"].as_str().unwrap(), "fc_"));
+    assert_eq!(out[2]["arguments"], r#"{"file_path":"a"}"#);
+    assert_eq!(out[3]["call_id"], "call_engine");
+    assert_eq!(out[3]["arguments"], "{}");
     assert_eq!(
         v["usage"],
         json!({"input_tokens": 5, "output_tokens": 0, "total_tokens": 5})
@@ -371,14 +350,32 @@ fn golden(case: &str) {
     let engine = std::fs::read(dir.join("engine.sse")).unwrap();
     let want = std::fs::read_to_string(dir.join("client.sse")).unwrap();
     for chunk in [7, 1] {
-        let mut enc = Encoder::new("localia")
+        let enc = Encoder::new("localia")
             .with_input_tokens(50)
             .with_created_at(1_700_000_000);
-        let out = pipeline(&engine, chunk, &[], &mut enc);
+        let out = pipeline(&engine, chunk, &[], enc);
         let got = normalise_ids(&String::from_utf8(out.concat()).unwrap());
         assert_eq!(got, want, "{case}, {chunk}-byte chunks");
         events(&out);
     }
+}
+
+#[test]
+fn golden_responses_mlx_thinking_then_text() {
+    golden("mlx_thinking_then_text");
+    // The reasoning never reaches the message text, and comes as reasoning events Codex parses.
+    let engine = std::fs::read(golden_dir().join("mlx_thinking_then_text/engine.sse")).unwrap();
+    let ev = events(&pipeline(&engine, 1, &[], Encoder::new("m")));
+    let text: String = find(&ev, "response.output_text.delta")
+        .iter()
+        .filter_map(|o| o["delta"].as_str())
+        .collect();
+    assert!(!text.contains("think"), "{text:?}");
+    let reasoning: String = find(&ev, "response.reasoning_text.delta")
+        .iter()
+        .filter_map(|o| o["delta"].as_str())
+        .collect();
+    assert_eq!(reasoning, "Let me think.");
 }
 
 #[test]
@@ -392,7 +389,7 @@ fn golden_responses_mlx_parallel_tool_calls() {
     // Two function_call items, distinct call ids, each `.done` holding its call's whole JSON.
     let engine = std::fs::read(golden_dir().join("mlx_parallel_tool_calls/engine.sse")).unwrap();
     for chunk in [7, 1] {
-        let ev = events(&pipeline(&engine, chunk, &[], &mut Encoder::new("m")));
+        let ev = events(&pipeline(&engine, chunk, &[], Encoder::new("m")));
         let done = find(&ev, "response.output_item.done");
         assert_eq!(done.len(), 2);
         let want = [json!({"file_path": "a.txt"}), json!({"pattern": "*.md"})];
@@ -460,13 +457,17 @@ fn tool_fragments_after_text_are_kept() {
         .map(|o| &o["item"])
         .collect();
     let kinds: Vec<&str> = done.iter().map(|i| i["type"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["message", "function_call", "function_call"]);
+    assert_eq!(
+        kinds,
+        ["message", "reasoning", "function_call", "function_call"]
+    );
     assert_eq!(done[0]["content"][0]["text"], "Let me look.");
-    assert_eq!(done[1]["name"], "Read");
-    assert_eq!(done[1]["arguments"], r#"{"file_path":"a"}"#);
-    assert_eq!(done[2]["name"], "Ls");
-    assert_eq!(done[2]["call_id"], "call_x");
-    assert_eq!(done[2]["arguments"], "{}");
+    assert_eq!(done[1]["content"][0]["text"], "hmm");
+    assert_eq!(done[2]["name"], "Read");
+    assert_eq!(done[2]["arguments"], r#"{"file_path":"a"}"#);
+    assert_eq!(done[3]["name"], "Ls");
+    assert_eq!(done[3]["call_id"], "call_x");
+    assert_eq!(done[3]["arguments"], "{}");
     // Output indices follow the order of the items, and `response.completed` lists the same items.
     for (i, (_, o)) in ev
         .iter()
@@ -482,10 +483,6 @@ fn tool_fragments_after_text_are_kept() {
         .iter()
         .collect();
     assert_eq!(output, done);
-    assert!(
-        !names(&ev).iter().any(|n| n.contains("reasoning")),
-        "reasoning is not sent"
-    );
 }
 
 #[test]
@@ -599,7 +596,7 @@ fn fail_emits_response_failed_and_ends_the_stream() {
 #[test]
 fn upstream_error_and_cut_stream_fail_the_response() {
     let err = b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\"}}\n\n";
-    let ev = events(&pipeline(err, 7, &[], &mut Encoder::new("m")));
+    let ev = events(&pipeline(err, 7, &[], Encoder::new("m")));
     assert_eq!(names(&ev).last(), Some(&"response.failed"));
     assert_eq!(
         find(&ev, "response.failed")[0]["response"]["error"]["message"],
@@ -607,7 +604,7 @@ fn upstream_error_and_cut_stream_fail_the_response() {
     );
 
     let cut = b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n";
-    let ev = events(&pipeline(cut, 1, &[], &mut Encoder::new("m")));
+    let ev = events(&pipeline(cut, 1, &[], Encoder::new("m")));
     assert_eq!(names(&ev).last(), Some(&"response.failed"));
 }
 
@@ -615,11 +612,94 @@ fn upstream_error_and_cut_stream_fail_the_response() {
 fn stop_sequence_ends_the_text() {
     let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"Answer: 4 </do\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ne> more\"}}]}\n\n";
     for chunk in [7, 1] {
-        let ev = events(&pipeline(sse, chunk, &["</done>"], &mut Encoder::new("m")));
+        let ev = events(&pipeline(sse, chunk, &["</done>"], Encoder::new("m")));
         assert_eq!(
             find(&ev, "response.output_text.done")[0]["text"],
             "Answer: 4 "
         );
         assert_eq!(names(&ev).last(), Some(&"response.completed"));
     }
+}
+
+// MARK: - Keeping the client's idle timer alive
+
+/// A tool call whose fragments arrive slowly: while it is buffered, the encoder still sends a real event at
+/// least every interval (Codex gives up after 300 s without one; an SSE comment does not count).
+#[test]
+fn buffered_tool_call_keeps_the_stream_alive() {
+    let mut enc = Encoder::new("m").with_keepalive(Duration::from_millis(40));
+    let mut out = enc.start();
+    out.extend(enc.event(&StreamEvent::ToolCallStart {
+        index: 0,
+        id: "".into(),
+        name: "shell".into(),
+    }));
+    let fragments = ["{\"cmd\":", "\"cat <<EOF\\n", "line\\n", "EOF\"}"];
+    for f in fragments {
+        std::thread::sleep(Duration::from_millis(60));
+        out.extend(enc.event(&StreamEvent::ToolCallArgs {
+            index: 0,
+            fragment: f.into(),
+        }));
+    }
+    out.extend(enc.event(&StreamEvent::Finish(FinishReason::ToolCalls)));
+    out.extend(enc.finish());
+    let ev = events(&out);
+    let beats = names(&ev)
+        .iter()
+        .filter(|n| **n == "response.in_progress")
+        .count()
+        - 1;
+    assert!(beats >= fragments.len() - 1, "{:?}", names(&ev));
+    // Heartbeats are the spec's `response.in_progress`, and the call still comes out whole.
+    for o in find(&ev, "response.in_progress") {
+        assert_eq!(o["response"]["status"], "in_progress");
+    }
+    let call = &find(&ev, "response.output_item.done")[0]["item"];
+    assert_eq!(call["arguments"], fragments.concat());
+    assert_eq!(names(&ev).last(), Some(&"response.completed"));
+}
+
+#[test]
+fn no_heartbeat_while_events_flow_or_before_the_interval() {
+    let ev = events(&encode(
+        &[
+            StreamEvent::ToolCallStart {
+                index: 0,
+                id: "".into(),
+                name: "Ls".into(),
+            },
+            StreamEvent::ToolCallArgs {
+                index: 0,
+                fragment: "{}".into(),
+            },
+            StreamEvent::Finish(FinishReason::ToolCalls),
+        ],
+        &mut Encoder::new("m"),
+    ));
+    let beats = names(&ev)
+        .iter()
+        .filter(|n| **n == "response.in_progress")
+        .count();
+    assert_eq!(beats, 1, "only the opening one");
+}
+
+/// `keepalive()` is what the relay calls when the engine itself is silent (a long prompt being read).
+#[test]
+fn keepalive_emits_in_progress_until_the_end() {
+    let mut enc = Encoder::new("m");
+    let mut out = enc.keepalive();
+    out.extend(enc.keepalive());
+    out.extend(enc.event(&StreamEvent::Finish(FinishReason::Stop)));
+    out.extend(enc.finish());
+    out.extend(enc.keepalive());
+    assert_eq!(
+        names(&events(&out)),
+        [
+            "response.created",
+            "response.in_progress",
+            "response.in_progress",
+            "response.completed"
+        ]
+    );
 }

@@ -4,7 +4,7 @@
 mod common;
 
 use axum::body::Bytes;
-use common::{raw, spawn};
+use common::{is_id, pipeline, raw, spawn};
 use localia_router::dialect::anthropic::{
     self, count_tokens, decode, encode_response, error_body, error_mapping, Encoder,
     DOCUMENT_PLACEHOLDER, IMAGE_PLACEHOLDER,
@@ -66,39 +66,6 @@ fn message_delta(ev: &[(String, Value)]) -> Value {
         .expect("no message_delta")
 }
 
-/// An engine's SSE bytes through the parser (split every `chunk` bytes, as a socket would), the decoder and
-/// the encoder, ending the way the gateway did: a stop sequence or an upstream error ends the stream at once,
-/// and a stream cut before `[DONE]` or a finish reason fails instead of reading as a finished turn.
-fn pipeline(sse: &[u8], chunk: usize, stops: &[&str], mut enc: Encoder) -> Vec<Bytes> {
-    let stops: Vec<String> = stops.iter().map(|s| s.to_string()).collect();
-    let mut parser = SseParser::new();
-    let mut dec = ChatStreamDecoder::new(&stops);
-    let mut out = enc.start();
-    for piece in sse.chunks(chunk) {
-        for payload in parser.feed(piece) {
-            for e in dec.feed(&payload) {
-                out.extend(enc.event(&e));
-            }
-            if let Some(err) = dec.take_error() {
-                out.extend(enc.fail(&err));
-                return out;
-            }
-            if dec.matched_stop().is_some() {
-                out.extend(enc.finish());
-                return out;
-            }
-        }
-    }
-    if !dec.saw_end() {
-        out.extend(
-            enc.fail("The local model server closed the stream before the answer was complete."),
-        );
-        return out;
-    }
-    out.extend(enc.finish());
-    out
-}
-
 /// Chat chunks (as the engine would send them) through the decoder and an encoder, without the final events.
 fn consume(dec: &mut ChatStreamDecoder, enc: &mut Encoder, chunks: &[Value]) -> Vec<Bytes> {
     let mut out = Vec::new();
@@ -112,14 +79,6 @@ fn consume(dec: &mut ChatStreamDecoder, enc: &mut Encoder, chunks: &[Value]) -> 
 
 fn text_chunk(t: &str) -> Value {
     json!({"choices": [{"delta": {"content": t}}]})
-}
-
-fn is_id(s: &str, prefix: &str) -> bool {
-    s.strip_prefix(prefix).is_some_and(|h| {
-        h.len() == 32
-            && h.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
 }
 
 fn body(s: &str) -> Vec<u8> {
