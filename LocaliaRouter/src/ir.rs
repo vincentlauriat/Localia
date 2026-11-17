@@ -4,6 +4,8 @@
 /// A model call, whatever dialect it came in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatRequest {
+    /// The `model` the client asked for, echoed back in its answers (empty when it sent none).
+    pub client_model: String,
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,

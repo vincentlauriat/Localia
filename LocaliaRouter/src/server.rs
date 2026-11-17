@@ -96,6 +96,14 @@ fn json_response(status: StatusCode, body: Vec<u8>) -> Response<Body> {
     r
 }
 
+/// Binds `127.0.0.1:<cfg.port>` (loopback only) and serves it. Fails at once when the port is taken.
+pub async fn listen(cfg: ServiceConfig) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", cfg.port))
+        .await
+        .with_context(|| format!("cannot listen on 127.0.0.1:{}", cfg.port))?;
+    serve(cfg, listener).await
+}
+
 /// Opens the data directory (token, config, store) and serves `listener` until it fails.
 pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
@@ -170,8 +178,8 @@ async fn connection(stream: TcpStream, slot: Slot, app: axum::Router, cfg: Servi
         .timer(TokioTimer::new())
         .header_read_timeout(cfg.read_timeout)
         .keep_alive(false)
-        // Headers past 64 KiB get 431, as in the Swift server; bodies stream through this buffer.
-        .max_buf_size(64 << 10)
+        // Headers past 64 KiB get 431, as in the Swift server.
+        .max_header_size(64 << 10)
         .serve_connection(TokioIo::new(stream), svc);
     // A client that has not sent its whole request by the deadline loses the connection (slowloris).
     let watchdog = async {

@@ -21,7 +21,8 @@ fn invalid(message: impl Into<String>) -> DialectError {
 
 // MARK: - Request
 
-/// Decodes a `/v1/messages` body. The client's `model` is not kept: the router answers as its own model.
+/// Decodes a `/v1/messages` body. The client's `model` is kept in `client_model`, to be echoed in the answer
+/// (`Encoder::new`, `encode_response`), as the Swift gateway did; the engine is addressed by its own name.
 pub fn decode(body: &[u8]) -> Result<ChatRequest, DialectError> {
     let root: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
     if !root.is_object() {
@@ -55,6 +56,11 @@ pub fn decode(body: &[u8]) -> Result<ChatRequest, DialectError> {
         .filter_map(tool)
         .collect();
     Ok(ChatRequest {
+        client_model: root
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         system: text_of(root.get("system")).filter(|s| !s.is_empty()),
         messages,
         tools,
@@ -347,7 +353,7 @@ enum Block {
 }
 
 /// A tool call that started while another one's block was open: Anthropic blocks cannot interleave, so it
-/// waits, with its argument fragments, for that block to close.
+/// waits, with its argument fragments, for the end of the answer.
 struct Queued {
     call: u32,
     id: String,
@@ -360,8 +366,9 @@ struct Queued {
 /// own Anthropic endpoint does, so Claude Code shows progress while the model thinks.
 ///
 /// Parallel tool calls whose argument fragments interleave by index: the first call's block streams live, and
-/// the calls that start while it is open are sent whole, in order, when it closes. (The Swift gateway dropped
-/// the fragments of a call once a later one had started.)
+/// the calls that start while it is open (or while others wait) are sent whole, in order, when the answer
+/// ends, so none is sent before all its fragments arrived, even if text or reasoning comes in between. (The
+/// Swift gateway dropped the fragments of a call once a later one had started.)
 pub struct Encoder {
     model: String,
     id: String,
@@ -470,7 +477,7 @@ impl Encoder {
         if !self.calls.insert(call) {
             return Vec::new();
         }
-        if let Some(Block::Tool { .. }) = self.open {
+        if matches!(self.open, Some(Block::Tool { .. })) || !self.queued.is_empty() {
             self.queued.push(Queued {
                 call,
                 id: id.to_string(),
@@ -538,20 +545,26 @@ impl Encoder {
                     out.push(json_delta(index, "{}"));
                 }
                 out.push(block_stop(index));
-                for q in std::mem::take(&mut self.queued) {
-                    let i = self.take_index();
-                    out.push(tool_start(i, &tool_id(&q.id), &q.name));
-                    let args = if q.arguments.is_empty() {
-                        "{}"
-                    } else {
-                        &q.arguments
-                    };
-                    out.push(json_delta(i, args));
-                    out.push(block_stop(i));
-                }
                 out
             }
         }
+    }
+
+    /// The queued tool calls, whole, in call order; only once the answer has ended.
+    fn flush_queued(&mut self) -> Vec<Bytes> {
+        let mut out = Vec::new();
+        for q in std::mem::take(&mut self.queued) {
+            let i = self.take_index();
+            out.push(tool_start(i, &tool_id(&q.id), &q.name));
+            let args = if q.arguments.is_empty() {
+                "{}"
+            } else {
+                &q.arguments
+            };
+            out.push(json_delta(i, args));
+            out.push(block_stop(i));
+        }
+        out
     }
 }
 
@@ -638,6 +651,7 @@ impl StreamEncoder for Encoder {
         let mut out = self.start();
         self.finished = true;
         out.extend(self.close_open());
+        out.extend(self.flush_queued());
         let reason = match &self.finish {
             Some(FinishReason::StopSequence(_)) => stop_reason(self.finish.as_ref()),
             _ if !self.calls.is_empty() => match self.finish {

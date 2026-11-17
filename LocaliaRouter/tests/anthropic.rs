@@ -719,8 +719,13 @@ async fn bad_requests_are_refused_and_gateway_keeps_serving() {
     let flood = raw_text(p, &flood).await;
     assert!(flood.starts_with("HTTP/1.1 431"), "{flood:?}");
     // A body that is not JSON is the dialect's 400.
+    // Over HTTP this is the relay's `/v1/messages` (Task 8); here, the 400 body it will send.
     let e = decode(b"{not json").unwrap_err();
     assert_eq!(e.message(), "Request body must be a JSON object.");
+    assert_eq!(
+        error_body("invalid_request_error", e.message())["error"]["type"],
+        "invalid_request_error"
+    );
     let r = common::send(p, "POST", "/v2/other", &[], b"{}").await;
     assert_eq!(r.status, 404);
     // Still alive after all that.
@@ -892,13 +897,23 @@ fn pass_through_error_truncated_or_invalid_becomes_valid_json() {
 #[tokio::test]
 async fn port_in_use_throws() {
     let h = spawn(|_| {}).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        tokio::net::TcpListener::bind(("127.0.0.1", h.port))
-            .await
-            .is_err(),
-        "second listener on the same port"
-    );
+    let data = tempfile::tempdir().unwrap();
+    let sessions = tempfile::tempdir().unwrap();
+    let cfg = localia_router::ServiceConfig {
+        port: h.port,
+        data_dir: data.path().to_path_buf(),
+        sessions_dir: sessions.path().to_path_buf(),
+        engine_ports: localia_router::EnginePorts::default(),
+        version: "42".into(),
+        read_timeout: Duration::from_secs(30),
+        max_body: 32 << 20,
+        max_connections: 32,
+    };
+    let second = tokio::time::timeout(Duration::from_secs(5), localia_router::listen(cfg))
+        .await
+        .expect("a second listener on the same port must fail at once, not serve");
+    let err = second.expect_err("second listener on the same port");
+    assert!(format!("{err:#}").contains(&h.port.to_string()), "{err:#}");
 }
 
 /// Sends raw bytes and returns everything the server answers before closing (empty when it just closes).
@@ -1031,6 +1046,98 @@ fn placeholders_and_documents() {
         c["messages"][0]["content"],
         format!("{IMAGE_PLACEHOLDER}\n{DOCUMENT_PLACEHOLDER}\nWhat is this?")
     );
+}
+
+#[test]
+fn client_model_is_echoed_not_the_engines() {
+    let r = decode(
+        br#"{"model":"claude-x","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(r.client_model, "claude-x");
+    assert_eq!(
+        chat_body(&r, EngineKind::Mlx, QWEN)["model"],
+        "default_model",
+        "the engine gets its own name"
+    );
+    // The recorded stream says `"model": "default_model"`; the client is answered with its own model.
+    let ev = events(&pipeline(
+        &fixture("mlx-0.32.2-stream-text.sse"),
+        7,
+        &[],
+        Encoder::new(&r.client_model),
+    ));
+    assert_eq!(ev[0].1["message"]["model"], "claude-x");
+    let whole = decode_chat_response(&fixture("mlx-0.32.2-nonstream-text.json")).unwrap();
+    assert_eq!(
+        encode_response(&whole, &r.client_model)["model"],
+        "claude-x"
+    );
+    // No model: empty, as the gateway echoed it.
+    assert_eq!(decode(br#"{"messages":[]}"#).unwrap().client_model, "");
+}
+
+#[test]
+fn queued_tool_call_keeps_fragments_that_arrive_after_text() {
+    let mut dec = ChatStreamDecoder::new(&[]);
+    let mut enc = Encoder::new("m");
+    let mut out = enc.start();
+    out.extend(consume(
+        &mut dec,
+        &mut enc,
+        &[
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "a", "function": {"name": "Read", "arguments": "{\"file_path\":\"a\"}"}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "b", "function": {"name": "Glob", "arguments": "{\"pat"}}]}}]}),
+            text_chunk("Checking."),
+            json!({"choices": [{"delta": {"reasoning": "hmm"}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 1, "function": {"arguments": "tern\":\"*.md\"}"}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 2, "id": "c", "function": {"name": "Ls", "arguments": "{}"}}]}}]}),
+            json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        ],
+    ));
+    out.extend(enc.finish());
+    let ev = events(&out);
+    let blocks: Vec<(i64, String)> = ev
+        .iter()
+        .filter(|(n, _)| n == "content_block_start")
+        .map(|(_, o)| {
+            let b = &o["content_block"];
+            let label = b["name"]
+                .as_str()
+                .or(b["type"].as_str())
+                .unwrap()
+                .to_string();
+            (o["index"].as_i64().unwrap(), label)
+        })
+        .collect();
+    assert_eq!(
+        blocks,
+        [
+            (0, "Read".to_string()),
+            (1, "text".to_string()),
+            (2, "thinking".to_string()),
+            (3, "Glob".to_string()),
+            (4, "Ls".to_string())
+        ],
+        "queued calls wait for the end, in call order"
+    );
+    for (index, want) in [
+        (0, json!({"file_path": "a"})),
+        (3, json!({"pattern": "*.md"})),
+        (4, json!({})),
+    ] {
+        let args: String = ev
+            .iter()
+            .filter(|(n, o)| n == "content_block_delta" && o["index"] == index)
+            .filter_map(|(_, o)| o["delta"]["partial_json"].as_str())
+            .collect();
+        assert_eq!(
+            serde_json::from_str::<Value>(&args).unwrap(),
+            want,
+            "block {index}"
+        );
+    }
+    assert_eq!(message_delta(&ev)["delta"]["stop_reason"], "tool_use");
 }
 
 #[test]
