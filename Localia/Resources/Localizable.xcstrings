@@ -2033,6 +2033,22 @@
         }
       }
     },
+    "Engines & proxy": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engines & proxy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moteurs et proxy"
+          }
+        }
+      }
+    },
     "Enough memory": {
       "localizations": {
         "en": {
@@ -3361,6 +3377,22 @@
         }
       }
     },
+    "Log": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Log"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Journal"
+          }
+        }
+      }
+    },
     "Looking for Claude Code…": {
       "localizations": {
         "en": {
@@ -4545,6 +4577,38 @@
         }
       }
     },
+    "Open Localia": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Localia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir Localia"
+          }
+        }
+      }
+    },
+    "Overview": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overview"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu"
+          }
+        }
+      }
+    },
     "Private: in local mode, nothing leaves this Mac.": {
       "localizations": {
         "en": {
@@ -4957,6 +5021,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sélectionnez un modèle pour voir le détail de sa mémoire et pourquoi il est proposé."
+          }
+        }
+      }
+    },
+    "Sessions": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions"
           }
         }
       }
@@ -5917,6 +5997,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mises à jour indisponibles dans cette version"
+          }
+        }
+      }
+    },
+    "Usage": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilisation"
           }
         }
       }

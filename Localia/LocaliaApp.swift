@@ -13,6 +13,12 @@ struct LocaliaApp: App {
             MenuBarIcon(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(String(localized: "Settings…")) { delegate.windows.show(page: .settings) }
+                    .keyboardShortcut(",")
+            }
+        }
     }
 }
 
@@ -43,10 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await model.start()
             if model.needsOnboarding { windows.show(.onboarding) }
             #if DEBUG
-            // E2E aid: `-LocaliaOpen models|settings|onboarding|about` opens a window at launch.
-            if let name = UserDefaults.standard.string(forKey: "LocaliaOpen"),
-               let kind = WindowManager.Kind(rawValue: name) {
-                windows.show(kind)
+            // E2E aid: `-LocaliaOpen <page>|onboarding|about` opens a window at launch
+            // (page: overview, models, engines, sessions, usage, log, settings).
+            if let name = UserDefaults.standard.string(forKey: "LocaliaOpen") {
+                if let page = DockPage(rawValue: name) {
+                    windows.show(page: page)
+                } else if let kind = WindowManager.Kind(rawValue: name) {
+                    windows.show(kind)
+                }
             }
             #endif
         }
