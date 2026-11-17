@@ -13,11 +13,14 @@ name = "LocaliaProxyService"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 getrandom = "=0.4.3"
 plist = "=1.10.4"
+rusqlite = { version = "=0.43.0", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 subtle = "=2.6.1"
+uuid = "=1.29.3"
 
 [dev-dependencies]
 tempfile = "=3.27.0"
