@@ -60,6 +60,13 @@ final class UsageModel: ObservableObject {
         }
     }
 
+    /// The recorded request and response of one request, read off the main actor. Nil when none was recorded
+    /// (the user did not opt in), when the id is unknown, or when the read fails.
+    func content(for id: UUID) async -> RecordedContent? {
+        let reader = reader
+        return await Task.detached(priority: .userInitiated) { try? reader.content(for: id) }.value ?? nil
+    }
+
     private func rebuild() {
         report = UsageReport.make(daily: daily, period: period, now: asOf, calendar: calendar)
         overview = UsageReport.make(daily: daily, period: .week, now: asOf, calendar: calendar)

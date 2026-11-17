@@ -172,6 +172,57 @@ final class DockSnapshotTests: XCTestCase {
                      size: CGSize(width: 900, height: 400))
     }
 
+    // MARK: Log page
+
+    private func logUsage(recorded: Bool) async -> (UsageModel, UUID) {
+        let now = Date()
+        func record(_ i: Int, tool: String?, model: String, status: Int, output: Int?, error: String? = nil) -> RequestRecord {
+            RequestRecord(id: UUID(), start: now.addingTimeInterval(Double(-i) * 90), durationMs: 4_000 + i * 700,
+                          session: "s\(i)", tool: tool, folder: "/Users/me/Dev/Localia", engine: i % 3 == 0 ? .mlx : .ollama,
+                          model: model, api: .anthropic, status: status < 400 ? "ok" : "upstream_error", httpStatus: status,
+                          usage: TokenUsage(input: output.map { $0 * 9 }, output: output), error: error)
+        }
+        let reader = FakeUsageReader()
+        let rows = [
+            record(0, tool: "Claude Code", model: "gemma3:12b", status: 200, output: 420),
+            record(1, tool: "Codex", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", status: 200, output: nil),
+            record(2, tool: "Claude Code", model: "gemma3:12b", status: 500, output: 0, error: "upstream closed the connection"),
+            record(3, tool: nil, model: "gemma3:12b", status: 200, output: 1_250),
+        ]
+        reader.records = rows
+        if recorded {
+            reader.contents[rows[0].id] = RecordedContent(
+                request: Data(#"{"model":"gemma3:12b","max_tokens":1024,"messages":[{"role":"user","content":"Explain the borrow checker in two lines."}]}"#.utf8),
+                response: Data("event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: content_block_delta\ndata: {\"delta\":\"The borrow checker...\"}".utf8),
+                truncated: true)
+        }
+        let usage = UsageModel(reader: reader)
+        await usage.refresh()
+        return (usage, rows[0].id)
+    }
+
+    func test_log_withDetail_recorded() async throws {
+        let (usage, id) = await logUsage(recorded: true)
+        let content = await usage.content(for: id)
+        XCTAssertEqual(content?.truncated, true)
+        XCTAssertTrue(LogPage.display(try XCTUnwrap(content).request).contains("\n  \"max_tokens\" : 1024"), "JSON is pretty-printed")
+        XCTAssertEqual(LogPage.display(Data("event: x".utf8)), "event: x", "non-JSON stays text")
+        XCTAssertEqual(LogPage.speed(usage.requests[1]), "—", "unknown tokens show a dash")
+        try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded", size: CGSize(width: 900, height: 560))
+        try snapshot(LogPage(usage: usage), named: "dock-log-list", size: CGSize(width: 860, height: 400))
+        try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded-min", size: CGSize(width: 860, height: 560))
+    }
+
+    func test_log_withDetail_notRecorded() async throws {
+        let (usage, id) = await logUsage(recorded: false)
+        let none = await usage.content(for: id)
+        XCTAssertNil(none)
+        try snapshot(LogPage(usage: usage, initialSelection: usage.requests[2].id, initialContent: .some(nil)), named: "dock-log-notrecorded",
+                     size: CGSize(width: 900, height: 560))
+        try snapshot(LogPage(usage: usage, initialSelection: usage.requests[2].id, initialContent: .some(nil)), named: "dock-log-notrecorded-min",
+                     size: CGSize(width: 860, height: 560))
+    }
+
     // MARK: Usage page
 
     private func usageModel(unknowns: Bool) async -> UsageModel {

@@ -37,6 +37,7 @@ struct DockRoot: View {
         case .engines: EnginesPage(model: model)
         case .sessions: SessionsPage(model: model, usage: usage)
         case .usage: UsagePage(usage: usage)
+        case .log: LogPage(usage: usage)
         case .settings: SettingsRoot(model: model)
         case let p: ContentUnavailableView(p.title, systemImage: p.symbol)
         }

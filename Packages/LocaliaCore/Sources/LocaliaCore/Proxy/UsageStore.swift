@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 /// One proxied request. Metadata only; the body lives in `RecordedContent`.
-public struct RequestRecord: Equatable, Sendable {
+public struct RequestRecord: Equatable, Sendable, Identifiable {
     public var id: UUID
     public var start: Date
     public var durationMs: Int
