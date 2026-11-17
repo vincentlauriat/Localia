@@ -121,6 +121,54 @@ final class DockSnapshotTests: XCTestCase {
         try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
     }
 
+    // MARK: Usage page
+
+    private func usageModel(unknowns: Bool) async -> UsageModel {
+        let cal = Calendar.current
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        let models: [String?] = unknowns ? ["gemma3:12b", "qwen3-coder:30b", nil] : ["gemma3:12b", "qwen3-coder:30b"]
+        let tools: [String?] = unknowns ? ["claude", "codex", nil] : ["claude", "codex"]
+        let folders: [String?] = unknowns
+            ? ["/Users/me/DevApps/Localia", "/Users/me/Documents/GitHub/some-long-project-name", nil]
+            : ["/Users/me/DevApps/Localia", "/Users/me/DevApps/Other"]
+        let rows = (0..<90).flatMap { i -> [DailyTotal] in
+            guard i % 4 != 1, let d = cal.date(byAdding: .day, value: -i, to: Date()) else { return [] }
+            return (0..<2).map { k in
+                DailyTotal(day: f.string(from: d), engine: .ollama, model: models[(i + k) % models.count],
+                           tool: tools[(i + k) % tools.count], folder: folders[(i + 2 * k) % folders.count],
+                           requests: 1 + (i * 7 + k * 3) % 23, inputTokens: 40_000, outputTokens: 12_000, durationMs: 300_000)
+            }
+        }
+        let reader = FakeUsageReader()
+        reader.daily = rows
+        let usage = UsageModel(reader: reader)
+        await usage.refresh()
+        return usage
+    }
+
+    func test_usage_week() async throws {
+        let usage = await usageModel(unknowns: false)
+        XCTAssertEqual(usage.period, .week)
+        try snapshot(UsagePage(usage: usage), named: "dock-usage-week", size: CGSize(width: 860, height: 820))
+    }
+
+    func test_usage_quarter_withUnknowns() async throws {
+        let usage = await usageModel(unknowns: true)
+        usage.period = .quarter
+        let report = try XCTUnwrap(usage.report)
+        XCTAssertTrue(report.byModel.contains { $0.label == nil })
+        try snapshot(UsagePage(usage: usage), named: "dock-usage-quarter", size: CGSize(width: 860, height: 820))
+        let empty = UsageModel(reader: FakeUsageReader())
+        await empty.refresh()
+        try snapshot(UsagePage(usage: empty), named: "dock-usage-empty", size: CGSize(width: 860, height: 300))
+    }
+
+    func test_usage_folderLabel_isLastComponent() {
+        XCTAssertEqual(UsagePage.folderName("/Users/me/DevApps/Localia"), "Localia")
+        XCTAssertEqual(UsagePage.folderName("/"), "/")
+    }
+
     // MARK: Flow diagram
 
     private func flowInput(fallback: Bool = false, localModeOn: Bool = true) -> FlowInput {
