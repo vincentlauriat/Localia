@@ -16,3 +16,6 @@ Localia/Resources/llmfit
 build/
 .dmgbuild-venv/
 .sparkle-tools/
+
+LocaliaRouter/target/
+LocaliaRouter/dist/
