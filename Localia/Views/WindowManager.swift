@@ -22,14 +22,16 @@ final class WindowManager {
 
     let model: AppModel
     let navigation = DockNavigation()
+    let usage: UsageModel
     private var windows: [Kind: NSWindow] = [:]
     /// Mode the onboarding window was made for: simple and advanced first runs are different views.
     private var onboardingAdvanced: Bool?
     private var bag: Set<AnyCancellable> = []
-    private let mainDelegate = MainWindowDelegate()
+    private lazy var mainDelegate = MainWindowDelegate(usage: usage)
 
     init(model: AppModel) {
         self.model = model
+        self.usage = UsageModel(reader: model.usageReader)
         // `receive(on: main)`: the sink runs on the main thread, after the new value is stored.
         model.settings.$advancedMode.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.modeChanged() } }.store(in: &bag)
@@ -55,6 +57,7 @@ final class WindowManager {
         // A window in the Dock: regular while the main window is open, back to a menu-bar app on close.
         NSApp.setActivationPolicy(.regular)
         present(.main)
+        usage.startAutoRefresh()
     }
 
     private func present(_ kind: Kind) {
@@ -134,7 +137,12 @@ final class WindowManager {
 /// Back to a menu-bar app (no Dock icon) when the main window closes.
 @MainActor
 private final class MainWindowDelegate: NSObject, NSWindowDelegate {
+    private let usage: UsageModel
+
+    init(usage: UsageModel) { self.usage = usage }
+
     func windowWillClose(_ notification: Notification) {
+        usage.stopAutoRefresh()
         NSApp.setActivationPolicy(.accessory)
     }
 }

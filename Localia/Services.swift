@@ -56,6 +56,13 @@ protocol MLXRepoChecking: Sendable {
 
 extension MLXRepoResolver: MLXRepoChecking {}
 
+/// Reads no usage at all.
+struct InertUsageReader: UsageReading {
+    func dailyTotals(since: Date) throws -> [DailyTotal] { [] }
+    func requests(since: Date, limit: Int) throws -> [RequestRecord] { [] }
+    func content(for id: UUID) throws -> RecordedContent? { nil }
+}
+
 /// Everything AppModel composes. `live()` wires the real core types; tests pass fakes.
 struct AppDependencies {
     var settings: SettingsStore
@@ -90,6 +97,8 @@ struct AppDependencies {
     var mlxRepos: any MLXRepoChecking = MLXRepoResolver()
     /// The Localia proxy LaunchAgent. The inert default is never healthy, so engines are reached directly.
     var proxy: any ProxyServiceControlling = InertProxyService()
+    /// The usage the proxy recorded. The inert default reads as empty, so tests never touch the real store.
+    var usage: any UsageReading = InertUsageReader()
 
     @MainActor
     static func live() -> AppDependencies {
@@ -134,7 +143,8 @@ struct AppDependencies {
                 alert.runModal()
             },
             localTools: [CodexTool(), OpenCodeTool(), PiTool()],
-            proxy: ProxyServiceManager())
+            proxy: ProxyServiceManager(),
+            usage: UsageStoreReader.live())
     }
 }
 

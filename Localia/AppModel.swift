@@ -72,6 +72,8 @@ final class AppModel: ObservableObject {
     let profile: MachineProfile
     let llmfit: LlmfitManager
     private let deps: AppDependencies
+    /// Where the usage pages read what the proxy recorded.
+    var usageReader: any UsageReading { deps.usage }
     private let tracker: SessionTracker
     private let recent: RecentFolders
     private let confirmMemory: @MainActor (MemoryWarning) async -> Bool
