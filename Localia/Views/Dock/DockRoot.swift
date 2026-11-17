@@ -19,10 +19,10 @@ struct DockRoot: View {
         NavigationSplitView {
             List(selection: selection) {
                 ForEach(DockPage.visible(advanced: advanced).filter { $0 != .settings }) { p in
-                    Label(p.title, systemImage: p.symbol).tag(Optional(p))
+                    Label(p.title, systemImage: p.symbol).tag(p)
                 }
                 Divider()
-                Label(DockPage.settings.title, systemImage: DockPage.settings.symbol).tag(Optional(DockPage.settings))
+                Label(DockPage.settings.title, systemImage: DockPage.settings.symbol).tag(DockPage.settings)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: Self.sidebarMaxWidth)
         } detail: {
