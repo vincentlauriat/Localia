@@ -15,8 +15,8 @@ final class WindowManager {
     /// `models` and `settings` are not windows any more: they open the main window on that page.
     enum Kind: String { case main, models, settings, onboarding, about }
 
-    static let mainDefaultSize = NSSize(width: 960, height: 640)
-    static let mainMinSize = NSSize(width: 760, height: 520)
+    static let mainDefaultSize = NSSize(width: 1180, height: 720)
+    static let mainMinSize = NSSize(width: 1080, height: 560)
 
     let model: AppModel
     let navigation = DockNavigation()
