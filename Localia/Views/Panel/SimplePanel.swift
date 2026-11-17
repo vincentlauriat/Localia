@@ -11,6 +11,7 @@ extension MenuBarPanel {
 
     var simpleContent: some View {
         VStack(spacing: 10) {
+            proxyBanner
             SimpleStatusCard(model: model, status: model.simpleStatus, chooseModel: openChooser,
                              presentAlert: presentAlertIfNeeded)
             simpleLocalModeCard

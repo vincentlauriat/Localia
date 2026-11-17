@@ -14,6 +14,7 @@ public struct Paths {
     public static func shell(base: URL? = nil) -> URL { sub("shell", base) }
     public static func logs(base: URL? = nil) -> URL { sub("logs", base) }
     public static func sessions(base: URL? = nil) -> URL { sub("sessions", base) }
+    public static func proxy(base: URL? = nil) -> URL { sub("proxy", base) }
     /// Private config of a local coding tool (Codex, OpenCode, Pi): `tools/<id>`.
     public static func tool(_ id: String, base: URL? = nil) -> URL { sub("tools/\(id)", base) }
 

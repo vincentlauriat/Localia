@@ -27,6 +27,7 @@ final class AppModelTests: XCTestCase {
                            availableGB: Double = 100, heavyApps: [String] = [], claudeConfigDir: URL? = nil,
                            cloudLogin: Bool = true, localTools: [any LocalCodingTool] = [],
                            mlxRepos: FakeMLXRepos = FakeMLXRepos(),
+                           proxy: any ProxyServiceControlling = InertProxyService(),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -53,8 +54,90 @@ final class AppModelTests: XCTestCase {
             hasCloudLogin: { cloudLogin },
             notify: { [weak self] in self?.notified.append($0) },
             localTools: localTools,
-            mlxRepos: mlxRepos)
+            mlxRepos: mlxRepos,
+            proxy: proxy)
         return AppModel(deps: deps, confirmMemory: { _ in true })
+    }
+
+    func test_changingRetention_pushesConfig() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
+        await model.setLogRetentionDays(30)
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        await model.setLogContent(true)
+        XCTAssertEqual(proxy.pushed.last, ProxyConfig(logContent: true, retentionDays: 30))
+    }
+
+    func test_changingSettings_whileProxyDown_pushesNothing_butTheNextCheckDoes() async {
+        let proxy = FakeProxyService(state: .unavailable(reason: "off"))
+        let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
+        await model.setLogRetentionDays(30)
+        XCTAssertTrue(proxy.pushed.isEmpty)
+        proxy.state = .running(version: "dev")
+        await model.restartProxy()
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        XCTAssertEqual(model.proxyState, .running(version: "dev"))
+        XCTAssertFalse(model.proxyRestarting)
+    }
+
+    /// Settings "Restart" forces a restart of the service, not just another check.
+    func test_restartProxy_forcesARestart() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
+        await model.restartProxy()
+        XCTAssertEqual(proxy.restarts, 1)
+        XCTAssertEqual(proxy.checks, 0)
+    }
+
+    /// A `.running` state that no longer answers (the service died since) is checked again before a launch,
+    /// and the launch follows the result: direct here.
+    func test_launch_staleRunningProxy_isRechecked_andRoutesPerTheResult() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.answering = false
+        proxy.stateAfterCheck = .unavailable(reason: "gone")
+        let engine = FakeEngine(installed: ["m1"]), tool = FakeTool()
+        let model = makeModel(engine: engine, tool: tool, proxy: proxy)
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())
+        XCTAssertEqual(proxy.checks, 1)
+        guard case let .local(_, baseURL, _, _) = tool.targets.last else { return XCTFail("\(tool.targets)") }
+        XCTAssertEqual(baseURL, engine.baseURL)
+        XCTAssertEqual(model.proxyState, .unavailable(reason: "gone"))
+    }
+
+    /// A proxy that answers is used as is: no check on the launch path.
+    func test_launch_answeringProxy_routesThroughIt_withoutACheck() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let engine = FakeEngine(installed: ["m1"]), tool = FakeTool()
+        let model = makeModel(engine: engine, tool: tool, proxy: proxy)
+        await model.setLocalMode(true)
+        let checksBefore = proxy.checks
+        await model.launch(folder: try folder())
+        XCTAssertEqual(proxy.checks, checksBefore)
+        XCTAssertGreaterThanOrEqual(proxy.probes, 1)
+        guard case let .local(_, baseURL, _, _) = tool.targets.last else { return XCTFail("\(tool.targets)") }
+        XCTAssertEqual(baseURL.port, LocaliaConstants.proxyPort)
+    }
+
+    func test_changingRoute_refreshesTheShimState() async {
+        let shim = FakeShim()
+        let model = makeModel(engine: FakeEngine(installed: []), shim: shim)
+        await model.setScope(.everyClaude)   // the shim state is only written in this scope
+        let before = shim.states.count
+        await model.setRoute(.direct, for: .ollama)
+        XCTAssertEqual(model.settings.engineRoutes[.ollama], .direct)
+        XCTAssertEqual(shim.states.count, before + 1)
+    }
+
+    func test_erase_goesToTheService_andItsErrorSurfaces() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
+        try await model.eraseProxyData(log: true, stats: false)
+        XCTAssertEqual(proxy.erased.map { [$0.log, $0.stats] }, [[true, false]])
+        proxy.eraseError = ProxyServiceError.status(500)
+        do { try await model.eraseProxyData(log: false, stats: true); XCTFail("expected a throw") } catch {
+            XCTAssertEqual(error as? ProxyServiceError, .status(500))
+        }
     }
 
     private func folder() throws -> URL {
@@ -1104,8 +1187,9 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
+    func refreshShimFiles() throws {}
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
-                    profile: LaunchProfile, engine: EngineID) throws {
+                    profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
         lock.withLock { _states.append(on) }
     }
@@ -1164,4 +1248,30 @@ final class FakeSizes: DownloadSizing, @unchecked Sendable {
         lock.withLock { _calls += 1 }
         return 1 << 30
     }
+}
+
+
+/// Records what AppModel asks of the proxy service. State is settable, so a test can bring the service up.
+@MainActor
+final class FakeProxyService: ProxyServiceControlling {
+    var state: ProxyState
+    var isHealthy: Bool { if case .running = state { true } else { false } }
+    private(set) var pushed: [ProxyConfig] = []
+    private(set) var erased: [(log: Bool, stats: Bool)] = []
+    var eraseError: Error?
+    /// What a quick probe sees; nil follows `state`.
+    var answering: Bool?
+    /// The state a check or a restart leaves; nil keeps it.
+    var stateAfterCheck: ProxyState?
+    private(set) var checks = 0, restarts = 0, probes = 0
+    init(state: ProxyState) { self.state = state }
+    func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
+    func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
+    func answers() async -> Bool { probes += 1; return answering ?? isHealthy }
+    func push(_ config: ProxyConfig) async { pushed.append(config) }
+    func erase(log: Bool, stats: Bool) async throws {
+        if let eraseError { throw eraseError }
+        erased.append((log, stats))
+    }
+    func uninstall() async {}
 }

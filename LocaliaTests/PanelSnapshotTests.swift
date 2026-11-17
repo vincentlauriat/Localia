@@ -29,11 +29,12 @@ final class PanelSnapshotTests: XCTestCase {
 
     private static let served = "qwen3-coder:30b"
 
-    private func makeModel(heavyApps: [String] = [], installed: [String] = [served, "gemma3:12b"]) -> AppModel {
+    private func makeModel(heavyApps: [String] = [], installed: [String] = [served, "gemma3:12b"],
+                           advanced: Bool = true, proxy: any ProxyServiceControlling = InertProxyService()) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         // Today's panel, unchanged: advanced mode. The simple panel has its own snapshots (SimpleModeAppTests).
-        settings.advancedMode = true
+        settings.advancedMode = advanced
         settings.modelIDs = [Self.served: "Qwen/Qwen3-Coder-30B-A3B-Instruct"]
         settings.measurements = Measurements(tps: ["Qwen/Qwen3-Coder-30B-A3B-Instruct": 32])
         settings.recentFolders = ["/Users/vincent/DevApps/Localia", "/Users/vincent/Documents/GitHub/ClaudeCockpit"]
@@ -50,7 +51,8 @@ final class PanelSnapshotTests: XCTestCase {
             hasCloudLogin: { true }, notify: { _ in },
             // One installed tool and one missing, so local mode shows both rows.
             localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
-                         PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())])
+                         PiTool(searchPaths: [base.appendingPathComponent("nope/pi")], runner: FailingRunner())],
+            proxy: proxy)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -121,6 +123,52 @@ final class PanelSnapshotTests: XCTestCase {
         }
     }
 
+    /// The fallback banner shows in both modes, and only while the proxy is unavailable: the panel with it is
+    /// taller than without, and its PNG is written for a look.
+    func testProxyFallbackBanner_simpleAndAdvanced() async throws {
+        let dir = outputDir
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let lang = Bundle.main.preferredLocalizations.first ?? "en"
+        for advanced in [true, false] {
+            var heights: [Bool: CGFloat] = [:]
+            for down in [false, true] {
+                suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
+                suites.append(suite)
+                let proxy = FakeProxyService(state: down ? .unavailable(reason: "off") : .running(version: "dev"))
+                let model = makeModel(advanced: advanced, proxy: proxy)
+                await model.startEngine()
+                await model.refreshAll()
+                await model.ensureProxy()
+                XCTAssertEqual(model.proxyFallbackActive, down)
+                let mode = advanced ? "advanced" : "simple"
+                let url = dir.appendingPathComponent("panel-proxy-\(down ? "fallback" : "ok")-\(mode)-\(lang).png")
+                heights[down] = render(MenuBarPanel(model: model, windows: WindowManager(model: model),
+                                                    updater: Updater(enabled: false), scrolls: false,
+                                                    store: UserDefaults(suiteName: suite)!),
+                                       appearance: .aqua, to: url).height
+            }
+            XCTAssertGreaterThan(heights[true] ?? 0, heights[false] ?? .infinity,
+                                 "banner missing in \(advanced ? "advanced" : "simple") mode")
+        }
+    }
+
+    /// The Settings "Localia proxy" section (advanced tab), rendered for a look, with the service down.
+    func testRendersProxySettingsSection() async throws {
+        let dir = outputDir
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let lang = Bundle.main.preferredLocalizations.first ?? "en"
+        let model = makeModel(proxy: FakeProxyService(state: .unavailable(reason: String(localized: "The Localia proxy did not answer after a restart. Check that it is allowed in Login Items."))))
+        await model.ensureProxy()
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let url = dir.appendingPathComponent("settings-proxy-\(suffix)-\(lang).png")
+            let size = render(Form { ProxySettingsSection(model: model) }.formStyle(.grouped).frame(width: 520),
+                              appearance: appearance, to: url, width: 520)
+            XCTAssertGreaterThan(size.height, 250, url.lastPathComponent)
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            XCTAssertGreaterThan(bytes, 10_000, url.lastPathComponent)
+        }
+    }
+
     /// The menu-bar icons come from the asset catalog (not an empty fallback), as templates with a label.
     func testMenuBarIconsComeFromTheAssetCatalog() throws {
         for on in [false, true] {
@@ -143,10 +191,11 @@ final class PanelSnapshotTests: XCTestCase {
     /// Hosts the view in an off-screen window with the given appearance (so `NSColor(name:)` colours resolve
     /// for it) and writes the window's content as a 2x PNG.
     @discardableResult
-    private func render(_ panel: some View, appearance: NSAppearance.Name, to url: URL) -> CGSize {
+    private func render(_ panel: some View, appearance: NSAppearance.Name, to url: URL,
+                        width: CGFloat = Theme.panelWidth) -> CGSize {
         let root = panel.background(Color(nsColor: .windowBackgroundColor))
         let hosting = NSHostingView(rootView: root)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Theme.panelWidth, height: 600),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: appearance)
@@ -155,7 +204,7 @@ final class PanelSnapshotTests: XCTestCase {
         window.orderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         let fitting = hosting.fittingSize
-        window.setContentSize(NSSize(width: Theme.panelWidth, height: fitting.height))
+        window.setContentSize(NSSize(width: width, height: fitting.height))
         hosting.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
 

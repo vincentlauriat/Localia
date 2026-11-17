@@ -79,7 +79,7 @@ struct MenuBarPanel: View {
         let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
                       model.recentFolders().count, model.localTools.count]
         let simple = model.settings.advancedMode ? "" : "\(model.simpleStatus.kind)|\(chooserOpen)|\(model.simpleModelChoices.count)"
-        return "\(flags)|\(counts)|\(launchOpen ?? "")|\(model.settings.advancedMode)|\(simple)"
+        return "\(flags)|\(counts)|\(launchOpen ?? "")|\(model.settings.advancedMode)|\(simple)|\(model.proxyFallbackActive)"
     }
 
     // MARK: Body
@@ -107,6 +107,7 @@ struct MenuBarPanel: View {
     @ViewBuilder private var content: some View {
         if model.settings.advancedMode {
             VStack(spacing: 8) {
+                proxyBanner
                 heroCard
                 localModeCard
                 modelsCard
@@ -118,6 +119,31 @@ struct MenuBarPanel: View {
             .padding(10)
         } else {
             simpleContent
+        }
+    }
+
+    /// Shown while the proxy service cannot run and engines go direct. Tapping opens Settings (the status row
+    /// and its Restart button live there). Simple mode never says "proxy".
+    @ViewBuilder var proxyBanner: some View {
+        if model.proxyFallbackActive {
+            let text = model.settings.advancedMode
+                ? String(localized: "Localia proxy unavailable: engines run direct, no statistics.")
+                : String(localized: "Usage statistics are paused.")
+            Button { windows.show(.settings) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(Theme.orange)
+                    Text(text).font(.system(size: 12)).multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .card(fill: Theme.orange.opacity(0.12), stroke: Theme.orange.opacity(0.35))
+            .accessibilityLabel(text)
+            .accessibilityHint(String(localized: "Opens Settings"))
         }
     }
 

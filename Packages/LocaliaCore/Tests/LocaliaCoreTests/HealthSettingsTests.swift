@@ -165,6 +165,29 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(r.recentFolders, ["/tmp/proj"])
     }
 
+    func test_proxySettings_defaultsClampAndRoundTrip() {
+        let s = SettingsStore(defaults: defaults)
+        XCTAssertEqual(s.engineRoutes, [.ollama: .proxy, .llamaCpp: .proxy])
+        XCTAssertFalse(s.logContent)
+        XCTAssertEqual(s.logRetentionDays, 7)
+        XCTAssertEqual(s.proxyConfig, ProxyConfig(logContent: false, retentionDays: 7))
+
+        s.engineRoutes = [.ollama: .direct, .llamaCpp: .proxy]
+        s.logContent = true
+        s.logRetentionDays = 500
+        XCTAssertEqual(s.logRetentionDays, 90)
+        s.logRetentionDays = 0
+        XCTAssertEqual(s.logRetentionDays, 1)
+        s.logRetentionDays = 30
+
+        let r = SettingsStore(defaults: defaults)
+        XCTAssertEqual(r.engineRoutes, [.ollama: .direct, .llamaCpp: .proxy])
+        XCTAssertTrue(r.logContent)
+        XCTAssertEqual(r.logRetentionDays, 30)
+        XCTAssertEqual(r.proxyConfig, ProxyConfig(logContent: true, retentionDays: 30))
+        XCTAssertEqual(ProxyConfig(retentionDays: 1000).retentionDays, 90)
+    }
+
     func test_record_updatesSpeedRatioFromUnscaledEstimates() {
         let s = SettingsStore(defaults: defaults)
         let est = ["a": 40.0, "b": 20.0]

@@ -17,6 +17,8 @@ public enum LocaliaConstants {
     public static let mlxGatewayPort = 11436
     /// `mlx_lm.server` itself, reached only through the gateway.
     public static let mlxServerPort = 11437
+    /// Localia proxy in front of the engines (tools reach it at `/s/<session>/<engine>/...`).
+    public static let proxyPort = 11438
 
     // MARK: Simple mode wording
 

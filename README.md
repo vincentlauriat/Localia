@@ -8,6 +8,7 @@ Localia is a macOS menu-bar app that finds the local LLMs that run well on your 
 - **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Tested end to end on llama.cpp and MLX. Models under 14B carry a "simple tasks" badge: fine for small fixes, unreliable across several files.
 - **Local mode switch.** An airplane-mode-style toggle that sends AI work to the local models.
 - **Other coding tools.** In local mode, Codex, OpenCode and Pi launch the same way, each with its own config written by Localia (your `~/.codex`, `~/.config/opencode` and `~/.pi` are never touched). Localia warns when the model's context window is too small for them.
+- **Localia proxy and usage statistics.** A small background service on `127.0.0.1:11438` sits between your coding tools and the engines. Per engine you choose Direct or Via Localia (Settings › Advanced › Localia proxy; Ollama and llama.cpp are via Localia by default, MLX always). It records metadata only (time, tool, folder, model, engine, tokens in and out, duration, status); request content is recorded only if you turn on "Record request content" (off by default). Everything stays on this Mac in `~/Library/Application Support/Localia/proxy/usage.sqlite`: the log is kept 1 to 90 days (7 by default), daily totals for a year, and "Erase…" deletes either. Sessions keep running when you quit Localia (MLX sessions still stop with the app). If the service is unavailable, for example turned off in System Settings › General › Login Items, Localia runs the engines direct and shows "Usage statistics are paused".
 - **Engines.** Ollama (default), llama.cpp and MLX, installed, updated and removed from the app. MLX runs `mlx-lm` in a private Python made with `uv`, behind an in-app gateway that speaks the Anthropic API to Claude Code (Codex needs Ollama or llama.cpp).
 
 **Simple by default.** Out of the box Localia shows only what you need: a status line in plain words, the Local mode switch, "Open Claude in a folder…" and the model in use. The first run picks the best model for your Mac and installs everything with one progress bar. Turn on **Settings › Advanced mode** to see engines, sessions, memory-hungry apps, Codex/OpenCode/Pi and the full Models window.
@@ -43,13 +44,13 @@ The **Local mode** switch (second row of the menu-bar panel) turns local mode on
 
   (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching the scope back to "Localia sessions only" removes exactly this block and nothing else. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message (llama.cpp gets up to 90 s to start, Ollama 20 s).
 
-With local mode off, `claude` runs exactly as before.
+With local mode off, `claude` runs exactly as before. Either way, sessions go through the Localia proxy when the engine is set to Via Localia.
 
 llama.cpp and MLX serve one model at a time. While a session uses one of their models, Localia refuses to launch another session on a different model of the same engine instead of stopping the first one: wait for that session to end, or end it. Sessions started from a terminal in "every `claude`" mode appear in the Sessions card too.
 
 ## Uninstall
 
-Deleting the app does not remove the block from your shell files. Before you delete Localia, open **Settings** and click **Remove Localia from My Shell**: it turns local mode off and removes the block (your backups stay where they are). Then quit Localia and move it to the Trash. If the app is already gone, delete the `# >>> localia >>>` block from `~/.zshrc` and `~/.bashrc` by hand. Models and engines Localia downloaded live in `~/Library/Application Support/Localia/`.
+Deleting the app does not remove the block from your shell files. Before you delete Localia, open **Settings** and click **Remove Localia from My Shell**: it turns local mode off and removes the block (your backups stay where they are). It also unregisters the Localia proxy background service. Then quit Localia and move it to the Trash. If the app is already gone, delete the `# >>> localia >>>` block from `~/.zshrc` and `~/.bashrc` by hand, run `launchctl bootout gui/$(id -u)/fr.vincentlauriat.localia.proxy`, and delete `~/Library/Application Support/Localia/proxy/` (the usage log). Models and engines Localia downloaded live in `~/Library/Application Support/Localia/`.
 
 ## Build from source
 
@@ -63,7 +64,7 @@ The build runs `Scripts/fetch-llmfit.sh`, which downloads the pinned llmfit rele
 
 ## Releasing
 
-`./Scripts/release.sh [version]` builds, signs (`llmfit` first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
+`./Scripts/release.sh [version]` builds, signs (`llmfit` and `LocaliaProxyService` first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
 
 Notarization prefers an App Store Connect API key, because a key file survives when the keychain profile vanishes (it did twice). Create a key with the Developer role in App Store Connect (Users and Access > Integrations > App Store Connect API), save the `.p8` file, and write `~/.config/notarytool/api-key.env` with three lines: `NOTARY_KEY_ID=...`, `NOTARY_ISSUER_ID=...` and `NOTARY_KEY_PATH=...` (the path to the `.p8`). Without that file, the script falls back to the shared keychain profile `AppliMacVincentGithub`; recreate it with `xcrun notarytool store-credentials AppliMacVincentGithub --apple-id <your-apple-id> --team-id KFLACS69T9` (the command prompts for an app-specific password). The script checks the credentials before building and names the ones it uses.
 

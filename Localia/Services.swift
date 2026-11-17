@@ -88,6 +88,8 @@ struct AppDependencies {
     var localTools: [any LocalCodingTool] = []
     /// MLX candidates map to `mlx-community` repos; this says which exist.
     var mlxRepos: any MLXRepoChecking = MLXRepoResolver()
+    /// The Localia proxy LaunchAgent. The inert default is never healthy, so engines are reached directly.
+    var proxy: any ProxyServiceControlling = InertProxyService()
 
     @MainActor
     static func live() -> AppDependencies {
@@ -131,7 +133,8 @@ struct AppDependencies {
                 NSApp.activate(ignoringOtherApps: true)
                 alert.runModal()
             },
-            localTools: [CodexTool(), OpenCodeTool(), PiTool()])
+            localTools: [CodexTool(), OpenCodeTool(), PiTool()],
+            proxy: ProxyServiceManager())
     }
 }
 

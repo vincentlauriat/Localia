@@ -52,7 +52,15 @@ public actor SessionTracker {
             let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             if let date, now.timeIntervalSince(date) > maxAge { try? fm.removeItem(at: f) }
         }
+        // `.attrib` files outlive their session on purpose (the proxy may still serve its last requests):
+        // only age removes them.
+        for f in files where f.pathExtension == "attrib" {
+            let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let date, now.timeIntervalSince(date) > Self.attribMaxAge { try? fm.removeItem(at: f) }
+        }
     }
+
+    private static let attribMaxAge: TimeInterval = 2 * 24 * 3600
 
     private static func isSessionFile(_ u: URL) -> Bool {
         let n = u.lastPathComponent

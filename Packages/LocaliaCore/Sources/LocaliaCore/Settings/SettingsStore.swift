@@ -32,6 +32,23 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     @Published public var estimatedMemoryGB: [String: Double] {
         didSet { defaults.set(estimatedMemoryGB, forKey: "estimatedMemoryGB") }
     }
+    /// Per-engine route (proxy or direct). MLX ignores it: it is always proxied while the proxy is healthy.
+    @Published public var engineRoutes: [EngineID: EngineRoute] {
+        didSet {
+            defaults.set(Dictionary(uniqueKeysWithValues: engineRoutes.map { ($0.key.rawValue, $0.value.rawValue) }),
+                         forKey: "engineRoutes")
+        }
+    }
+    /// The proxy keeps prompt and response bodies, not only token counts.
+    @Published public var logContent: Bool { didSet { defaults.set(logContent, forKey: "logContent") } }
+    /// Days the proxy keeps its log and stats, clamped to `ProxyConfig.retentionRange`.
+    @Published public var logRetentionDays: Int {
+        didSet {
+            let clamped = Self.clampRetention(logRetentionDays)
+            if clamped != logRetentionDays { logRetentionDays = clamped }
+            defaults.set(logRetentionDays, forKey: "logRetentionDays")
+        }
+    }
     @Published public var measurements: Measurements {
         didSet { defaults.set(try? JSONEncoder().encode(measurements), forKey: "measurements") }
     }
@@ -55,6 +72,14 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         lastModel = defaults.string(forKey: "lastModel")
         modelIDs = defaults.dictionary(forKey: "modelIDs") as? [String: String] ?? [:]
         estimatedMemoryGB = defaults.dictionary(forKey: "estimatedMemoryGB") as? [String: Double] ?? [:]
+        let routes = (defaults.dictionary(forKey: "engineRoutes") as? [String: String] ?? [:])
+            .reduce(into: [EngineID: EngineRoute]()) { acc, kv in
+                if let id = EngineID(rawValue: kv.key), let route = EngineRoute(rawValue: kv.value) { acc[id] = route }
+            }
+        engineRoutes = defaults.object(forKey: "engineRoutes") == nil ? [.ollama: .proxy, .llamaCpp: .proxy] : routes
+        logContent = defaults.bool(forKey: "logContent")
+        logRetentionDays = defaults.object(forKey: "logRetentionDays") == nil
+            ? 7 : Self.clampRetention(defaults.integer(forKey: "logRetentionDays"))
         measurements = defaults.data(forKey: "measurements")
             .flatMap { try? JSONDecoder().decode(Measurements.self, from: $0) } ?? Measurements()
     }
@@ -69,6 +94,13 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         m.speedRatio = SpeedCalibration.speedRatio(measured: m.tps, estimates: unscaledEstimates)
         measurements = m
     }
+
+    nonisolated private static func clampRetention(_ d: Int) -> Int {
+        min(max(d, ProxyConfig.retentionRange.lowerBound), ProxyConfig.retentionRange.upperBound)
+    }
+
+    /// What the proxy should apply now (pushed on every successful start check).
+    public var proxyConfig: ProxyConfig { ProxyConfig(logContent: logContent, retentionDays: logRetentionDays) }
 
     nonisolated private static func raw<T: RawRepresentable>(_ d: UserDefaults, _ key: String, _ fallback: T) -> T
         where T.RawValue == String {

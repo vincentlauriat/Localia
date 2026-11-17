@@ -22,6 +22,12 @@ targets:
           - Info.plist
           - Localia.entitlements
           - Resources/llmfit
+      - path: LocaliaProxyService/fr.vincentlauriat.localia.proxy.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
+            phaseOrder: postCompile
       - path: THIRD_PARTY_NOTICES.md
         buildPhase: resources
       - path: Localia/Resources/llmfit
@@ -42,6 +48,11 @@ targets:
     dependencies:
       - package: LocaliaCore
       - package: Sparkle
+      - target: LocaliaProxyService
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
     info:
       path: Localia/Info.plist
       properties:
@@ -79,6 +90,27 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         # Logo teal (#045A54, #4FD1C5 in dark mode), kept in sync with Theme.accent.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+  LocaliaProxyService:
+    type: tool
+    platform: macOS
+    sources:
+      - path: LocaliaProxyService
+        excludes:
+          - fr.vincentlauriat.localia.proxy.plist
+    dependencies:
+      - package: LocaliaCore
+    settings:
+      base:
+        PRODUCT_NAME: LocaliaProxyService
+        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia.proxy
+        MARKETING_VERSION: "1.2.0"
+        CURRENT_PROJECT_VERSION: "6"
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
   LocaliaTests:
