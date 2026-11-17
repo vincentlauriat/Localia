@@ -161,7 +161,7 @@ final class PanelSnapshotTests: XCTestCase {
         await model.ensureProxy()
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             let url = dir.appendingPathComponent("settings-proxy-\(suffix)-\(lang).png")
-            let size = render(Form { ProxySettingsSection(model: model) }.formStyle(.grouped).frame(width: 520),
+            let size = render(Form { ProxyStatusSection(model: model); ProxyRoutesSection(model: model); ProxyLogSection(model: model) }.formStyle(.grouped).frame(width: 520),
                               appearance: appearance, to: url, width: 520)
             XCTAssertGreaterThan(size.height, 250, url.lastPathComponent)
             let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0

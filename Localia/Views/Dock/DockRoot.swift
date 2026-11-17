@@ -32,6 +32,7 @@ struct DockRoot: View {
     @ViewBuilder private var detail: some View {
         switch page {
         case .models: ModelsRoot(model: model)
+        case .engines: EnginesPage(model: model)
         case .settings: SettingsRoot(model: model)
         case let p: ContentUnavailableView(p.title, systemImage: p.symbol)
         }

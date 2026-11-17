@@ -6,7 +6,7 @@ final class DockStringsTests: XCTestCase {
 
     /// Interpolations (`\(...)` in source, `%@` / `%lld` in the catalog) compare equal once masked.
     private static func masked(_ s: String) -> String {
-        s.replacingOccurrences(of: #"\\\([^)]*\)"#, with: "\u{0}", options: .regularExpression)
+        s.replacingOccurrences(of: #"\\\((?:[^()]|\([^()]*\))*\)"#, with: "\u{0}", options: .regularExpression)
             .replacingOccurrences(of: "%lld", with: "\u{0}").replacingOccurrences(of: "%@", with: "\u{0}")
     }
 
