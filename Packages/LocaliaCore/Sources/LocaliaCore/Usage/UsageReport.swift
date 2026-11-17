@@ -19,7 +19,8 @@ public struct UsageTotals: Equatable, Sendable {
     public var inputTokens: Int
     public var outputTokens: Int
     public var durationMs: Int
-    /// Output tokens over generation time, counting only rows that reported output tokens. Nil without any.
+    /// Output tokens over generation time. Uses the timed columns of schema v2 (tokens and duration of the same
+    /// requests), plus the old output/duration pairing for v1 rows that have no timed data. Nil without any.
     public var tokensPerSecond: Double?
 
     public init(requests: Int, inputTokens: Int, outputTokens: Int, durationMs: Int, tokensPerSecond: Double?) {
@@ -28,15 +29,16 @@ public struct UsageTotals: Equatable, Sendable {
     }
 
     init(rows: [DailyTotal]) {
-        let known = rows.filter { $0.outputTokens > 0 }
-        let knownMs = known.reduce(0) { $0 + $1.durationMs }
+        let timed = rows.filter { $0.timedDurationMs > 0 }
+        let legacy = rows.filter { $0.timedDurationMs == 0 && $0.outputTokens > 0 }
+        let speedMs = timed.reduce(0) { $0 + $1.timedDurationMs } + legacy.reduce(0) { $0 + $1.durationMs }
+        let speedTokens = timed.reduce(0) { $0 + $1.timedOutputTokens } + legacy.reduce(0) { $0 + $1.outputTokens }
         self.init(
             requests: rows.reduce(0) { $0 + $1.requests },
             inputTokens: rows.reduce(0) { $0 + $1.inputTokens },
             outputTokens: rows.reduce(0) { $0 + $1.outputTokens },
             durationMs: rows.reduce(0) { $0 + $1.durationMs },
-            tokensPerSecond: knownMs > 0
-                ? Double(known.reduce(0) { $0 + $1.outputTokens }) / (Double(knownMs) / 1000) : nil)
+            tokensPerSecond: speedMs > 0 ? Double(speedTokens) / (Double(speedMs) / 1000) : nil)
     }
 }
 
