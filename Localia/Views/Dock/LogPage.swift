@@ -5,6 +5,8 @@ import SwiftUI
 /// its metadata and (when the user opted in to recording it) the request and response content.
 struct LogPage: View {
     @ObservedObject var usage: UsageModel
+    /// Human name of a served model id (the diagram's names); the id itself by default.
+    var modelName: (String) -> String = { $0 }
     @State private var selection: UUID?
     /// The content read for one request; `content` is nil when nothing was recorded for it.
     private struct Loaded { var id: UUID; var content: RecordedContent? }
@@ -12,15 +14,17 @@ struct LogPage: View {
 
     /// `initialSelection` and `initialContent` preset the selected row and its already-read content (previews and
     /// snapshots, which cannot wait for the read).
-    init(usage: UsageModel, initialSelection: UUID? = nil, initialContent: RecordedContent?? = nil) {
+    init(usage: UsageModel, modelName: @escaping (String) -> String = { $0 }, initialSelection: UUID? = nil,
+         initialContent: RecordedContent?? = nil) {
         self.usage = usage
+        self.modelName = modelName
         _selection = State(initialValue: initialSelection)
         if let initialSelection, let initialContent {
             _loaded = State(initialValue: Loaded(id: initialSelection, content: initialContent))
         }
     }
 
-    static let detailWidth: CGFloat = 220
+    static let detailWidth: CGFloat = 200
 
     /// Request and response bodies as pretty-printed JSON when they parse, else as UTF-8 text.
     static func display(_ data: Data) -> String {
@@ -33,9 +37,19 @@ struct LogPage: View {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func statusText(_ r: RequestRecord) -> String { r.httpStatus > 0 ? String(r.httpStatus) : "—" }
+    /// A 2xx answer that did not complete: the stream was cut, by the client or the engine.
+    static func isInterrupted(_ r: RequestRecord) -> Bool {
+        (200..<300).contains(r.httpStatus) && (r.status != "ok" || r.error != nil)
+    }
 
-    static func isFailure(_ r: RequestRecord) -> Bool { r.httpStatus >= 400 || r.error != nil }
+    /// The HTTP code, or "Interrupted" when a 2xx answer did not complete.
+    static func statusText(_ r: RequestRecord) -> String {
+        if isInterrupted(r) { return String(localized: "Interrupted") }
+        return r.httpStatus > 0 ? String(r.httpStatus) : "—"
+    }
+
+    /// Red in the table: an HTTP error, a recorded error (what Errors only keeps), or an interrupted answer.
+    static func isFailure(_ r: RequestRecord) -> Bool { r.httpStatus >= 400 || r.error != nil || isInterrupted(r) }
 
     static func tokens(_ n: Int?) -> String { n.map { Fmt.number(Double($0), fractionDigits: 0) } ?? "—" }
 
@@ -97,22 +111,34 @@ struct LogPage: View {
         }
     }
 
+    /// Status, duration and speed keep fixed widths so they never truncate ("Interrompue", "3 min 12 s"); tool and
+    /// model take the room left (they grow with the window), with their full text as help. At the window's minimum
+    /// with the detail pane open, tok/s runs past the edge; the detail pane shows it for the selected row.
     private func table(_ rows: [RequestRecord]) -> some View {
         Table(rows, selection: $selection) {
-            TableColumn(String(localized: "Time")) { Self.time($0.start, compact: true) }.width(72)
-            TableColumn(String(localized: "Tool")) { Text(verbatim: $0.tool ?? "—").help($0.tool ?? "") }.width(min: 40, ideal: 46, max: 140)
-            TableColumn(String(localized: "Model")) { Text(verbatim: $0.model ?? "—").help($0.model ?? "") }.width(min: 48, ideal: 60, max: 200)
+            TableColumn(String(localized: "Time")) { Self.time($0.start, compact: true) }.width(68)
+            TableColumn(String(localized: "Tool")) { Text(verbatim: $0.tool ?? "—").help($0.tool ?? "") }.width(min: 40, ideal: 40, max: 140)
+            TableColumn(String(localized: "Model")) { r in
+                Text(verbatim: r.model.map(modelName) ?? "—").help(r.model ?? "")
+            }.width(min: 48, ideal: 64, max: 200)
             TableColumn(String(localized: "Engine")) { Text(verbatim: AppModel.engineName($0.engine)) }.width(48)
-            TableColumn(String(localized: "Status")) { r in
-                Text(verbatim: Self.statusText(r)).foregroundStyle(Self.isFailure(r) ? Theme.red : Color.primary)
-            }.width(42)
+            TableColumn(String(localized: "Status")) { r in status(r).help(r.error ?? "") }.width(84)
             TableColumn(String(localized: "In")) { Text(verbatim: Self.tokens($0.usage.input)) }.width(42)
             TableColumn(String(localized: "Out")) { Text(verbatim: Self.tokens($0.usage.output)) }.width(42)
-            TableColumn(String(localized: "Duration")) { Text(verbatim: UsagePage.duration(ms: $0.durationMs)) }.width(56)
-            TableColumn(String(localized: "tok/s")) { Text(verbatim: Self.speed($0)) }.width(44)
+            TableColumn(String(localized: "Duration")) { Text(verbatim: UsagePage.duration(ms: $0.durationMs)) }.width(72)
+            TableColumn(String(localized: "tok/s")) { Text(verbatim: Self.speed($0)) }.width(36)
         }
         .font(.callout)
         .frame(maxWidth: .infinity, minHeight: 240)
+    }
+
+    /// The status cell: the code, or an error icon and "Interrupted" in red when a 2xx answer was cut.
+    private func status(_ r: RequestRecord) -> some View {
+        HStack(spacing: 2) {
+            if Self.isInterrupted(r) { Image(systemName: "exclamationmark.triangle.fill").imageScale(.small) }
+            Text(verbatim: Self.statusText(r)).lineLimit(1)
+        }
+        .foregroundStyle(Self.isFailure(r) ? Theme.red : Color.primary)
     }
 
     private func detail(_ r: RequestRecord) -> some View {
@@ -120,8 +146,12 @@ struct LogPage: View {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Self.time(r.start).font(.headline)
-                    Text(verbatim: [r.tool, r.model, AppModel.engineName(r.engine)].compactMap { $0 }.joined(separator: " · "))
+                    Text(verbatim: [r.tool, r.model.map(modelName), AppModel.engineName(r.engine)].compactMap { $0 }
+                        .joined(separator: " · "))
                         .foregroundStyle(.secondary)
+                    if let served = r.model, modelName(served) != served {
+                        Text(verbatim: served).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
                     if let folder = r.folder {
                         Text(verbatim: UsagePage.folderName(folder)).foregroundStyle(.secondary).help(folder)
                     }

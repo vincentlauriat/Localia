@@ -89,6 +89,8 @@ struct BreakdownList: View {
     let unknownLabel: String
     /// Rows are folder paths: show the last component and the full path as help.
     var showsPaths = false
+    /// Display name of a label (model ids to human names); the full label then shows as help.
+    var labelName: ((String) -> String)? = nil
 
     var body: some View {
         let peak = max(rows.map(\.totals.requests).max() ?? 1, 1)
@@ -97,7 +99,7 @@ struct BreakdownList: View {
                 HStack(spacing: 10) {
                     Text(name(row)).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(showsPaths ? (row.label ?? "") : "")
+                        .help(showsPaths || labelName != nil ? (row.label ?? "") : "")
                     GeometryReader { geo in
                         Capsule().fill(Theme.accent.opacity(0.6))
                             .frame(width: max(2, geo.size.width * CGFloat(row.totals.requests) / CGFloat(peak)))
@@ -113,6 +115,7 @@ struct BreakdownList: View {
 
     private func name(_ row: UsageBreakdownRow) -> String {
         guard let label = row.label else { return unknownLabel }
+        if let labelName { return labelName(label) }
         return showsPaths ? UsagePage.folderName(label) : label
     }
 }

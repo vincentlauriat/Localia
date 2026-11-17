@@ -43,8 +43,8 @@ struct DockRoot: View {
         case .models: ModelsRoot(model: model)
         case .engines: EnginesPage(model: model)
         case .sessions: SessionsPage(model: model, usage: usage)
-        case .usage: UsagePage(usage: usage)
-        case .log: LogPage(usage: usage)
+        case .usage: UsagePage(usage: usage, modelName: model.friendlyName(for:))
+        case .log: LogPage(usage: usage, modelName: model.friendlyName(for:))
         case .settings: SettingsRoot(model: model)
         }
     }

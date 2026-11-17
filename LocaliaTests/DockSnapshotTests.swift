@@ -176,11 +176,12 @@ final class DockSnapshotTests: XCTestCase {
 
     private func logUsage(recorded: Bool) async -> (UsageModel, UUID) {
         let now = Date()
-        func record(_ i: Int, tool: String?, model: String, status: Int, output: Int?, error: String? = nil) -> RequestRecord {
-            RequestRecord(id: UUID(), start: now.addingTimeInterval(Double(-i) * 90), durationMs: 4_000 + i * 700,
+        func record(_ i: Int, tool: String?, model: String, status: Int, output: Int?, error: String? = nil,
+                    outcome: String? = nil, durationMs: Int? = nil) -> RequestRecord {
+            RequestRecord(id: UUID(), start: now.addingTimeInterval(Double(-i) * 90), durationMs: durationMs ?? 4_000 + i * 700,
                           session: "s\(i)", tool: tool, folder: "/Users/me/Dev/Localia", engine: i % 3 == 0 ? .mlx : .ollama,
-                          model: model, api: .anthropic, status: status < 400 ? "ok" : "upstream_error", httpStatus: status,
-                          usage: TokenUsage(input: output.map { $0 * 9 }, output: output), error: error)
+                          model: model, api: .anthropic, status: outcome ?? (status < 400 ? "ok" : "upstream_error"),
+                          httpStatus: status, usage: TokenUsage(input: output.map { $0 * 9 }, output: output), error: error)
         }
         let reader = FakeUsageReader()
         let rows = [
@@ -188,6 +189,9 @@ final class DockSnapshotTests: XCTestCase {
             record(1, tool: "Codex", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", status: 200, output: nil),
             record(2, tool: "Claude Code", model: "gemma3:12b", status: 500, output: 0, error: "upstream closed the connection"),
             record(3, tool: nil, model: "gemma3:12b", status: 200, output: 1_250),
+            // A stream cut after its 200: long, on a raw served id the page shows by its human name.
+            record(4, tool: "Claude Code", model: Self.servedHF, status: 200, output: 3_100,
+                   error: "Client closed the connection", outcome: "cancelled", durationMs: 192_000),
         ]
         reader.records = rows
         if recorded {
@@ -201,6 +205,28 @@ final class DockSnapshotTests: XCTestCase {
         return (usage, rows[0].id)
     }
 
+    private static let servedHF = "hf.co/unsloth/gemma-4-12B-it-GGUF:Q4_K_M"
+    /// The diagram's naming, without an AppModel: the served id's human name.
+    private static func friendly(_ served: String) -> String { served == servedHF ? "Gemma 4 12B" : served }
+
+    func test_log_statusText() async {
+        let (usage, _) = await logUsage(recorded: false)
+        let clean = usage.requests[0], failed = usage.requests[2], cut = usage.requests[4]
+        XCTAssertEqual(LogPage.statusText(clean), "200")
+        XCTAssertFalse(LogPage.isFailure(clean))
+        XCTAssertEqual(LogPage.statusText(failed), "500")
+        XCTAssertTrue(LogPage.isFailure(failed))
+        XCTAssertTrue(LogPage.isInterrupted(cut))
+        XCTAssertEqual(LogPage.statusText(cut), String(localized: "Interrupted"), "a 200 whose stream was cut says so")
+        XCTAssertTrue(LogPage.isFailure(cut))
+        XCTAssertFalse(LogPage.isInterrupted(failed), "a 5xx keeps its code")
+    }
+
+    func test_duration_fitsAColumn() {
+        XCTAssertFalse(UsagePage.duration(ms: 192_000).contains(","), "no list separator")
+        XCTAssertTrue(UsagePage.duration(ms: 192_000).hasPrefix("3"))
+    }
+
     func test_log_withDetail_recorded() async throws {
         let (usage, id) = await logUsage(recorded: true)
         let content = await usage.content(for: id)
@@ -209,7 +235,7 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertEqual(LogPage.display(Data("event: x".utf8)), "event: x", "non-JSON stays text")
         XCTAssertEqual(LogPage.speed(usage.requests[1]), "—", "unknown tokens show a dash")
         try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded", size: CGSize(width: 900, height: 560))
-        try snapshot(LogPage(usage: usage), named: "dock-log-list", size: CGSize(width: 860, height: 400))
+        try snapshot(LogPage(usage: usage, modelName: Self.friendly), named: "dock-log-list", size: CGSize(width: 860, height: 400))
         try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded-min", size: CGSize(width: 860, height: 560))
     }
 
@@ -219,6 +245,8 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertNil(none)
         try snapshot(LogPage(usage: usage, initialSelection: usage.requests[2].id, initialContent: .some(nil)), named: "dock-log-notrecorded",
                      size: CGSize(width: 900, height: 560))
+        try snapshot(LogPage(usage: usage, modelName: Self.friendly, initialSelection: usage.requests[4].id, initialContent: .some(nil)),
+                     named: "dock-log-interrupted", size: CGSize(width: 860, height: 560))
         try snapshot(LogPage(usage: usage, initialSelection: usage.requests[2].id, initialContent: .some(nil)), named: "dock-log-notrecorded-min",
                      size: CGSize(width: 860, height: 560))
     }
@@ -252,7 +280,9 @@ final class DockSnapshotTests: XCTestCase {
     func test_usage_week() async throws {
         let usage = await usageModel(unknowns: false)
         XCTAssertEqual(usage.period, .week)
-        try snapshot(UsagePage(usage: usage), named: "dock-usage-week", size: CGSize(width: 860, height: 820))
+        // By model shows the human name (the diagram's), the served id as help.
+        try snapshot(UsagePage(usage: usage, modelName: { $0 == "gemma3:12b" ? "Gemma 3 12B" : $0 }), named: "dock-usage-week",
+                     size: CGSize(width: 860, height: 820))
     }
 
     func test_usage_quarter_withUnknowns() async throws {

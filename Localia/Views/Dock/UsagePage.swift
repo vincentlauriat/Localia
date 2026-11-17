@@ -4,6 +4,8 @@ import SwiftUI
 /// Advanced-mode analytics of what the Localia proxy recorded: totals, heatmap and breakdowns for a period.
 struct UsagePage: View {
     @ObservedObject var usage: UsageModel
+    /// Human name of a served model id (the diagram's names); the id itself by default.
+    var modelName: (String) -> String = { $0 }
 
     /// Last path component of a folder, the path itself when it has none ("/").
     static func folderName(_ path: String) -> String {
@@ -24,9 +26,10 @@ struct UsagePage: View {
         return date.formatted(Date.FormatStyle(date: .long, time: .omitted).locale(Fmt.appLocale))
     }
 
+    /// "3 min 12 s": no list conjunction ("3 min et 12 s"), so it fits a table column.
     static func duration(ms: Int) -> String {
         Duration.milliseconds(ms).formatted(
-            .units(allowed: [.days, .hours, .minutes, .seconds], width: .abbreviated, maximumUnitCount: 2)
+            .units(allowed: [.days, .hours, .minutes, .seconds], width: .condensedAbbreviated, maximumUnitCount: 2)
                 .locale(Fmt.appLocale))
     }
 
@@ -44,7 +47,8 @@ struct UsagePage: View {
                 } else if let report = usage.report {
                     tiles(report.totals)
                     heatmapCard(report)
-                    breakdown(String(localized: "By model"), report.byModel, unknown: String(localized: "Unknown model"))
+                    breakdown(String(localized: "By model"), report.byModel, unknown: String(localized: "Unknown model"),
+                              name: modelName)
                     breakdown(String(localized: "By tool"), report.byTool, unknown: String(localized: "Unknown tool"))
                     breakdown(String(localized: "By folder"), report.byFolder, unknown: String(localized: "No folder"),
                               paths: true)
@@ -75,10 +79,11 @@ struct UsagePage: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(14).card()
     }
 
-    private func breakdown(_ title: String, _ rows: [UsageBreakdownRow], unknown: String, paths: Bool = false) -> some View {
+    private func breakdown(_ title: String, _ rows: [UsageBreakdownRow], unknown: String, paths: Bool = false,
+                           name: ((String) -> String)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.headline)
-            BreakdownList(rows: rows, unknownLabel: unknown, showsPaths: paths)
+            BreakdownList(rows: rows, unknownLabel: unknown, showsPaths: paths, labelName: name)
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(14).card()
     }
