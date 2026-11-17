@@ -5,6 +5,7 @@ use axum::body::Bytes;
 use std::fmt;
 
 pub mod anthropic;
+pub mod responses;
 
 /// A request the router cannot serve as sent; answered 400 `invalid_request_error` with this message.
 #[derive(Clone, Debug, PartialEq, Eq)]
