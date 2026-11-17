@@ -83,9 +83,10 @@ final class FlowGraphTests: XCTestCase {
         let on = FlowGraph.make(input(localModeOn: true), advanced: true, now: now)
         XCTAssertEqual(edge(on, "claude→cloud")?.active, false)
 
-        let simpleOff = FlowGraph.make(input(localModeOn: false), advanced: false, now: now)
+        let simpleOff = FlowGraph.make(input(requests: [request(minutesAgo: 1)], localModeOn: false), advanced: false, now: now)
         XCTAssertEqual(edge(simpleOff, "claude→cloud")?.active, true)
         XCTAssertEqual(edge(simpleOff, "claude→localia")?.active, false)
+        XCTAssertEqual(edge(simpleOff, "claude→localia")?.recent, false)
         let simpleOn = FlowGraph.make(input(localModeOn: true), advanced: false, now: now)
         XCTAssertEqual(edge(simpleOn, "claude→cloud")?.active, false)
         XCTAssertEqual(edge(simpleOn, "claude→localia")?.active, true)
@@ -112,26 +113,47 @@ final class FlowGraphTests: XCTestCase {
         }
     }
 
-    func test_uninstalledTools_andEngines_absent() {
+    func test_uninstalledTools_absent() {
         let codex = FlowInput.Tool(id: "codex", name: "Codex", needsResponsesAPI: true)
         let g = FlowGraph.make(input(engines: [.ollama, .mlx], tools: [codex]), advanced: true, now: now)
         let ids = Set(g.nodes.map(\.id))
         XCTAssertTrue(ids.isSuperset(of: ["claude", "codex", "proxy", "ollama", "mlx", "cloud"]))
-        XCTAssertFalse(ids.contains("llamacpp"))
         XCTAssertFalse(ids.contains("opencode"))
         XCTAssertFalse(ids.contains("pi"))
         XCTAssertFalse(ids.contains("terminal"), "the every-claude scope is off")
-        XCTAssertFalse(g.edges.contains { $0.to == "llamacpp" })
         // Codex speaks only the Responses API, which MLX does not serve.
         XCTAssertEqual(edge(g, "codex→proxy")?.route, .proxied)
         XCTAssertFalse(g.edges.contains { $0.from == "codex" && $0.to == "mlx" })
+    }
+
+    func test_uninstalledEngine_hasNoEdges() {
+        for fallback in [false, true] {
+            let g = FlowGraph.make(input(engines: [.ollama], routes: [.llamaCpp: .direct], fallback: fallback),
+                                   advanced: true, now: now)
+            for id in ["llamacpp", "mlx"] {
+                let node = g.nodes.first { $0.id == id }
+                XCTAssertEqual(node?.state, .off, id)
+                XCTAssertEqual(node?.detail, String(localized: "Not installed"), id)
+                XCTAssertFalse(g.edges.contains { $0.to == id || $0.from == id }, id)
+            }
+        }
+    }
+
+    func test_modelNode_showsFriendlyName_withServedIdAsDetail() {
+        var i = input()
+        i.loaded = ["qwen3:8b-localia"]
+        i.modelNames = ["qwen3:8b-localia": "Qwen3 8B"]
+        let g = FlowGraph.make(i, advanced: true, now: now)
+        let node = g.nodes.first { $0.kind == .model }
+        XCTAssertEqual(node?.label, "Qwen3 8B")
+        XCTAssertEqual(node?.detail, "qwen3:8b-localia")
     }
 
     func test_everyClaudeScope_addsTerminal_andColumnsAreOrdered() {
         let g = FlowGraph.make(input(everyClaude: true), advanced: true, now: now)
         XCTAssertEqual(g.columns[0], ["claude", "terminal"])
         XCTAssertEqual(g.columns[1], ["proxy"])
-        XCTAssertEqual(g.columns[2], ["ollama", "llamacpp", "cloud"])
+        XCTAssertEqual(g.columns[2], ["ollama", "llamacpp", "mlx", "cloud"])
         XCTAssertEqual(g.nodes.first { $0.id == "ollama" }?.page, .engines)
         XCTAssertEqual(g.nodes.first { $0.id == "claude" }?.page, .sessions)
     }

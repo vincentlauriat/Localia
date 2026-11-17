@@ -136,7 +136,8 @@ final class DockSnapshotTests: XCTestCase {
             loaded: ["gemma3:12b", "qwen3-coder:30b-a3b-instruct-q4_K_M"], sessions: localModeOn ? [session] : [],
             proxyState: fallback ? .unavailable(reason: "x") : .running(version: "dev"), fallback: fallback,
             localModeOn: localModeOn, everyClaude: true, routes: [.ollama: .proxy, .llamaCpp: .direct],
-            requests: [request])
+            requests: [request],
+            modelNames: ["gemma3:12b": "Gemma 3 12B", "qwen3-coder:30b-a3b-instruct-q4_K_M": "Qwen3 Coder 30B A3B"])
     }
 
     private func flowCard(_ input: FlowInput, advanced: Bool) -> some View {
@@ -146,8 +147,10 @@ final class DockSnapshotTests: XCTestCase {
 
     func test_flow_advanced_proxiedAndDirect() throws {
         try snapshot(flowCard(flowInput(), advanced: true), named: "flow-advanced", size: CGSize(width: 760, height: 420))
-        // The narrowest the main window lets the Overview be.
-        try snapshot(flowCard(flowInput(), advanced: true), named: "flow-advanced-narrow", size: CGSize(width: 600, height: 420))
+        // The narrowest the main window lets the Overview be: 1100 minimum width less the 240 sidebar.
+        try snapshot(flowCard(flowInput(), advanced: true), named: "flow-advanced-min", size: CGSize(width: 860, height: 440))
+        try snapshot(flowCard(flowInput(fallback: true), advanced: true), named: "flow-fallback-min",
+                     size: CGSize(width: 860, height: 440))
     }
 
     func test_flow_fallback() throws {

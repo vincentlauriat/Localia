@@ -42,7 +42,7 @@ struct FlowInput: Equatable {
 
     /// Installed coding tools besides Claude Code.
     var tools: [Tool]
-    /// Installed engines.
+    /// Installed engines. The others are drawn dimmed, with no edges.
     var engines: [EngineID]
     var activeEngine: EngineID
     /// The active engine answers.
@@ -56,6 +56,8 @@ struct FlowInput: Equatable {
     var everyClaude: Bool
     var routes: [EngineID: EngineRoute]
     var requests: [RequestRecord]
+    /// Human names of served models ("Qwen3 8B"), by served id. A model missing here shows its id.
+    var modelNames: [String: String] = [:]
 }
 
 /// The parts of Localia and how requests flow between them, laid out in columns from left to right.
@@ -105,7 +107,8 @@ struct FlowGraph: Equatable {
 
     private static func makeSimple(_ input: FlowInput, now: Date) -> FlowGraph {
         let on = input.localModeOn
-        let recent = input.requests.contains { isRecent($0, now: now) }
+        // With local mode off the cloud edge is the one in use: earlier local traffic would only distract.
+        let recent = on && input.requests.contains { isRecent($0, now: now) }
         let nodes = [
             FlowNode(id: "claude", kind: .simpleClaude, label: String(localized: "Claude"), detail: nil, state: .ok, page: nil),
             FlowNode(id: "localia", kind: .simpleLocalia, label: String(localized: "Localia"),
@@ -215,7 +218,11 @@ struct FlowGraph: Equatable {
                              detail: input.fallback ? String(localized: "Paused")
                                                     : portLabel(LocaliaConstants.proxyPort),
                              state: proxyState, page: .engines)
-        let engineNodes = input.engines.map { e in
+        let engineNodes = EngineID.allCases.map { e in
+            guard input.engines.contains(e) else {
+                return FlowNode(id: nodeID(e), kind: .engine, label: AppModel.engineName(e),
+                                detail: String(localized: "Not installed"), state: .off, page: .engines)
+            }
             let n = engineSessions[e] ?? 0
             return FlowNode(id: nodeID(e), kind: .engine, label: AppModel.engineName(e),
                             detail: portLabel(port(e)),
@@ -226,7 +233,9 @@ struct FlowGraph: Equatable {
                              state: input.localModeOn ? .idle : .ok, page: nil)
         let modelNodes = models.map { m in
             let id = modelID(m.engine, m.name)
-            return FlowNode(id: id, kind: .model, label: m.name, detail: nil, state: .ok, page: .models,
+            let friendly = input.modelNames[m.name] ?? m.name
+            return FlowNode(id: id, kind: .model, label: friendly, detail: friendly == m.name ? nil : m.name,
+                            state: .ok, page: .models,
                             sessions: modelSessions[id] ?? 0)
         }
 
