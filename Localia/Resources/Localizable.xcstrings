@@ -8372,15 +8372,39 @@
     "%lld sessions are running. Sessions through Localia keep running; MLX sessions stop.": {
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld sessions are running. Sessions through Localia keep running; MLX sessions stop."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld session is running. Sessions through Localia keep running; MLX sessions stop."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sessions are running. Sessions through Localia keep running; MLX sessions stop."
+                }
+              }
+            }
           }
         },
         "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld sessions sont en cours. Les sessions via Localia continuent ; les sessions MLX s'arrêtent."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld session est en cours. Les sessions via Localia continuent ; les sessions MLX s'arrêtent."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sessions sont en cours. Les sessions via Localia continuent ; les sessions MLX s'arrêtent."
+                }
+              }
+            }
           }
         }
       }
@@ -8388,15 +8412,39 @@
     "%lld sessions are running. Sessions through Localia keep running.": {
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld sessions are running. Sessions through Localia keep running."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld session is running. Sessions through Localia keep running."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sessions are running. Sessions through Localia keep running."
+                }
+              }
+            }
           }
         },
         "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld sessions sont en cours. Les sessions via Localia continuent."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld session est en cours. Les sessions via Localia continuent."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sessions sont en cours. Les sessions via Localia continuent."
+                }
+              }
+            }
           }
         }
       }

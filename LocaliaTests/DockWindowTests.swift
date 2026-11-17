@@ -113,4 +113,13 @@ final class DockWindowTests: XCTestCase {
         XCTAssertTrue(withMLX.info.contains("MLX"))
         XCTAssertTrue(withMLX.info.contains("2"))
     }
+
+    func test_quitWarning_singularForOneSession() throws {
+        for engine in [EngineID.ollama, .mlx] {
+            let w = try XCTUnwrap(AppDelegate.quitWarning(running: [session(engine)]))
+            XCTAssertTrue(w.info.contains("1"))
+            XCTAssertFalse(w.info.contains("sessions are"))
+            XCTAssertFalse(w.info.contains("sessions sont"))
+        }
+    }
 }
