@@ -204,7 +204,7 @@ public final class ProxyServer: @unchecked Sendable {
             bytes = b; http = resp as? HTTPURLResponse
         } catch {
             if Task.isCancelled {
-                out.status = "cancelled"; out.error = "Client closed the connection"
+                out.status = "cancelled"; out.error = RequestRecord.clientClosedError
                 return out
             }
             out.httpStatus = 502; out.status = "upstream_error"; out.error = error.localizedDescription
@@ -266,7 +266,7 @@ public final class ProxyServer: @unchecked Sendable {
         }
 
         guard await conn.send(Data(head.utf8)) else {
-            out.status = "cancelled"; out.error = "Client closed the connection"
+            out.status = "cancelled"; out.error = RequestRecord.clientClosedError
             return out
         }
         do {
@@ -276,18 +276,18 @@ public final class ProxyServer: @unchecked Sendable {
                 guard byte == UInt8(ascii: "\n") || pending.count >= 64 << 10 else { continue }
                 take(pending)
                 guard await conn.send(pending) else {
-                    out.status = "cancelled"; out.error = "Client closed the connection"
+                    out.status = "cancelled"; out.error = RequestRecord.clientClosedError
                     return finish(out, extractor, whole, streamed: streamed, kind: kind)
                 }
                 pending.removeAll(keepingCapacity: true)
             }
             if !pending.isEmpty {
                 take(pending)
-                if !(await conn.send(pending)) { out.status = "cancelled"; out.error = "Client closed the connection" }
+                if !(await conn.send(pending)) { out.status = "cancelled"; out.error = RequestRecord.clientClosedError }
             }
         } catch {
             if Task.isCancelled || conn.isClosed {
-                out.status = "cancelled"; out.error = "Client closed the connection"
+                out.status = "cancelled"; out.error = RequestRecord.clientClosedError
             } else if (200..<300).contains(code) {
                 out.status = kind == .anthropic && streamed ? "cancelled" : "upstream_error"
                 out.error = "Upstream stream interrupted: \(error.localizedDescription)"

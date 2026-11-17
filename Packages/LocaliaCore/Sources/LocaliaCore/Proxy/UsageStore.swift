@@ -26,6 +26,15 @@ public struct RequestRecord: Equatable, Sendable, Identifiable {
         self.status = status; self.httpStatus = httpStatus; self.usage = usage; self.error = error
     }
 
+    /// The error the proxy records when the client closed the connection (Esc in Claude Code, a closed tab).
+    public static let clientClosedError = "Client closed the connection"
+
+    /// The user stopped the request: the client closed the connection before an HTTP error. Not a failure;
+    /// a stream the engine cut is recorded with another error.
+    public var isUserCancelled: Bool {
+        status == "cancelled" && httpStatus < 400 && (error == nil || error == Self.clientClosedError)
+    }
+
     /// Output tokens per second, only when both the output count and a positive duration are known.
     public var tokensPerSecond: Double? {
         guard let output = usage.output, durationMs > 0 else { return nil }

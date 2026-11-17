@@ -16,7 +16,8 @@ public struct RequestFilter: Equatable, Sendable {
         return records.filter { r in
             if let engine, r.engine != engine { return false }
             if let tool, r.tool != tool { return false }
-            if errorsOnly, !(r.httpStatus >= 400 || r.error != nil) { return false }
+            // A request the user cancelled is not an error, though the proxy records why it stopped.
+            if errorsOnly, !(r.httpStatus >= 400 || r.error != nil) || r.isUserCancelled { return false }
             if !needle.isEmpty {
                 let fields = [r.model, r.folder, r.error]
                 return fields.contains { $0?.localizedCaseInsensitiveContains(needle) ?? false }

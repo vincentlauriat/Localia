@@ -37,19 +37,38 @@ struct LogPage: View {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// A 2xx answer that did not complete: the stream was cut, by the client or the engine.
+    /// A 2xx answer that did not complete because the engine cut it or failed; not one the user cancelled.
     static func isInterrupted(_ r: RequestRecord) -> Bool {
-        (200..<300).contains(r.httpStatus) && (r.status != "ok" || r.error != nil)
+        (200..<300).contains(r.httpStatus) && (r.status != "ok" || r.error != nil) && !r.isUserCancelled
     }
 
-    /// The HTTP code, or "Interrupted" when a 2xx answer did not complete.
+    /// "Cancelled" when the user stopped the request, "Interrupted" when a 2xx answer was cut, else the HTTP code.
     static func statusText(_ r: RequestRecord) -> String {
+        if r.isUserCancelled { return String(localized: "Cancelled") }
         if isInterrupted(r) { return String(localized: "Interrupted") }
         return r.httpStatus > 0 ? String(r.httpStatus) : "—"
     }
 
-    /// Red in the table: an HTTP error, a recorded error (what Errors only keeps), or an interrupted answer.
-    static func isFailure(_ r: RequestRecord) -> Bool { r.httpStatus >= 400 || r.error != nil || isInterrupted(r) }
+    /// Red in the table: an HTTP error, a recorded error (what Errors only keeps) or an interrupted answer.
+    /// A request the user cancelled is not one: it shows in grey.
+    static func isFailure(_ r: RequestRecord) -> Bool {
+        !r.isUserCancelled && (r.httpStatus >= 400 || r.error != nil || isInterrupted(r))
+    }
+
+    /// How a request's status reads: a failure in red with an icon, a cancel in grey, anything else plain.
+    enum StatusRole: Equatable { case normal, cancelled, failure }
+
+    static func statusRole(_ r: RequestRecord) -> StatusRole {
+        isFailure(r) ? .failure : r.isUserCancelled ? .cancelled : .normal
+    }
+
+    static func statusColor(_ r: RequestRecord) -> Color {
+        switch statusRole(r) {
+        case .failure: Theme.red
+        case .cancelled: .secondary
+        case .normal: .primary
+        }
+    }
 
     static func tokens(_ n: Int?) -> String { n.map { Fmt.number(Double($0), fractionDigits: 0) } ?? "—" }
 
@@ -111,9 +130,9 @@ struct LogPage: View {
         }
     }
 
-    /// Status, duration and speed keep fixed widths so they never truncate ("Interrompue", "3 min 12 s"); tool and
-    /// model take the room left (they grow with the window), with their full text as help. At the window's minimum
-    /// with the detail pane open, tok/s runs past the edge; the detail pane shows it for the selected row.
+    /// Status and duration keep fixed widths so they never truncate ("Interrompue", "3 min 12 s"); tool and model
+    /// take the room left (they grow with the window), with their full text as help. Every column fits at the
+    /// window's minimum with the detail pane open. The speed is in the detail pane.
     private func table(_ rows: [RequestRecord]) -> some View {
         Table(rows, selection: $selection) {
             TableColumn(String(localized: "Time")) { Self.time($0.start, compact: true) }.width(68)
@@ -126,7 +145,6 @@ struct LogPage: View {
             TableColumn(String(localized: "In")) { Text(verbatim: Self.tokens($0.usage.input)) }.width(42)
             TableColumn(String(localized: "Out")) { Text(verbatim: Self.tokens($0.usage.output)) }.width(42)
             TableColumn(String(localized: "Duration")) { Text(verbatim: UsagePage.duration(ms: $0.durationMs)) }.width(72)
-            TableColumn(String(localized: "tok/s")) { Text(verbatim: Self.speed($0)) }.width(36)
         }
         .font(.callout)
         .frame(maxWidth: .infinity, minHeight: 240)
@@ -138,7 +156,7 @@ struct LogPage: View {
             if Self.isInterrupted(r) { Image(systemName: "exclamationmark.triangle.fill").imageScale(.small) }
             Text(verbatim: Self.statusText(r)).lineLimit(1)
         }
-        .foregroundStyle(Self.isFailure(r) ? Theme.red : Color.primary)
+        .foregroundStyle(Self.statusColor(r))
     }
 
     private func detail(_ r: RequestRecord) -> some View {
@@ -159,7 +177,9 @@ struct LogPage: View {
                         .foregroundStyle(Self.isFailure(r) ? Theme.red : Color.secondary)
                     Text(verbatim: "\(String(localized: "In")) \(Self.tokens(r.usage.input)) · \(String(localized: "Out")) \(Self.tokens(r.usage.output)) · \(Self.speed(r)) \(String(localized: "tok/s"))")
                         .foregroundStyle(.secondary)
-                    if let error = r.error { Text(verbatim: error).foregroundStyle(Theme.red) }
+                    if let error = r.error {
+                        Text(verbatim: error).foregroundStyle(r.isUserCancelled ? Color.secondary : Theme.red)
+                    }
                 }
                 .font(.caption)
                 contentSection(for: r)

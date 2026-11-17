@@ -519,11 +519,9 @@ private struct DiscoverHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(section.title).font(.title2.weight(.semibold))
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                }
+            // No title: the selected tab names the section; the line says what it lists.
+            HStack(alignment: .center) {
+                Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                 Spacer()
                 if model.loadingRecommendations { ProgressView().controlSize(.small) }
                 Button {
@@ -1081,16 +1079,13 @@ struct Badge: View {
 
 // MARK: - Installed
 
+/// The one-line explanation under the tab bar; the selected tab already names the section.
 private struct PaneHeader: View {
-    let title: String
     let subtitle: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.title2.weight(.semibold))
-            Text(subtitle).font(.callout).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+        Text(subtitle).font(.callout).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
     }
 }
 
@@ -1099,8 +1094,7 @@ private struct InstalledPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: String(localized: "Installed"),
-                       subtitle: String(localized: "Models on this Mac, by engine. Local mode uses the default one."))
+            PaneHeader(subtitle: String(localized: "Models on this Mac, by engine. Local mode uses the default one."))
             Divider()
             if model.installed.isEmpty {
                 ContentUnavailableView {
@@ -1189,8 +1183,7 @@ private struct DownloadsPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: String(localized: "Downloads"),
-                       subtitle: String(localized: "Models being downloaded. They move to Installed when done."))
+            PaneHeader(subtitle: String(localized: "Models being downloaded. They move to Installed when done."))
             Divider()
             if model.downloads.isEmpty {
                 ContentUnavailableView(String(localized: "No download in progress."), systemImage: "arrow.down.circle")

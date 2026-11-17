@@ -189,9 +189,13 @@ final class DockSnapshotTests: XCTestCase {
             record(1, tool: "Codex", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", status: 200, output: nil),
             record(2, tool: "Claude Code", model: "gemma3:12b", status: 500, output: 0, error: "upstream closed the connection"),
             record(3, tool: nil, model: "gemma3:12b", status: 200, output: 1_250),
-            // A stream cut after its 200: long, on a raw served id the page shows by its human name.
+            // A stream the engine cut after its 200: long, on a raw served id the page shows by its human name.
             record(4, tool: "Claude Code", model: Self.servedHF, status: 200, output: 3_100,
-                   error: "Client closed the connection", outcome: "cancelled", durationMs: 192_000),
+                   error: "Upstream stream interrupted: The network connection was lost.", outcome: "cancelled",
+                   durationMs: 192_000),
+            // The user pressed Esc: cancelled, not a failure.
+            record(5, tool: "Claude Code", model: "gemma3:12b", status: 200, output: 80,
+                   error: RequestRecord.clientClosedError, outcome: "cancelled"),
         ]
         reader.records = rows
         if recorded {
@@ -220,6 +224,22 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertEqual(LogPage.statusText(cut), String(localized: "Interrupted"), "a 200 whose stream was cut says so")
         XCTAssertTrue(LogPage.isFailure(cut))
         XCTAssertFalse(LogPage.isInterrupted(failed), "a 5xx keeps its code")
+        XCTAssertEqual(LogPage.statusRole(clean), .normal)
+        XCTAssertEqual(LogPage.statusRole(failed), .failure)
+        XCTAssertEqual(LogPage.statusRole(cut), .failure)
+    }
+
+    func test_log_userCancel_isGreyCancelled_notAFailure() async {
+        let (usage, _) = await logUsage(recorded: false)
+        let cancelled = usage.requests[5]
+        XCTAssertTrue(cancelled.isUserCancelled)
+        XCTAssertEqual(LogPage.statusText(cancelled), String(localized: "Cancelled"))
+        XCTAssertFalse(LogPage.isInterrupted(cancelled))
+        XCTAssertFalse(LogPage.isFailure(cancelled), "no red")
+        XCTAssertEqual(LogPage.statusRole(cancelled), .cancelled, "grey, no error icon")
+        usage.filter.errorsOnly = true
+        XCTAssertFalse(usage.filteredRequests.contains { $0.id == cancelled.id }, "Errors only leaves it out")
+        XCTAssertTrue(usage.filteredRequests.contains { $0.id == usage.requests[4].id }, "a cut stream stays an error")
     }
 
     func test_duration_fitsAColumn() {
@@ -247,6 +267,8 @@ final class DockSnapshotTests: XCTestCase {
                      size: CGSize(width: 900, height: 560))
         try snapshot(LogPage(usage: usage, modelName: Self.friendly, initialSelection: usage.requests[4].id, initialContent: .some(nil)),
                      named: "dock-log-interrupted", size: CGSize(width: 860, height: 560))
+        try snapshot(LogPage(usage: usage, modelName: Self.friendly, initialSelection: usage.requests[5].id, initialContent: .some(nil)),
+                     named: "dock-log-cancelled", size: CGSize(width: 860, height: 560))
         try snapshot(LogPage(usage: usage, initialSelection: usage.requests[2].id, initialContent: .some(nil)), named: "dock-log-notrecorded-min",
                      size: CGSize(width: 860, height: 560))
     }
