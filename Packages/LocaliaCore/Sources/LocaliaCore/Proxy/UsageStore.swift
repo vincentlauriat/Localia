@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 /// One proxied request. Metadata only; the body lives in `RecordedContent`.
-public struct RequestRecord: Equatable, Sendable {
+public struct RequestRecord: Equatable, Sendable, Identifiable {
     public var id: UUID
     public var start: Date
     public var durationMs: Int
@@ -24,6 +24,15 @@ public struct RequestRecord: Equatable, Sendable {
         self.id = id; self.start = start; self.durationMs = durationMs; self.session = session
         self.tool = tool; self.folder = folder; self.engine = engine; self.model = model; self.api = api
         self.status = status; self.httpStatus = httpStatus; self.usage = usage; self.error = error
+    }
+
+    /// The error the proxy records when the client closed the connection (Esc in Claude Code, a closed tab).
+    public static let clientClosedError = "Client closed the connection"
+
+    /// The user stopped the request: the client closed the connection before an HTTP error. Not a failure;
+    /// a stream the engine cut is recorded with another error.
+    public var isUserCancelled: Bool {
+        status == "cancelled" && httpStatus < 400 && (error == nil || error == Self.clientClosedError)
     }
 
     /// Output tokens per second, only when both the output count and a positive duration are known.

@@ -122,14 +122,14 @@ struct MenuBarPanel: View {
         }
     }
 
-    /// Shown while the proxy service cannot run and engines go direct. Tapping opens Settings (the status row
-    /// and its Restart button live there). Simple mode never says "proxy".
+    /// Shown while the proxy service cannot run and engines go direct. Tapping opens Engines & proxy (the status
+    /// row and its Restart button live there; simple mode lands on Overview, which shows the same notice). Simple mode never says "proxy".
     @ViewBuilder var proxyBanner: some View {
         if model.proxyFallbackActive {
             let text = model.settings.advancedMode
                 ? String(localized: "Localia proxy unavailable: engines run direct, no statistics.")
                 : String(localized: "Usage statistics are paused.")
-            Button { windows.show(.settings) } label: {
+            Button { windows.show(page: .engines) } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(Theme.orange)
                     Text(text).font(.system(size: 12)).multilineTextAlignment(.leading)
@@ -143,7 +143,7 @@ struct MenuBarPanel: View {
             .buttonStyle(.plain)
             .card(fill: Theme.orange.opacity(0.12), stroke: Theme.orange.opacity(0.35))
             .accessibilityLabel(text)
-            .accessibilityHint(String(localized: "Opens Settings"))
+            .accessibilityHint(String(localized: "Opens Engines & proxy"))
         }
     }
 
@@ -275,7 +275,7 @@ struct MenuBarPanel: View {
                 }
             }
             Divider().opacity(0.4)
-            Button { show(.models) } label: {
+            Button { show(page: .models) } label: {
                 HStack(spacing: 6) {
                     Text(String(localized: "Download and manage models…"))
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
@@ -473,6 +473,12 @@ struct MenuBarPanel: View {
 
     private var listCard: some View {
         VStack(spacing: 0) {
+            Button { show(page: .overview) } label: {
+                ListRow(icon: "macwindow", title: String(localized: "Open Localia")) { RowChevron() }
+            }
+            .buttonStyle(PanelRowButtonStyle())
+
+            RowDivider()
             Button { toggleLaunch(Self.claudeCode) } label: {
                 ListRow(icon: "terminal.fill", title: String(localized: "Launch Claude Code"), subtitle: launchSubtitle) {
                     RowChevron(expanded: launchOpen == Self.claudeCode)
@@ -515,7 +521,7 @@ struct MenuBarPanel: View {
             .disabled(freeing)
 
             RowDivider()
-            Button { show(.settings) } label: {
+            Button { show(page: .settings) } label: {
                 ListRow(icon: "gearshape.fill", title: String(localized: "Settings…")) { RowChevron() }
             }
             .buttonStyle(PanelRowButtonStyle())
@@ -646,6 +652,11 @@ struct MenuBarPanel: View {
         DispatchQueue.main.async { windows.show(kind) }
     }
 
+    func show(page: DockPage) {
+        dismiss()
+        DispatchQueue.main.async { windows.show(page: page) }
+    }
+
     func launch(_ folder: URL, toolID: String?) {
         dismiss()
         Task {
@@ -657,16 +668,7 @@ struct MenuBarPanel: View {
     func chooseFolder(tool: LocalToolRow?) {
         dismiss()
         DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.prompt = String(localized: "Launch")
-            panel.message = tool.map { String(localized: "Choose the folder \($0.displayName) works in.") }
-                ?? String(localized: "Choose the folder Claude Code works in.")
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            launch(url, toolID: tool?.id)
+            Task { await FolderLauncher.choose(tool: tool, model: model) }
         }
     }
 

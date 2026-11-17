@@ -402,19 +402,22 @@ final class SimpleModeAppTests: XCTestCase {
 
     // MARK: Windows
 
-    func testModelsWindowGrowsForTheFullView() async {
+    /// Models is a page of the main window: opening it selects the page, in simple mode too, and the window
+    /// keeps its own size when the full catalog is shown (the page scrolls inside it).
+    func testModelsOpensAsAPageOfTheMainWindow() async throws {
         let m = await readyModel()
         let windows = WindowManager(model: m)
         windows.show(.models)
-        defer { windows.close(.models) }
-        let small = try? XCTUnwrap(windows.window(.models)).contentRect(forFrameRect: windows.window(.models)!.frame).size
-        XCTAssertEqual(small?.width, SimpleModelsView.windowSize.width)
+        defer { windows.close(.main); NSApp.setActivationPolicy(.accessory) }
+        XCTAssertEqual(windows.navigation.selectedPage, .models)
+        let w = try XCTUnwrap(windows.window(.main))
+        let before = w.contentRect(forFrameRect: w.frame).size
+        XCTAssertGreaterThanOrEqual(before.width, WindowManager.mainMinSize.width)
+        XCTAssertGreaterThanOrEqual(before.height, WindowManager.mainMinSize.height)
         m.modelsShowAll = true
         try? await Task.sleep(nanoseconds: 300_000_000)
-        let w = windows.window(.models)!
-        let full = w.contentRect(forFrameRect: w.frame).size
-        XCTAssertGreaterThanOrEqual(full.width, ModelsWindow.minSize.width)
-        XCTAssertGreaterThanOrEqual(full.height, ModelsWindow.minSize.height)
+        XCTAssertEqual(windows.navigation.selectedPage, .models)
+        XCTAssertEqual(w.contentRect(forFrameRect: w.frame).size, before)
     }
 
     // MARK: Snapshots

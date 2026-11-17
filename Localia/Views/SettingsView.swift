@@ -4,14 +4,35 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    /// False when hosted in `SettingsRoot`'s tab view, which presents the window's one alert.
-    var ownsAlert = true
     @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
 
+    /// The Advanced tab's sections, in order: this array is what the body renders. Engines, proxy status and
+    /// routes live on `EnginesPage`.
+    enum AdvancedSection: String, CaseIterable, Identifiable {
+        case general, localMode, recommendations, proxyLog, beforeDeleting, claudeCode
+        var id: String { rawValue }
+    }
+    static let sections: [AdvancedSection] = AdvancedSection.allCases
+
     var body: some View {
         Form {
+            ForEach(Self.sections) { section(for: $0) }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 520, minHeight: 560)
+        .task { await model.refreshAll() }
+        .confirmationDialog(String(localized: "Remove Localia from your shell?"), isPresented: $confirmRemoveFromShell) {
+            Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
+        } message: {
+            Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
+        }
+    }
+
+    @ViewBuilder private func section(for section: AdvancedSection) -> some View {
+        switch section {
+        case .general:
             Section(String(localized: "General")) {
                 Picker(String(localized: "Engine"), selection: Binding(
                     get: { settings.activeEngine },
@@ -23,7 +44,7 @@ struct SettingsView: View {
                     ForEach(terminals, id: \.self) { Text(Self.terminalName($0)).tag($0) }
                 }
             }
-
+        case .localMode:
             Section(String(localized: "Local mode")) {
                 // Where local mode applies is set in the General tab (SettingsRoot), with its confirmation.
                 Picker(String(localized: "When the engine is down"), selection: Binding(
@@ -42,7 +63,7 @@ struct SettingsView: View {
                 Toggle(String(localized: "Switch to local mode when offline"), isOn: Binding(
                     get: { settings.autoLocalWhenOffline }, set: { settings.autoLocalWhenOffline = $0 }))
             }
-
+        case .recommendations:
             Section(String(localized: "Recommendations")) {
                 LabeledContent(String(localized: "llmfit version"), value: model.llmfitVersion ?? "…")
                 HStack {
@@ -52,13 +73,9 @@ struct SettingsView: View {
                         .disabled(model.updatingLlmfit)
                 }
             }
-
-            Section(String(localized: "Engines")) {
-                ForEach(EngineID.allCases, id: \.self) { EngineRow(model: model, id: $0) }
-            }
-
-            ProxySettingsSection(model: model)
-
+        case .proxyLog:
+            ProxyLogSection(model: model)
+        case .beforeDeleting:
             Section(String(localized: "Before deleting Localia")) {
                 HStack {
                     Text(String(localized: "Turns local mode off and removes the block Localia added to your shell startup files."))
@@ -68,7 +85,7 @@ struct SettingsView: View {
                     Button(String(localized: "Remove Localia from My Shell")) { confirmRemoveFromShell = true }
                 }
             }
-
+        case .claudeCode:
             Section(String(localized: "Claude Code")) {
                 if let path = model.claudePath {
                     LabeledContent(String(localized: "Installed"), value: path.path)
@@ -82,16 +99,7 @@ struct SettingsView: View {
                     }
                 }
             }
-        }
-        .formStyle(.grouped)
-        .frame(minWidth: 520, minHeight: 560)
-        .task { await model.refreshAll() }
-        .confirmationDialog(String(localized: "Remove Localia from your shell?"), isPresented: $confirmRemoveFromShell) {
-            Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
-        } message: {
-            Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
-        }
-        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
+            }
     }
 
     private var terminals: [TerminalApp] {
@@ -104,49 +112,6 @@ struct SettingsView: View {
         case .terminal: "Terminal"
         case .iTerm: "iTerm"
         case .ghostty: "Ghostty"
-        }
-    }
-}
-
-private struct EngineRow: View {
-    @ObservedObject var model: AppModel
-    let id: EngineID
-    @State private var confirmUninstall = false
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(AppModel.engineName(id)).font(.body.weight(.medium))
-                Text(stateText).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let p = model.engineInstallProgress[id] {
-                ProgressView(value: p).frame(width: 100)
-            } else {
-                switch model.engineStates[id] ?? .notInstalled {
-                case .notInstalled:
-                    Button(String(localized: "Install")) { Task { await model.installEngine(id) } }
-                case let .installed(_, managed):
-                    if managed {
-                        Button(String(localized: "Update")) { Task { await model.updateEngine(id) } }
-                        Button(String(localized: "Uninstall"), role: .destructive) { confirmUninstall = true }
-                    }
-                }
-            }
-        }
-        .confirmationDialog(String(localized: "Uninstall \(AppModel.engineName(id))?"), isPresented: $confirmUninstall) {
-            Button(String(localized: "Uninstall"), role: .destructive) { Task { await model.uninstallEngine(id) } }
-        } message: {
-            Text(String(localized: "Only the copy Localia installed is removed."))
-        }
-    }
-
-    private var stateText: String {
-        switch model.engineStates[id] ?? .notInstalled {
-        case .notInstalled: String(localized: "Not installed")
-        case let .installed(v, managed):
-            managed ? String(localized: "Version \(v), installed by Localia")
-                    : String(localized: "Version \(v), your own install (Localia never changes it)")
         }
     }
 }
@@ -180,19 +145,19 @@ struct EveryClaudeConfirmation: View {
 }
 
 
-/// The Localia proxy: service status, per-engine route, what the log keeps. Part of the Advanced tab, so
-/// simple mode never shows engines, ports or tokens.
-struct ProxySettingsSection: View {
+/// The Localia proxy service: status, the reason when it is unavailable, Restart. On the Engines & proxy page.
+struct ProxyStatusSection: View {
     @ObservedObject var model: AppModel
-    @State private var erasing = false
-
-    private var settings: SettingsStore { model.settings }
 
     var body: some View {
         Section(String(localized: "Localia proxy")) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.statusText(model.proxyState)).foregroundStyle(statusColor)
+                    if case .running = model.proxyState {
+                        Text(FlowGraph.portLabel(LocaliaConstants.proxyPort))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if case let .unavailable(reason) = model.proxyState {
                         Text(reason).font(.caption).foregroundStyle(.secondary)
                     }
@@ -209,7 +174,34 @@ struct ProxySettingsSection: View {
                     Button(String(localized: "Open Login Items…")) { SMAppService.openSystemSettingsLoginItems() }
                 }
             }
+        }
+    }
 
+    static func statusText(_ state: ProxyState) -> String {
+        switch state {
+        case .unknown: String(localized: "Checking…")
+        case .running: String(localized: "Running")
+        case .unavailable: String(localized: "Not available — statistics are off")
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.proxyState {
+        case .running: Theme.local
+        case .unavailable: Theme.orange
+        case .unknown: .secondary
+        }
+    }
+}
+
+/// Per-engine Direct / Via Localia route. On the Engines & proxy page.
+struct ProxyRoutesSection: View {
+    @ObservedObject var model: AppModel
+
+    private var settings: SettingsStore { model.settings }
+
+    var body: some View {
+        Section {
             ForEach([EngineID.ollama, .llamaCpp], id: \.self) { id in
                 Picker(AppModel.engineName(id), selection: Binding(
                     get: { settings.engineRoutes[id] ?? .proxy },
@@ -219,7 +211,19 @@ struct ProxySettingsSection: View {
                 }
             }
             LabeledContent(AppModel.engineName(.mlx), value: String(localized: "Always via Localia"))
+        }
+    }
+}
 
+/// What the proxy log keeps: content, retention, erase. Stays in the Advanced tab of Settings.
+struct ProxyLogSection: View {
+    @ObservedObject var model: AppModel
+    @State private var erasing = false
+
+    private var settings: SettingsStore { model.settings }
+
+    var body: some View {
+        Section(String(localized: "Localia proxy")) {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(String(localized: "Record request content"), isOn: Binding(
                     get: { settings.logContent }, set: { on in Task { await model.setLogContent(on) } }))
@@ -237,22 +241,6 @@ struct ProxySettingsSection: View {
             }
         }
         .sheet(isPresented: $erasing) { ProxyEraseSheet(model: model) { erasing = false } }
-    }
-
-    static func statusText(_ state: ProxyState) -> String {
-        switch state {
-        case .unknown: String(localized: "Checking…")
-        case .running: String(localized: "Running")
-        case .unavailable: String(localized: "Not available — statistics are off")
-        }
-    }
-
-    private var statusColor: Color {
-        switch model.proxyState {
-        case .running: Theme.local
-        case .unavailable: Theme.orange
-        case .unknown: .secondary
-        }
     }
 }
 

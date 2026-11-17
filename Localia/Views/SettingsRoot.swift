@@ -13,10 +13,6 @@ struct SettingsRoot: View {
 
     var body: some View {
         content
-            // The window's only alert: neither tab presents one (SettingsView's is off, `ownsAlert: false`).
-            .alert(item: model.simpleAlertBinding) {
-                model.isSimpleMode ? $0.simplified(heavyApps: model.heavyApps).swiftUIAlert : $0.swiftUIAlert
-            }
     }
 
     @ViewBuilder private var content: some View {
@@ -24,7 +20,7 @@ struct SettingsRoot: View {
             TabView {
                 GeneralSettingsView(model: model)
                     .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
-                SettingsView(model: model, ownsAlert: false)
+                SettingsView(model: model)
                     .tabItem { Label(String(localized: "Advanced"), systemImage: "slider.horizontal.3") }
             }
         } else {

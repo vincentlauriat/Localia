@@ -13,6 +13,12 @@ struct LocaliaApp: App {
             MenuBarIcon(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(String(localized: "Settings…")) { delegate.windows.show(page: .settings) }
+                    .keyboardShortcut(",")
+            }
+        }
     }
 }
 
@@ -43,10 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await model.start()
             if model.needsOnboarding { windows.show(.onboarding) }
             #if DEBUG
-            // E2E aid: `-LocaliaOpen models|settings|onboarding|about` opens a window at launch.
-            if let name = UserDefaults.standard.string(forKey: "LocaliaOpen"),
-               let kind = WindowManager.Kind(rawValue: name) {
-                windows.show(kind)
+            // E2E aid: `-LocaliaOpen <page>|onboarding|about` opens a window at launch
+            // (page: overview, models, engines, sessions, usage, log, settings).
+            if let name = UserDefaults.standard.string(forKey: "LocaliaOpen") {
+                if let page = DockPage(rawValue: name) {
+                    windows.show(page: page)
+                } else if let kind = WindowManager.Kind(rawValue: name) {
+                    windows.show(kind)
+                }
             }
             #endif
         }
@@ -60,11 +70,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !Self.isRunningTests, !shuttingDown else { return .terminateNow }
         shuttingDown = true
+        if let warning = Self.quitWarning(running: model.runningSessions) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = warning.message
+            alert.informativeText = warning.info
+            alert.addButton(withTitle: String(localized: "Quit"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            if alert.runModal() != .alertFirstButtonReturn {
+                shuttingDown = false
+                return .terminateCancel
+            }
+        }
         Task {
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    /// The warning shown on quit while sessions run; nil when none do. MLX sessions stop with Localia, the others carry on.
+    static func quitWarning(running: [RunningSession]) -> (message: String, info: String)? {
+        guard !running.isEmpty else { return nil }
+        let info = running.contains { $0.engine == .mlx }
+            ? String(localized: "\(running.count) sessions are running. Sessions through Localia keep running; MLX sessions stop.")
+            : String(localized: "\(running.count) sessions are running. Sessions through Localia keep running.")
+        return (String(localized: "Quit Localia?"), info)
     }
 }
 

@@ -140,7 +140,7 @@ extension MenuBarPanel {
                         choiceRow(row)
                     }
                     RowDivider()
-                    Button { show(.models) } label: {
+                    Button { show(page: .models) } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "plus.circle").font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(Theme.accent).frame(width: 28)
@@ -204,7 +204,9 @@ extension MenuBarPanel {
 
     private var simpleFooter: some View {
         HStack(spacing: 0) {
-            footerButton(String(localized: "Settings"), symbol: "gearshape") { show(.settings) }
+            footerButton(String(localized: "Open Localia"), symbol: "macwindow") { show(page: .overview) }
+            Divider().frame(height: 28).opacity(0.5)
+            footerButton(String(localized: "Settings"), symbol: "gearshape") { show(page: .settings) }
                 .keyboardShortcut(",")
             Divider().frame(height: 28).opacity(0.5)
             footerButton(String(localized: "Help"), symbol: "questionmark.circle") {

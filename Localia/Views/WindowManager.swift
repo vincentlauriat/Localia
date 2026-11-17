@@ -2,77 +2,81 @@ import AppKit
 import Combine
 import SwiftUI
 
+/// Page shown by the main window; the sidebar and `WindowManager.show(page:)` both write it.
+@MainActor
+final class DockNavigation: ObservableObject {
+    @Published var selectedPage: DockPage = .overview
+}
+
 /// AppKit-hosted windows: deterministic in an `LSUIElement` app, and they activate the app when shown.
+/// Models and Settings are pages of the main window; onboarding and About stay separate windows.
 @MainActor
 final class WindowManager {
-    enum Kind: String { case models, settings, onboarding, about }
+    /// `models` and `settings` are not windows any more: they open the main window on that page.
+    enum Kind: String { case main, models, settings, onboarding, about }
 
-    private let model: AppModel
+    /// The Models page's minimum next to the widest sidebar: below it the page would clip.
+    static let mainMinSize = NSSize(width: (ModelsWindow.minSize.width + DockRoot.sidebarMaxWidth).rounded(.up),
+                                    height: ModelsWindow.minSize.height.rounded(.up))
+    static let mainDefaultSize = NSSize(width: max(1180, mainMinSize.width), height: max(720, mainMinSize.height))
+
+    let model: AppModel
+    let navigation = DockNavigation()
+    let usage: UsageModel
     private var windows: [Kind: NSWindow] = [:]
     /// Mode the onboarding window was made for: simple and advanced first runs are different views.
     private var onboardingAdvanced: Bool?
     private var bag: Set<AnyCancellable> = []
+    private lazy var mainDelegate = MainWindowDelegate(usage: usage)
 
     init(model: AppModel) {
         self.model = model
-        // Advanced mode on, or "See all models…": the Models and Settings windows grow to fit what they show.
-        // `receive(on: main)`: the sinks run on the main thread, after the new value is stored.
+        self.usage = UsageModel(reader: model.usageReader)
+        // `receive(on: main)`: the sink runs on the main thread, after the new value is stored.
         model.settings.$advancedMode.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.modeChanged() } }.store(in: &bag)
-        model.$modelsShowAll.dropFirst().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.fitToMode() } }.store(in: &bag)
     }
 
     func show(_ kind: Kind) {
+        switch kind {
+        case .main: show(page: navigation.selectedPage); return
+        case .models: show(page: .models); return
+        case .settings: show(page: .settings); return
+        case .onboarding, .about: break
+        }
         if kind == .onboarding, let made = onboardingAdvanced, made != model.settings.advancedMode {
             windows[.onboarding]?.close()
             windows[.onboarding] = nil
         }
+        present(kind)
+    }
+
+    /// Opens the main window on `page` (the overview when the page is hidden in the current mode).
+    func show(page: DockPage) {
+        navigation.selectedPage = page.resolved(advanced: model.settings.advancedMode)
+        // A window in the Dock: regular while the main window is open, back to a menu-bar app on close.
+        NSApp.setActivationPolicy(.regular)
+        present(.main)
+        usage.startAutoRefresh()
+    }
+
+    private func present(_ kind: Kind) {
         let window = windows[kind] ?? make(kind)
         windows[kind] = window
-        fit(kind)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// The window of `kind` if it was made (tests check its size).
+    /// The window of `kind` if it was made (tests check it).
     func window(_ kind: Kind) -> NSWindow? { windows[kind] }
 
-    /// Full Models view: at least its default size. Settings: the size of what it shows. Windows only grow
-    /// to fit, except Settings, which shrinks back when advanced mode goes off.
-    private func fit(_ kind: Kind) {
-        guard let window = windows[kind] else { return }
-        let target: CGSize
-        switch kind {
-        case .models:
-            target = model.settings.advancedMode || model.modelsShowAll ? ModelsWindow.defaultSize : SimpleModelsView.windowSize
-        case .settings:
-            target = model.settings.advancedMode ? SettingsRoot.advancedSize : SettingsRoot.simpleSize
-        case .onboarding, .about:
-            return
-        }
-        let current = window.contentRect(forFrameRect: window.frame).size
-        let grow = current.width < target.width || current.height < target.height
-        guard grow || (kind == .settings && current != target) else { return }
-        let size = kind == .settings ? target
-            : CGSize(width: max(current.width, target.width), height: max(current.height, target.height))
-        // Keep the top-left corner where it is.
-        let top = window.frame.maxY
-        window.setContentSize(size)
-        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
-    }
-
-    /// Advanced mode switched: resize, and an open welcome window becomes the other mode's first run.
+    /// Advanced mode switched: a page the new mode hides gives way to the overview, and an open welcome
+    /// window becomes the other mode's first run.
     private func modeChanged() {
-        fitToMode()
+        navigation.selectedPage = navigation.selectedPage.resolved(advanced: model.settings.advancedMode)
         if let w = windows[.onboarding], w.isVisible, onboardingAdvanced != model.settings.advancedMode {
             show(.onboarding)
         }
-    }
-
-    private func fitToMode() {
-        fit(.models)
-        fit(.settings)
     }
 
     func close(_ kind: Kind) { windows[kind]?.close() }
@@ -82,16 +86,12 @@ final class WindowManager {
         let title: String
         let size: NSSize
         switch kind {
-        case .models:
-            root = AnyView(ModelsRoot(model: model))
-            title = String(localized: "Models")
-            let full = model.settings.advancedMode || model.modelsShowAll
-            size = full ? NSSize(width: ModelsWindow.defaultSize.width, height: ModelsWindow.defaultSize.height)
-                        : NSSize(width: SimpleModelsView.windowSize.width, height: SimpleModelsView.windowSize.height)
-        case .settings:
-            root = AnyView(SettingsRoot(model: model))
-            title = String(localized: "Localia Settings")
-            size = model.settings.advancedMode ? SettingsRoot.advancedSize : SettingsRoot.simpleSize
+        case .models, .settings:
+            preconditionFailure("\(kind) opens the main window on a page; it has no window of its own")
+        case .main:
+            root = AnyView(DockRoot(model: model, navigation: navigation, usage: usage))
+            title = "Localia"
+            size = Self.mainDefaultSize
         case .onboarding:
             let done: () -> Void = { [weak self] in
                 self?.model.finishOnboarding()
@@ -120,9 +120,29 @@ final class WindowManager {
                               backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
-        window.contentViewController = NSHostingController(rootView: root)
+        let hosting = NSHostingController(rootView: root)
+        if kind == .main { hosting.sizingOptions = [] }   // the window's own limits rule, not the page's
+        window.contentViewController = hosting
         window.setContentSize(size)
         window.center()
+        if kind == .main {
+            window.contentMinSize = Self.mainMinSize
+            window.delegate = mainDelegate
+            window.setFrameAutosaveName("LocaliaMain")
+        }
         return window
+    }
+}
+
+/// Back to a menu-bar app (no Dock icon) when the main window closes.
+@MainActor
+private final class MainWindowDelegate: NSObject, NSWindowDelegate {
+    private let usage: UsageModel
+
+    init(usage: UsageModel) { self.usage = usage }
+
+    func windowWillClose(_ notification: Notification) {
+        usage.stopAutoRefresh()
+        NSApp.setActivationPolicy(.accessory)
     }
 }
