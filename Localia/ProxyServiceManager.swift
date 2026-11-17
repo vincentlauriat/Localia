@@ -92,6 +92,8 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     private let deadline: Duration
     private let restartDeadline: Duration
     private var inflight: Task<Void, Never>?
+    /// Identifies the check `inflight` holds.
+    private var checkID = 0
     private let log = Logger(subsystem: "fr.vincentlauriat.localia", category: "proxy")
 
     init(registrar: any ServiceRegistering = SMAppServiceRegistrar(),
@@ -134,19 +136,26 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         await run(force: false)
     }
 
-    /// Waits for a check in flight, then runs its own forced one: joining it would not restart anything.
+    /// Waits for the checks in flight, then runs its own forced one: joining one would not restart anything.
+    /// Re-checks after each wait: another caller may have started a check meanwhile.
     func restart() async {
-        if let inflight { await inflight.value }
+        while let inflight { await inflight.value }
         await run(force: true)
     }
 
     func answers() async -> Bool { await healthVersion() != nil }
 
     private func run(force: Bool) async {
-        let task = Task { await self.check(force: force) }
+        checkID &+= 1
+        let id = checkID
+        // The task clears itself, as it ends: a waiter looping on `inflight` then never sees a finished
+        // check (awaiting one does not yield), and a check started after it is never cleared by it.
+        let task = Task {
+            await self.check(force: force)
+            if self.checkID == id { self.inflight = nil }
+        }
         inflight = task
         await task.value
-        inflight = nil
     }
 
     /// At most one unregister → register per check, so a dead service never makes it loop.
@@ -247,8 +256,8 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     }
 
     func uninstall() async {
-        // A check in flight would register the agent again right after.
-        if let inflight { await inflight.value }
+        // A check in flight would register the agent again right after; one may follow it (a restart).
+        while let inflight { await inflight.value }
         do { try await registrar.unregister() } catch {
             log.error("unregister failed: \(String(describing: error), privacy: .public)")
         }

@@ -4,6 +4,36 @@ import XCTest
 import LocaliaCore
 @testable import Localia
 
+/// Holds callers until `release()`; counts the ones waiting.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var _waiting = 0
+    var waiting: Int { lock.withLock { _waiting } }
+
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let pass = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                waiters.append(c)
+                _waiting += 1
+                return false
+            }
+            if pass { c.resume() }
+        }
+    }
+
+    func release() {
+        let w = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            isOpen = true
+            defer { waiters = [] }
+            return waiters
+        }
+        w.forEach { $0.resume() }
+    }
+}
+
 /// Records calls; never touches launchd.
 private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     private let lock = NSLock()
@@ -15,6 +45,10 @@ private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     var registerError: Error?
     /// Status after a successful `register()`.
     var statusAfterRegister: SMAppService.Status = .enabled
+    /// Holds the first `unregister()` (after it took effect) until released.
+    var unregisterGate: Gate?
+    /// Every call in order, "register" / "unregister".
+    private(set) var calls: [String] = []
 
     init(status: SMAppService.Status) { _status = status }
 
@@ -23,16 +57,21 @@ private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     func register() throws {
         lock.lock(); defer { lock.unlock() }
         registers += 1
+        calls.append("register")
         _lastRegister = Date()
         if let registerError { throw registerError }
         _status = statusAfterRegister
     }
 
     func unregister() async throws {
-        lock.withLock {
+        let gate = lock.withLock { () -> Gate? in
             unregisters += 1
+            calls.append("unregister")
             _status = .notRegistered
+            defer { unregisterGate = nil }
+            return unregisterGate
         }
+        await gate?.wait()
     }
 }
 
@@ -45,12 +84,15 @@ private final class StubHTTP: @unchecked Sendable {
     private let respond: (@Sendable () -> String?)?
     private(set) var requests: [URLRequest] = []
     var postStatus = 204
+    /// Holds every health request until released (a slow check).
+    var healthGate: Gate?
 
     init(versions: [String?]) { self.versions = versions; respond = nil }
     init(_ respond: @escaping @Sendable () -> String?) { versions = []; self.respond = respond }
 
     func fetch(_ req: URLRequest) async throws -> (Data, Int) {
-        try lock.withLock {
+        if req.url?.path == "/localia/health", let gate = lock.withLock({ healthGate }) { await gate.wait() }
+        return try lock.withLock {
             requests.append(req)
             guard req.url?.path == "/localia/health" else { return (Data(), postStatus) }
             let v = respond.map { $0() } ?? (versions.count > 1 ? versions.removeFirst() : versions.first ?? nil)
@@ -274,6 +316,59 @@ final class ProxyServiceManagerTests: XCTestCase {
         await m.ensureRunning()
         await m.uninstall()
         XCTAssertEqual(registrar.unregisters, 1)
+        XCTAssertEqual(m.state, .unknown)
+    }
+
+    private func waitUntil(_ cond: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(2)
+        while !cond() {
+            guard Date() < end else { return XCTFail("timed out", file: file, line: line) }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    /// A check is held on its health poll, Restart is pressed and waits for it, then the check finishes and
+    /// the forced cycle is held mid-unregister. Returns the tasks and the gate holding the unregister.
+    private func restartHeldMidUnregister(_ registrar: FakeRegistrar, _ http: StubHTTP, _ m: ProxyServiceManager)
+        async -> (check: Task<Void, Never>, restart: Task<Void, Never>, unregister: Gate) {
+        let health = Gate(), unregister = Gate()
+        http.healthGate = health
+        registrar.unregisterGate = unregister
+        let check = Task { await m.ensureRunning() }
+        await waitUntil { health.waiting == 1 }
+        let restart = Task { await m.restart() }
+        try? await Task.sleep(for: .milliseconds(20))
+        health.release()
+        await waitUntil { registrar.unregisters == 1 }
+        return (check, restart, unregister)
+    }
+
+    /// Restart pressed during a slow check: one forced cycle, and a check started meanwhile joins it.
+    func test_restartDuringSlowCheck_oneCycle_concurrentCheckJoinsIt() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let http = StubHTTP(versions: ["6"])
+        let m = make(registrar, http)
+        let (check, restart, unregister) = await restartHeldMidUnregister(registrar, http, m)
+        let joiner = Task { await m.ensureRunning() }
+        try? await Task.sleep(for: .milliseconds(50))
+        unregister.release()
+        _ = await (check.value, restart.value, joiner.value)
+        XCTAssertEqual(registrar.calls, ["unregister", "register"])
+        XCTAssertEqual(m.state, .running(version: "6"))
+    }
+
+    /// Uninstall while a restart is in flight: the agent stays unregistered (no register after it).
+    func test_uninstallDuringRestart_leavesAgentUnregistered() async {
+        let registrar = FakeRegistrar(status: .enabled)
+        let http = StubHTTP(versions: ["6"])
+        let m = make(registrar, http)
+        let (check, restart, unregister) = await restartHeldMidUnregister(registrar, http, m)
+        let uninstall = Task { await m.uninstall() }
+        try? await Task.sleep(for: .milliseconds(50))
+        unregister.release()
+        _ = await (check.value, restart.value, uninstall.value)
+        XCTAssertEqual(registrar.calls.last, "unregister", "\(registrar.calls)")
+        XCTAssertEqual(registrar.status, .notRegistered)
         XCTAssertEqual(m.state, .unknown)
     }
 }
