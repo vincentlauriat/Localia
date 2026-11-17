@@ -204,6 +204,22 @@ async fn body_over_limit_is_413() {
 }
 
 #[tokio::test]
+async fn large_body_streams_through_the_header_buffer() {
+    // Headers are capped at 64 KiB (431); a body far larger is still read whole.
+    let h = spawn(|_| {}).await;
+    let big = vec![b' '; 1 << 20];
+    let r = send(
+        h.port,
+        "POST",
+        "/localia/config",
+        &[("x-localia-token", TOKEN)],
+        &big,
+    )
+    .await;
+    assert_eq!(r.status, 400, "read whole, refused as a bad config");
+}
+
+#[tokio::test]
 async fn connections_over_limit_are_503() {
     let h = spawn(|c| c.max_connections = 1).await;
     // Holds the only slot: a request whose body never finishes arriving.

@@ -1,0 +1,18 @@
+event: message_start
+data: {"message":{"content":[],"id":"msg_X","model":"localia","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":50,"output_tokens":0}},"type":"message_start"}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_start
+data: {"content_block":{"text":"","type":"text"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"text":"Hal","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"text":"lo","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: error
+data: {"error":{"message":"generation thread died","type":"api_error"},"type":"error"}
+

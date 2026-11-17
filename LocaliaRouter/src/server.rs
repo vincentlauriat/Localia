@@ -170,6 +170,8 @@ async fn connection(stream: TcpStream, slot: Slot, app: axum::Router, cfg: Servi
         .timer(TokioTimer::new())
         .header_read_timeout(cfg.read_timeout)
         .keep_alive(false)
+        // Headers past 64 KiB get 431, as in the Swift server; bodies stream through this buffer.
+        .max_buf_size(64 << 10)
         .serve_connection(TokioIo::new(stream), svc);
     // A client that has not sent its whole request by the deadline loses the connection (slowloris).
     let watchdog = async {

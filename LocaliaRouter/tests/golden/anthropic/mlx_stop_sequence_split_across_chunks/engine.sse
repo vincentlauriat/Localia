@@ -1,0 +1,14 @@
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","content":"The answer"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":" is 42</ans"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":"wer> and more"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":" never sent"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":11}}
+
+data: [DONE]
+

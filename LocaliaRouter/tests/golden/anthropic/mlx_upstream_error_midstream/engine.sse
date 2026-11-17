@@ -1,0 +1,10 @@
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","content":"Hal"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":"lo"}}]}
+
+data: {"error":{"message":"generation thread died","type":"server_error"}}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":" never sent"}}]}
+
+data: [DONE]
+
