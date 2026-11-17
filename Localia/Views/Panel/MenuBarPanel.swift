@@ -122,14 +122,14 @@ struct MenuBarPanel: View {
         }
     }
 
-    /// Shown while the proxy service cannot run and engines go direct. Tapping opens Settings (the status row
-    /// and its Restart button live there). Simple mode never says "proxy".
+    /// Shown while the proxy service cannot run and engines go direct. Tapping opens Engines & proxy (the status
+    /// row and its Restart button live there; simple mode lands on Overview, which shows the same notice). Simple mode never says "proxy".
     @ViewBuilder var proxyBanner: some View {
         if model.proxyFallbackActive {
             let text = model.settings.advancedMode
                 ? String(localized: "Localia proxy unavailable: engines run direct, no statistics.")
                 : String(localized: "Usage statistics are paused.")
-            Button { windows.show(page: .settings) } label: {
+            Button { windows.show(page: .engines) } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(Theme.orange)
                     Text(text).font(.system(size: 12)).multilineTextAlignment(.leading)
@@ -143,7 +143,7 @@ struct MenuBarPanel: View {
             .buttonStyle(.plain)
             .card(fill: Theme.orange.opacity(0.12), stroke: Theme.orange.opacity(0.35))
             .accessibilityLabel(text)
-            .accessibilityHint(String(localized: "Opens Settings"))
+            .accessibilityHint(String(localized: "Opens Engines & proxy"))
         }
     }
 

@@ -68,7 +68,7 @@ struct UsagePage: View {
         VStack(alignment: .leading, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) { HeatmapView(days: report.heatmap) }
             if let day = report.busiestDay {
-                Text(String(localized: "Busiest day: \(Self.dayText(day.day)), \(day.requests) requests"))
+                Text(String(localized: "Busiest day: \(Self.dayText(day.day)), \(HeatmapView.requestCount(day.requests))"))
                     .font(.callout).foregroundStyle(.secondary)
             }
         }

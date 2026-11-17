@@ -48,6 +48,20 @@ final class DockWindowTests: XCTestCase {
         return w
     }
 
+    /// The window's one alert host (DockRoot) reads the model's alert whichever page is selected, so an engine
+    /// result raised on Engines & proxy is shown there. Simple mode words it plainly.
+    func test_alertRaisedOnAnyPage_isPresentedByTheWindowHost() {
+        let model = makeModel(advanced: true)
+        let nav = DockNavigation()
+        nav.selectedPage = .engines
+        _ = DockRoot(model: model, navigation: nav, usage: UsageModel(reader: FakeUsageReader()))
+        XCTAssertNil(model.simpleAlertBinding.wrappedValue)
+        model.alert = AppAlert(title: "Up to date", message: "Ollama is current.")
+        XCTAssertEqual(model.simpleAlertBinding.wrappedValue?.title, "Up to date")
+        XCTAssertNotNil(DockRoot.alert(model.alert!, model: model))
+        XCTAssertNotEqual(model.alert?.simplified(heavyApps: []).title, "Up to date")
+    }
+
     func test_visiblePages_simpleAndAdvanced() {
         XCTAssertEqual(DockPage.visible(advanced: false), [.overview, .models, .settings])
         XCTAssertEqual(DockPage.visible(advanced: true),

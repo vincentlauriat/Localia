@@ -64,7 +64,6 @@ struct SimpleModelsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task { await model.refreshInstalled() }
         .task { if model.recommendation == nil { await model.refreshRecommendations() } }
-        .alert(item: model.simpleAlertBinding) { $0.simplified(heavyApps: model.heavyApps).swiftUIAlert }
     }
 
     @ViewBuilder private var content: some View {

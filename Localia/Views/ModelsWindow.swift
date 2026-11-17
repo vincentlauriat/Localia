@@ -105,7 +105,6 @@ struct ModelsWindow: View {
         .task { await model.refreshInstalled() }
         // Hugging Face is read once llmfit's rows exist (they give this Mac's speed constant).
         .task(id: model.recommendation != nil) { await model.loadHFRecent() }
-        .alert(item: $model.alert) { $0.swiftUIAlert }
     }
 }
 

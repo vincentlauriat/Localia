@@ -35,4 +35,18 @@ final class DockCopyTests: XCTestCase {
         XCTAssertEqual(OverviewPage.simpleLines(report: report(requests: 5, tps: nil)).count, 1)
         XCTAssertTrue(OverviewPage.simpleLines(report: report(requests: 5, tps: nil))[0].contains("5"))
     }
+
+    /// One use reads in the singular ("1 time"), not "1 times".
+    func test_simpleHeadline_singularForOne() {
+        let one = OverviewPage.simpleLines(report: report(requests: 1, tps: nil))[0]
+        XCTAssertTrue(one.contains("1"), one)
+        XCTAssertFalse(one.contains("1 times"), one)
+        XCTAssertEqual(HeatmapView.requestCount(1), String(localized: "\(1) requests"))
+        XCTAssertFalse(HeatmapView.requestCount(1).contains("1 requests"), HeatmapView.requestCount(1))
+        XCTAssertTrue(HeatmapView.requestCount(5).contains("5"))
+        // The filtered Log footer (a substitution entry) resolves to real text, not the raw format.
+        let footer = String(localized: "Showing \(3) of the last \(2000) requests")
+        XCTAssertFalse(footer.contains("%"), footer)
+        XCTAssertEqual(footer.filter(\.isNumber), "32000", footer)  // the count may be grouped: "2 000"
+    }
 }

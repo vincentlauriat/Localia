@@ -28,6 +28,13 @@ struct DockRoot: View {
         } detail: {
             detail
         }
+        // The window's only alert: no page presents one, so engine results and errors show wherever they happen.
+        .alert(item: model.simpleAlertBinding) { Self.alert($0, model: model) }
+    }
+
+    /// How an alert reads in the current mode: plain words in simple mode.
+    static func alert(_ alert: AppAlert, model: AppModel) -> Alert {
+        model.isSimpleMode ? alert.simplified(heavyApps: model.heavyApps).swiftUIAlert : alert.swiftUIAlert
     }
 
     @ViewBuilder private var detail: some View {
@@ -39,7 +46,6 @@ struct DockRoot: View {
         case .usage: UsagePage(usage: usage)
         case .log: LogPage(usage: usage)
         case .settings: SettingsRoot(model: model)
-        case let p: ContentUnavailableView(p.title, systemImage: p.symbol)
         }
     }
 }

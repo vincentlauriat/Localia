@@ -76,7 +76,7 @@ struct OverviewPage: View {
 
     private var heatmapCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if advanced { Text(String(localized: "Last 12 weeks")).font(.headline) }
+            Text(advanced ? String(localized: "Last 12 weeks") : String(localized: "Recent activity")).font(.headline)
             ScrollView(.horizontal, showsIndicators: false) {
                 HeatmapView(days: usage.heatmap12Weeks, simple: !advanced)
             }

@@ -168,4 +168,15 @@ final class FlowGraphTests: XCTestCase {
         XCTAssertTrue(label.contains("11434"), label)
         XCTAssertTrue(label.contains(String(localized: "via Localia")), label)
     }
+
+    func test_accessibilityLabel_saysTheSessionCountOnce() {
+        let s = RunningSession(id: UUID(), engine: .ollama, model: "gemma3:12b", folder: nil, tool: "Claude Code")
+        let g = FlowGraph.make(input(routes: [.ollama: .proxy], sessions: [s]), advanced: true, now: now)
+        let running = String(localized: "Running sessions: \(1)")
+        for node in g.nodes where node.sessions > 0 {
+            let label = FlowGraph.accessibilityLabel(node, in: g)
+            XCTAssertEqual(label.components(separatedBy: running).count - 1, 1, label)
+        }
+        XCTAssertTrue(g.nodes.contains { $0.kind == .tool && $0.sessions > 0 }, "a tool node with a session is exercised")
+    }
 }

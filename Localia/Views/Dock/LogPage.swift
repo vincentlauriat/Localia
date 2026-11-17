@@ -60,7 +60,7 @@ struct LogPage: View {
                 table(rows)
                 if let r = selected { detail(r).frame(width: Self.detailWidth) }
             }
-            Text(String(localized: "Showing the last \(rows.count) requests"))
+            Text(footer(shown: rows.count))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
@@ -69,6 +69,13 @@ struct LogPage: View {
             let content = await usage.content(for: id)
             if !Task.isCancelled { loaded = Loaded(id: id, content: content) }
         }
+    }
+
+    /// Counts what the table shows: the filter narrows the last `usage.requests`, so say so when it is on.
+    private func footer(shown: Int) -> String {
+        let total = usage.requests.count
+        return shown == total ? String(localized: "Showing the last \(total) requests")
+                              : String(localized: "Showing \(shown) of the last \(total) requests")
     }
 
     private var filterBar: some View {
@@ -154,9 +161,11 @@ struct LogPage: View {
     private func block(_ title: String, _ data: Data) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption.weight(.semibold))
-            ScrollView([.horizontal, .vertical]) {
+            ScrollView(.vertical) {
+                // Wraps at the pane edge: long lines (one-line JSON, prompts) stay readable instead of being cut.
                 Text(verbatim: Self.display(data))
                     .font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(6).frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(height: 170).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))

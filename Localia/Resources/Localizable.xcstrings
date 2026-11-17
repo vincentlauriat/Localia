@@ -6929,22 +6929,6 @@
         }
       }
     },
-    "Port %lld": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Port %lld"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Port %lld"
-          }
-        }
-      }
-    },
     "Running": {
       "localizations": {
         "en": {
@@ -7233,22 +7217,6 @@
         }
       }
     },
-    "Opens Settings": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Opens Settings"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvre les réglages"
-          }
-        }
-      }
-    },
     "The Localia proxy has not created its access token yet.": {
       "localizations": {
         "en": {
@@ -7396,15 +7364,39 @@
     "Used %lld times this week": {
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Used %lld times this week"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Used %lld time this week"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Used %lld times this week"
+                }
+              }
+            }
           }
         },
         "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Utilisée %lld fois cette semaine"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Utilisée %lld fois cette semaine"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Utilisée %lld fois cette semaine"
+                }
+              }
+            }
           }
         }
       }
@@ -7549,22 +7541,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Non utilisée le %@"
-          }
-        }
-      }
-    },
-    "%@: %lld requests": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@: %lld requests"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ : %lld requêtes"
           }
         }
       }
@@ -7889,22 +7865,6 @@
         }
       }
     },
-    "Busiest day: %@, %lld requests": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Busiest day: %@, %lld requests"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Jour le plus actif : %@, %lld requêtes"
-          }
-        }
-      }
-    },
     "By model": {
       "localizations": {
         "en": {
@@ -8129,22 +8089,6 @@
         }
       }
     },
-    "Sessions run direct are not listed.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sessions run direct are not listed."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les sessions en direct ne sont pas listées."
-          }
-        }
-      }
-    },
     "Other tools": {
       "localizations": {
         "en": {
@@ -8276,15 +8220,39 @@
     "Showing the last %lld requests": {
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Showing the last %lld requests"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Showing the last request"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Showing the last %lld requests"
+                }
+              }
+            }
           }
         },
         "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld dernières requêtes affichées"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld dernière requête affichée"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld dernières requêtes affichées"
+                }
+              }
+            }
           }
         }
       }
@@ -8442,6 +8410,186 @@
                 "stringUnit": {
                   "state": "translated",
                   "value": "%lld sessions sont en cours. Les sessions via Localia continuent."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%@: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : %@"
+          }
+        }
+      }
+    },
+    "%lld requests": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld request"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld requests"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld requête"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld requêtes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Busiest day: %@, %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Busiest day: %@, %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jour le plus actif : %@, %@"
+          }
+        }
+      }
+    },
+    "Opens Engines & proxy": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens Engines & proxy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvre Moteurs et proxy"
+          }
+        }
+      }
+    },
+    "Recent activity": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recent activity"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activité récente"
+          }
+        }
+      }
+    },
+    "Sessions that run direct are not counted, so they do not appear under Finished.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions that run direct are not counted, so they do not appear under Finished."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les sessions en mode direct ne sont pas comptabilisées : elles n’apparaissent pas dans Terminées."
+          }
+        }
+      }
+    },
+    "Showing %lld of the last %lld requests": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Showing %1$lld of %2$#@requests@"
+          },
+          "substitutions": {
+            "requests": {
+              "argNumber": 2,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg request"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "the last %arg requests"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld sur %2$#@requests@"
+          },
+          "substitutions": {
+            "requests": {
+              "argNumber": 2,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg requête affichée"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "les %arg dernières requêtes affichées"
+                    }
+                  }
                 }
               }
             }

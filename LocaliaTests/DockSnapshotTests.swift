@@ -80,7 +80,7 @@ final class DockSnapshotTests: XCTestCase {
         await model.refreshAll()
         try snapshot(SettingsRoot(model: model), named: "dock-settings", size: SettingsRoot.advancedSize)
         // The Advanced tab's own content, which the tab view above does not show in a borderless render.
-        try snapshot(SettingsView(model: model, ownsAlert: false), named: "dock-settings-advanced",
+        try snapshot(SettingsView(model: model), named: "dock-settings-advanced",
                      size: CGSize(width: 560, height: 1000))
     }
 

@@ -37,7 +37,7 @@ struct SessionsPage: View {
             }
             runningSection
             finishedSection
-            Text(String(localized: "Sessions run direct are not listed."))
+            Text(String(localized: "Sessions that run direct are not counted, so they do not appear under Finished."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)

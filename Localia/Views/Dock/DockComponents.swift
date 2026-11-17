@@ -49,13 +49,16 @@ struct HeatmapView: View {
         }
     }
 
+    /// "1 request" / "5 requests" (plural variations in the catalog).
+    static func requestCount(_ n: Int) -> String { String(localized: "\(n) requests") }
+
     /// "5 requests on 2026-11-17" in advanced mode; simple mode never says how many.
     static func label(_ day: HeatmapDay, simple: Bool) -> String {
         let date = parser.date(from: day.day)?.formatted(date: .long, time: .omitted) ?? day.day
         if simple {
             return day.requests > 0 ? String(localized: "Used on \(date)") : String(localized: "Not used on \(date)")
         }
-        return String(localized: "\(date): \(day.requests) requests")
+        return String(localized: "\(date): \(requestCount(day.requests))")
     }
 
     var body: some View {

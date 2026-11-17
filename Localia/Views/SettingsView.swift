@@ -4,8 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    /// False when hosted in `SettingsRoot`'s tab view, which presents the window's one alert.
-    var ownsAlert = true
     @State private var confirmRemoveFromShell = false
 
     private var settings: SettingsStore { model.settings }
@@ -30,7 +28,6 @@ struct SettingsView: View {
         } message: {
             Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
         }
-        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
     }
 
     @ViewBuilder private func section(for section: AdvancedSection) -> some View {
@@ -158,7 +155,7 @@ struct ProxyStatusSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.statusText(model.proxyState)).foregroundStyle(statusColor)
                     if case .running = model.proxyState {
-                        Text(String(localized: "Port \(LocaliaConstants.proxyPort)"))
+                        Text(FlowGraph.portLabel(LocaliaConstants.proxyPort))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if case let .unavailable(reason) = model.proxyState {

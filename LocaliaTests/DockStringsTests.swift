@@ -28,8 +28,11 @@ final class DockStringsTests: XCTestCase {
         var french: [String: String] = [:]
         for (key, entry) in strings {
             let loc = entry["localizations"] as? [String: Any]
-            let unit = (loc?["fr"] as? [String: Any])?["stringUnit"] as? [String: Any]
+            let fr = loc?["fr"] as? [String: Any]
+            // A plain translation, or plural variations / substitutions (their presence is the translation).
+            let unit = fr?["stringUnit"] as? [String: Any]
             if let v = unit?["value"] as? String, !v.isEmpty { french[Self.masked(key)] = v }
+            else if fr?["variations"] != nil || fr?["substitutions"] != nil { french[Self.masked(key)] = key }
         }
         for key in keys {
             XCTAssertNotNil(french[Self.masked(key)], "no fr translation for: \(key)")

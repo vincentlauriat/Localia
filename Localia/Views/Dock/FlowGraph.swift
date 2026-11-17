@@ -99,7 +99,9 @@ struct FlowGraph: Equatable {
             if routes.contains(.proxied) { parts.append(String(localized: "via Localia")) }
             if routes.contains(.direct) { parts.append(String(localized: "Direct — not counted")) }
         }
-        if node.sessions > 0 { parts.append(String(localized: "Running sessions: \(node.sessions)")) }
+        // Tool nodes already carry the count as their detail; say it once.
+        let running = String(localized: "Running sessions: \(node.sessions)")
+        if node.sessions > 0, !parts.contains(running) { parts.append(running) }
         return parts.joined(separator: ", ")
     }
 
