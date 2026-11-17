@@ -93,6 +93,34 @@ final class DockSnapshotTests: XCTestCase {
         }
     }
 
+    func test_overview_advanced_simple_empty() async throws {
+        let cal = Calendar.current
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        let rows = (0..<80).compactMap { i -> DailyTotal? in
+            guard i % 3 != 1, let d = cal.date(byAdding: .day, value: -i, to: Date()) else { return nil }
+            return DailyTotal(day: f.string(from: d), engine: .ollama, model: "gemma3:12b", tool: "claude", folder: "/f",
+                              requests: 1 + (i * 7) % 23, inputTokens: 4_000, outputTokens: 1_200, durationMs: 30_000)
+        }
+        let reader = FakeUsageReader()
+        reader.daily = rows
+        let usage = UsageModel(reader: reader)
+        await usage.refresh()
+        let empty = UsageModel(reader: FakeUsageReader())
+        await empty.refresh()
+        for advanced in [true, false] {
+            let model = makeModel(advanced: advanced)
+            await model.refreshAll()
+            try snapshot(OverviewPage(model: model, usage: usage), named: "dock-overview-\(advanced ? "advanced" : "simple")",
+                         size: CGSize(width: 760, height: 620))
+            try snapshot(OverviewPage(model: model, usage: empty), named: "dock-overview-empty-\(advanced ? "advanced" : "simple")",
+                         size: CGSize(width: 760, height: 620))
+        }
+        let paused = makeModel(advanced: false, proxy: FakeProxyService(state: .unavailable(reason: "x")))
+        await paused.ensureProxy()
+        try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
+    }
+
     private func render(_ view: some View, size: CGSize, appearance: NSAppearance.Name, to url: URL) {
         let root = view.background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light)

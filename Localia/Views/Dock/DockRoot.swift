@@ -6,6 +6,7 @@ struct DockRoot: View {
 
     @ObservedObject var model: AppModel
     @ObservedObject var navigation: DockNavigation
+    @ObservedObject var usage: UsageModel
 
     private var advanced: Bool { model.settings.advancedMode }
     private var page: DockPage { navigation.selectedPage.resolved(advanced: advanced) }
@@ -31,6 +32,7 @@ struct DockRoot: View {
 
     @ViewBuilder private var detail: some View {
         switch page {
+        case .overview: OverviewPage(model: model, usage: usage)
         case .models: ModelsRoot(model: model)
         case .engines: EnginesPage(model: model)
         case .settings: SettingsRoot(model: model)

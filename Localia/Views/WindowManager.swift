@@ -89,7 +89,7 @@ final class WindowManager {
         case .models, .settings:
             preconditionFailure("\(kind) opens the main window on a page; it has no window of its own")
         case .main:
-            root = AnyView(DockRoot(model: model, navigation: navigation))
+            root = AnyView(DockRoot(model: model, navigation: navigation, usage: usage))
             title = "Localia"
             size = Self.mainDefaultSize
         case .onboarding:
