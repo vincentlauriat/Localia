@@ -18,6 +18,11 @@ struct SessionsPage: View {
         return (s.inputTokens ?? 0) + (s.outputTokens ?? 0)
     }
 
+    /// Tokens of a running session, from the proxy's record of the same session; nil when none matches.
+    static func tokens(of running: RunningSession, in sessions: [SessionSummary]) -> Int? {
+        sessions.first { $0.id.lowercased() == running.id.uuidString.lowercased() }.flatMap(tokens)
+    }
+
     static func toolText(_ s: SessionSummary) -> String {
         if let tool = s.tool { return tool }
         return s.id == ProxyPath.unattributedSession ? String(localized: "Started from a terminal") : "—"
@@ -86,6 +91,16 @@ struct SessionsPage: View {
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(s.startedAt, format: Date.FormatStyle().month(.abbreviated).day().hour().minute()
+                    .locale(Fmt.appLocale))
+                let elapsed = UsagePage.duration(ms: Int(Date().timeIntervalSince(s.startedAt) * 1000))
+                let tokens = Self.tokens(of: s, in: usage.sessions)
+                Text(verbatim: tokens.map { "\(elapsed) · \(Fmt.number(Double($0), fractionDigits: 0)) \(String(localized: "Tokens"))" }
+                    ?? elapsed)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
         }
         .padding(.vertical, 8)
         .help(s.folder?.path ?? "")
@@ -100,24 +115,24 @@ struct SessionsPage: View {
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(14).card()
             } else {
                 Table(rows) {
-                    TableColumn(String(localized: "Tool")) { Text(verbatim: Self.toolText($0)) }.width(min: 130)
+                    TableColumn(String(localized: "Tool")) { Text(verbatim: Self.toolText($0)) }.width(min: 190, ideal: 190, max: 200)
                     TableColumn(String(localized: "Folder")) { s in
                         Text(verbatim: s.folder.map(UsagePage.folderName) ?? "—").help(s.folder ?? "")
-                    }
+                    }.width(min: 60, ideal: 80, max: 100)
                     TableColumn(String(localized: "Models")) { s in
                         Text(verbatim: s.models.map(model.friendlyName(for:)).joined(separator: ", "))
-                    }.width(min: 100)
-                    TableColumn(String(localized: "Engine")) { Text(verbatim: AppModel.engineName($0.engine)) }
+                    }.width(min: 90, ideal: 110, max: 140)
+                    TableColumn(String(localized: "Engine")) { Text(verbatim: AppModel.engineName($0.engine)) }.width(min: 60, ideal: 65, max: 80)
                     TableColumn(String(localized: "Started")) { s in
                         Text(s.start, format: Date.FormatStyle().month(.abbreviated).day().hour().minute()
                             .locale(Fmt.appLocale))
-                    }.width(min: 110)
+                    }.width(min: 100, ideal: 110, max: 130)
                     TableColumn(String(localized: "Duration")) { s in
                         Text(verbatim: UsagePage.duration(ms: Int(s.end.timeIntervalSince(s.start) * 1000)))
-                    }.width(min: 70)
+                    }.width(min: 60, ideal: 70, max: 80)
                     TableColumn(String(localized: "Tokens")) { s in
                         Text(verbatim: Self.tokens(s).map { Fmt.number(Double($0), fractionDigits: 0) } ?? "—")
-                    }.width(min: 80)
+                    }.width(min: 70, ideal: 70, max: 90)
                 }
                 .frame(minHeight: 220)
             }

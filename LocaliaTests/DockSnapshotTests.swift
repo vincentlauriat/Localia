@@ -158,7 +158,14 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertNil(SessionsPage.tokens(usage.sessions.first { $0.id == "a2" }!))
         XCTAssertEqual(SessionsPage.toolText(usage.sessions.first { $0.id == ProxyPath.unattributedSession }!),
                        String(localized: "Started from a terminal"))
-        try snapshot(SessionsPage(model: model, usage: usage), named: "dock-sessions", size: CGSize(width: 900, height: 560))
+        // A running session picks up the tokens of the proxy's record of the same id.
+        XCTAssertNil(SessionsPage.tokens(of: running, in: usage.sessions))
+        XCTAssertEqual(SessionsPage.tokens(of: running, in: usage.sessions + [own]), 2)
+        reader.records.append(record(running.id.uuidString, tool: "Claude Code", folder: folder.path, model: "gemma3:12b",
+                                     minutesAgo: 5, tokens: (900, 100)))
+        await usage.refresh()
+        XCTAssertEqual(SessionsPage.tokens(of: running, in: usage.sessions), 1_000)
+        try snapshot(SessionsPage(model: model, usage: usage), named: "dock-sessions", size: CGSize(width: 860, height: 560))
         let empty = UsageModel(reader: FakeUsageReader())
         await empty.refresh()
         try snapshot(SessionsPage(model: makeModel(advanced: true), usage: empty), named: "dock-sessions-empty",

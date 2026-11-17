@@ -20,8 +20,11 @@ public struct RunningSession: Equatable, Sendable, Identifiable {
     public let folder: URL?
     /// Display name of the tool the session runs ("Claude Code", "Codex"...), nil when the launcher did not say.
     public let tool: String?
-    public init(id: UUID, engine: EngineID, model: String, folder: URL?, tool: String? = nil) {
+    /// When the session began (for a shell-shim session, when Localia first saw it).
+    public let startedAt: Date
+    public init(id: UUID, engine: EngineID, model: String, folder: URL?, tool: String? = nil, startedAt: Date = Date()) {
         self.id = id; self.engine = engine; self.model = model; self.folder = folder; self.tool = tool
+        self.startedAt = startedAt
     }
 }
 
@@ -36,10 +39,10 @@ public actor SessionTracker {
     private let statusDir: URL
     private var sessions: [UUID: ModelKey] = [:]
     /// Folder and start order of each running session, for display only.
-    private var details: [UUID: (folder: URL?, tool: String?, order: Int)] = [:]
+    private var details: [UUID: (folder: URL?, tool: String?, order: Int, startedAt: Date)] = [:]
     private var nextOrder = 0
     /// Sessions registered by the shell shim, keyed by the id in their `.session` file name.
-    private var shimSessions: [UUID: (key: ModelKey, folder: URL?, order: Int)] = [:]
+    private var shimSessions: [UUID: (key: ModelKey, folder: URL?, order: Int, startedAt: Date)] = [:]
     /// Shim sessions whose record vanished, reported by the next `pollFinished()`.
     private var shimFinished: [FinishedSession] = []
 
@@ -71,7 +74,7 @@ public actor SessionTracker {
         // A stale file from a previous run must not end the new session.
         try? FileManager.default.removeItem(at: file(id, "done"))
         sessions[id] = ModelKey(engine: engine, model: model)
-        details[id] = (folder, tool, nextOrder)
+        details[id] = (folder, tool, nextOrder, Date())
         nextOrder += 1
     }
 
@@ -102,11 +105,12 @@ public actor SessionTracker {
         syncShimSessions()
         let own = sessions.map { id, key in
             (RunningSession(id: id, engine: key.engine, model: key.model, folder: details[id]?.folder,
-                            tool: details[id]?.tool), details[id]?.order ?? 0)
+                            tool: details[id]?.tool, startedAt: details[id]?.startedAt ?? Date()),
+             details[id]?.order ?? 0)
         }
         // The shell shim only ever wraps `claude`.
         let shim = shimSessions.map { id, s in
-            (RunningSession(id: id, engine: s.key.engine, model: s.key.model, folder: s.folder, tool: "Claude Code"), s.order)
+            (RunningSession(id: id, engine: s.key.engine, model: s.key.model, folder: s.folder, tool: "Claude Code", startedAt: s.startedAt), s.order)
         }
         return (own + shim).sorted { $0.1 < $1.1 }.map(\.0)
     }
@@ -127,7 +131,7 @@ public actor SessionTracker {
             guard Self.isAlive(pid: rec.pid) else { try? fm.removeItem(at: f); continue }
             present.insert(id)
             if shimSessions[id] == nil {
-                shimSessions[id] = (rec.key, rec.folder, nextOrder)
+                shimSessions[id] = (rec.key, rec.folder, nextOrder, Date())
                 nextOrder += 1
             }
         }

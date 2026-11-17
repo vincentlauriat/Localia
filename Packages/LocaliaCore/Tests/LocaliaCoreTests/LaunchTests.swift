@@ -186,13 +186,29 @@ final class SessionTrackerTests: XCTestCase {
         await t.begin(id: b, engine: .ollama, model: "m1", folder: f2)
         await t.begin(id: c, engine: .llamaCpp, model: "m2")
         var running = await t.runningSessions()
-        XCTAssertEqual(running, [RunningSession(id: a, engine: .ollama, model: "m1", folder: f1, tool: "Codex"),
-                                 RunningSession(id: b, engine: .ollama, model: "m1", folder: f2),
-                                 RunningSession(id: c, engine: .llamaCpp, model: "m2", folder: nil)])
+        func same(_ x: RunningSession, _ y: RunningSession) -> Bool {
+            (x.id, x.engine, x.model, x.folder, x.tool) == (y.id, y.engine, y.model, y.folder, y.tool)
+        }
+        let expected = [RunningSession(id: a, engine: .ollama, model: "m1", folder: f1, tool: "Codex"),
+                        RunningSession(id: b, engine: .ollama, model: "m1", folder: f2),
+                        RunningSession(id: c, engine: .llamaCpp, model: "m2", folder: nil)]
+        XCTAssertEqual(running.count, 3)
+        XCTAssertTrue(zip(running, expected).allSatisfy(same))
         try touchDone(a)
         _ = await t.pollFinished()
         running = await t.runningSessions()
         XCTAssertEqual(running.map(\.id), [b, c])
+    }
+
+    func test_sessionTracker_runningSessionCarriesItsStartTime() async throws {
+        let t = SessionTracker(statusDir: dir)
+        let before = Date()
+        let id = UUID()
+        await t.begin(id: id, engine: .ollama, model: "m1")
+        let running = await t.runningSessions()
+        let started = try XCTUnwrap(running.first { $0.id == id }?.startedAt)
+        XCTAssertGreaterThanOrEqual(started, before)
+        XCTAssertLessThanOrEqual(started, Date())
     }
 
     func test_sessionTracker_sameModelNameOnTwoEngines() async throws {
@@ -234,9 +250,10 @@ final class SessionTrackerTests: XCTestCase {
         await t.begin(id: own, engine: .ollama, model: "m1")
         try writeShimRecord(shim, model: "m2", folder: "/tmp/shimproj")
         var running = await t.runningSessions()
-        XCTAssertEqual(running, [RunningSession(id: own, engine: .ollama, model: "m1", folder: nil),
-                                 RunningSession(id: shim, engine: .ollama, model: "m2", folder: URL(fileURLWithPath: "/tmp/shimproj"),
-                                                tool: "Claude Code")])
+        XCTAssertEqual(running.map(\.id), [own, shim])
+        XCTAssertEqual(running.map(\.model), ["m1", "m2"])
+        XCTAssertEqual(running.map(\.folder), [nil, URL(fileURLWithPath: "/tmp/shimproj")])
+        XCTAssertEqual(running.map(\.tool), [nil, "Claude Code"])
         var inUse = await t.modelsStillInUse()
         XCTAssertTrue(inUse.contains(ModelKey(engine: .ollama, model: "m2")))
         try FileManager.default.removeItem(at: dir.appendingPathComponent("\(shim.uuidString).session"))
