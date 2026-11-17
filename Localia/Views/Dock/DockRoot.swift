@@ -32,7 +32,7 @@ struct DockRoot: View {
 
     @ViewBuilder private var detail: some View {
         switch page {
-        case .overview: OverviewPage(model: model, usage: usage)
+        case .overview: OverviewPage(model: model, usage: usage, navigation: navigation)
         case .models: ModelsRoot(model: model)
         case .engines: EnginesPage(model: model)
         case .settings: SettingsRoot(model: model)

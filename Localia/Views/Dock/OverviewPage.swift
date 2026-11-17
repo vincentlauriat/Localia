@@ -1,11 +1,14 @@
 import LocaliaCore
 import SwiftUI
 
-/// First page of the main window: a vertical stack of cards. Simple mode says how much the Mac was used in
-/// words; advanced mode adds the figures, the 12-week heatmap and the engines with their route.
+/// First page of the main window: a vertical stack of cards. The "How it works" diagram comes first; simple
+/// mode then says how much the Mac was used in words; advanced mode adds the figures, the 12-week heatmap and
+/// the engines with their route.
 struct OverviewPage: View {
     @ObservedObject var model: AppModel
     @ObservedObject var usage: UsageModel
+    /// Where a click on a diagram node leads; nil leaves the diagram without links.
+    var navigation: DockNavigation?
 
     private var advanced: Bool { model.settings.advancedMode }
 
@@ -21,6 +24,7 @@ struct OverviewPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if model.proxyFallbackActive { banner }
+                OverviewFlowCard(model: model, usage: usage, navigation: navigation)
                 if usage.isEmpty {
                     Text(String(localized: "No activity yet. Usage appears here after your first session through Localia."))
                         .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)

@@ -121,6 +121,49 @@ final class DockSnapshotTests: XCTestCase {
         try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
     }
 
+    // MARK: Flow diagram
+
+    private func flowInput(fallback: Bool = false, localModeOn: Bool = true) -> FlowInput {
+        let now = Date()
+        let session = RunningSession(id: UUID(), engine: .ollama, model: "gemma3:12b", folder: nil, tool: "Claude Code")
+        let request = RequestRecord(id: UUID(), start: now.addingTimeInterval(-60), durationMs: 2_000, session: "s",
+                                    tool: "Codex", folder: nil, engine: .mlx, model: "qwen3-coder", api: .openai,
+                                    status: "ok", httpStatus: 200, usage: TokenUsage(), error: nil)
+        return FlowInput(
+            tools: [FlowInput.Tool(id: "codex", name: "Codex", needsResponsesAPI: true),
+                    FlowInput.Tool(id: "opencode", name: "OpenCode", needsResponsesAPI: false)],
+            engines: [.ollama, .llamaCpp, .mlx], activeEngine: .ollama, serving: true,
+            loaded: ["gemma3:12b", "qwen3-coder:30b-a3b-instruct-q4_K_M"], sessions: localModeOn ? [session] : [],
+            proxyState: fallback ? .unavailable(reason: "x") : .running(version: "dev"), fallback: fallback,
+            localModeOn: localModeOn, everyClaude: true, routes: [.ollama: .proxy, .llamaCpp: .direct],
+            requests: [request])
+    }
+
+    private func flowCard(_ input: FlowInput, advanced: Bool) -> some View {
+        FlowDiagramCard(graph: FlowGraph.make(input, advanced: advanced, now: Date()), advanced: advanced, phase: 0.3)
+            .padding(20)
+    }
+
+    func test_flow_advanced_proxiedAndDirect() throws {
+        try snapshot(flowCard(flowInput(), advanced: true), named: "flow-advanced", size: CGSize(width: 760, height: 420))
+        // The narrowest the main window lets the Overview be.
+        try snapshot(flowCard(flowInput(), advanced: true), named: "flow-advanced-narrow", size: CGSize(width: 600, height: 420))
+    }
+
+    func test_flow_fallback() throws {
+        try snapshot(flowCard(flowInput(fallback: true), advanced: true), named: "flow-fallback",
+                     size: CGSize(width: 760, height: 420))
+    }
+
+    func test_flow_simple_localOn() throws {
+        try snapshot(flowCard(flowInput(), advanced: false), named: "flow-simple-on", size: CGSize(width: 760, height: 260))
+    }
+
+    func test_flow_simple_localOff() throws {
+        try snapshot(flowCard(flowInput(localModeOn: false), advanced: false), named: "flow-simple-off",
+                     size: CGSize(width: 760, height: 260))
+    }
+
     private func render(_ view: some View, size: CGSize, appearance: NSAppearance.Name, to url: URL) {
         let root = view.background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light)
