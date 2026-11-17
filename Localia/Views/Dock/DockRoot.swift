@@ -2,6 +2,8 @@ import SwiftUI
 
 /// What the main window hosts: a sidebar of pages and the selected page.
 struct DockRoot: View {
+    static let sidebarMaxWidth: CGFloat = 240
+
     @ObservedObject var model: AppModel
     @ObservedObject var navigation: DockNavigation
 
@@ -21,7 +23,7 @@ struct DockRoot: View {
                 Divider()
                 Label(DockPage.settings.title, systemImage: DockPage.settings.symbol).tag(Optional(DockPage.settings))
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: Self.sidebarMaxWidth)
         } detail: {
             detail
         }

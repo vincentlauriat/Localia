@@ -77,6 +77,13 @@ final class DockWindowTests: XCTestCase {
         XCTAssertEqual(NSApp.activationPolicy(), .accessory)
     }
 
+    func test_mainMinSize_holdsTheModelsPage() {
+        XCTAssertGreaterThanOrEqual(WindowManager.mainMinSize.width, ModelsWindow.minSize.width + DockRoot.sidebarMaxWidth)
+        XCTAssertGreaterThanOrEqual(WindowManager.mainMinSize.height, ModelsWindow.minSize.height)
+        XCTAssertGreaterThanOrEqual(WindowManager.mainDefaultSize.width, WindowManager.mainMinSize.width)
+        XCTAssertGreaterThanOrEqual(WindowManager.mainDefaultSize.height, WindowManager.mainMinSize.height)
+    }
+
     func test_showSettingsKind_opensMainOnSettings() {
         let w = makeWindows()
         w.show(.settings)

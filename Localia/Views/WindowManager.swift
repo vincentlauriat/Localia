@@ -15,8 +15,10 @@ final class WindowManager {
     /// `models` and `settings` are not windows any more: they open the main window on that page.
     enum Kind: String { case main, models, settings, onboarding, about }
 
-    static let mainDefaultSize = NSSize(width: 1180, height: 720)
-    static let mainMinSize = NSSize(width: 1080, height: 560)
+    /// The Models page's minimum next to the widest sidebar: below it the page would clip.
+    static let mainMinSize = NSSize(width: (ModelsWindow.minSize.width + DockRoot.sidebarMaxWidth).rounded(.up),
+                                    height: ModelsWindow.minSize.height.rounded(.up))
+    static let mainDefaultSize = NSSize(width: max(1180, mainMinSize.width), height: max(720, mainMinSize.height))
 
     let model: AppModel
     let navigation = DockNavigation()
