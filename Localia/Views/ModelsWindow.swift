@@ -3,8 +3,8 @@ import SwiftUI
 
 // MARK: - Window
 
-/// Sidebar entries of the Models window. The raw values keep `AppModel.modelsTab` deep links working:
-/// 0, 1 and 2 were the Recommended, Installed and Downloads tabs before the sidebar.
+/// Tabs of the Models page. The raw values keep `AppModel.modelsTab` deep links working:
+/// 0, 1 and 2 were the Recommended, Installed and Downloads tabs of the first Models window.
 enum ModelsSection: Int, CaseIterable, Hashable {
     case forThisMac = 0, installed = 1, downloads = 2, compatible = 3, newOnHF = 4
 
@@ -18,8 +18,8 @@ enum ModelsSection: Int, CaseIterable, Hashable {
         }
     }
 
-    /// Shorter title for the sidebar, where the full one would be truncated.
-    var sidebarTitle: String { self == .newOnHF ? String(localized: "New on HF") : title }
+    /// Shorter title for the tab strip, where the full one would not fit.
+    var tabTitle: String { self == .newOnHF ? String(localized: "New on HF") : title }
 
     var symbol: String {
         switch self {
@@ -72,8 +72,8 @@ struct ModelsWindow: View {
     @ObservedObject var model: AppModel
     @State private var browser: ModelsBrowserState
 
-    /// Smallest size at which the sidebar, the four columns and the detail pane fit without truncating
-    /// the French labels.
+    /// Smallest size at which the tab strip, the four columns and the detail pane fit without truncating
+    /// the French labels. Also the floor of every other page of the main window (`WindowManager.mainMinSize`).
     nonisolated static let minSize = CGSize(width: 860, height: 600)
     /// Opening size: room for about six rows above the detail pane.
     nonisolated static let defaultSize = CGSize(width: 960, height: 680)
@@ -89,18 +89,20 @@ struct ModelsWindow: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            ModelsSidebar(model: model, selection: section)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
-        } detail: {
-            switch section.wrappedValue ?? .forThisMac {
-            case .installed: InstalledPane(model: model)
-            case .downloads: DownloadsPane(model: model)
-            case let s: DiscoverPane(model: model, section: s, browser: $browser)
+        VStack(spacing: 0) {
+            ModelsTabBar(model: model, selection: section)
+            Divider()
+            Group {
+                switch section.wrappedValue ?? .forThisMac {
+                case .installed: InstalledPane(model: model)
+                case .downloads: DownloadsPane(model: model)
+                case let s: DiscoverPane(model: model, section: s, browser: $browser)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
-        // Both stay at the root: a task on a per-section view is cancelled by every sidebar change, and a
+        // Both stay at the root: a task on a per-section view is cancelled by every tab change, and a
         // cancelled Hugging Face load resets to idle and starts over.
         .task { await model.refreshInstalled() }
         // Hugging Face is read once llmfit's rows exist (they give this Mac's speed constant).
@@ -190,7 +192,7 @@ extension AppModel {
         return ModelItem.dedupe(base)
     }
 
-    /// Unfiltered number of models a sidebar entry lists; nil while it is unknown.
+    /// Unfiltered number of models a tab lists; nil while it is unknown.
     func itemCount(for section: ModelsSection) -> Int? {
         switch section {
         case .forThisMac, .compatible: recommendation == nil ? nil : items(for: section).count
@@ -211,48 +213,70 @@ private enum Col {
     static let memory: CGFloat = 138, speed: CGFloat = 78, action: CGFloat = 122, spacing: CGFloat = 12
 }
 
-// MARK: - Sidebar
+// MARK: - Tabs
 
-private struct ModelsSidebar: View {
+/// The five sections as tabs across the top of the page, with their counts, the download progress and the
+/// Hugging Face state; this Mac's chip and memory on the trailing side.
+private struct ModelsTabBar: View {
     @ObservedObject var model: AppModel
     @Binding var selection: ModelsSection?
 
+    static let order: [ModelsSection] = [.forThisMac, .compatible, .newOnHF, .installed, .downloads]
+
     var body: some View {
-        List(selection: $selection) {
-            Section(String(localized: "Discover")) {
-                ForEach([ModelsSection.forThisMac, .compatible, .newOnHF], id: \.self) { entry($0) }
-            }
-            Section(String(localized: "My models")) {
-                entry(.installed)
-                entry(.downloads)
+        HStack(spacing: 4) {
+            // The tabs never truncate; the machine block gives way first (chip only, then nothing).
+            ForEach(Self.order, id: \.self) { tab($0).fixedSize() }
+            Spacer(minLength: 12)
+            ViewThatFits(in: .horizontal) {
+                machine(detailed: true)
+                machine(detailed: false)
+                Color.clear.frame(width: 0, height: 0)
             }
         }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { machine }
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
-    private func entry(_ s: ModelsSection) -> some View {
-        HStack(spacing: 6) {
-            Label(s.sidebarTitle, systemImage: s.symbol).lineLimit(1)
-            Spacer(minLength: 4)
-            if s == .downloads, let f = overallProgress {
-                ProgressView(value: f).progressViewStyle(.circular).controlSize(.mini)
-                    .accessibilityLabel(String(localized: "Download progress"))
+    private func tab(_ s: ModelsSection) -> some View {
+        let selected = (selection ?? .forThisMac) == s
+        return Button { selection = s } label: {
+            HStack(spacing: 5) {
+                Image(systemName: s.symbol).imageScale(.small)
+                Text(s.tabTitle).lineLimit(1)
+                if s == .downloads, let f = overallProgress {
+                    ProgressView(value: f).progressViewStyle(.circular).controlSize(.mini)
+                        .accessibilityLabel(String(localized: "Download progress"))
+                }
+                if s == .newOnHF, [.loading, .waitingForLlmfit].contains(model.hfRecentState) {
+                    ProgressView().controlSize(.mini)
+                        .accessibilityLabel(model.hfRecentState == .loading
+                                            ? String(localized: "Looking for new GGUFs on Hugging Face…")
+                                            : String(localized: "Waiting for llmfit"))
+                } else if s == .newOnHF, model.hfRecentState == .unavailable {
+                    Image(systemName: "wifi.slash").foregroundStyle(.secondary)
+                        .accessibilityLabel(String(localized: "Unavailable offline"))
+                        .help(String(localized: "Unavailable offline"))
+                }
+                if let n = count(s) {
+                    Text(verbatim: "\(n)").monospacedDigit()
+                        .foregroundStyle(selected ? Theme.accent : Color.secondary)
+                }
             }
-            if s == .newOnHF, [.loading, .waitingForLlmfit].contains(model.hfRecentState) {
-                ProgressView().controlSize(.mini)
-                    .accessibilityLabel(model.hfRecentState == .loading
-                                        ? String(localized: "Looking for new GGUFs on Hugging Face…")
-                                        : String(localized: "Waiting for llmfit"))
-            } else if s == .newOnHF, model.hfRecentState == .unavailable {
-                Image(systemName: "wifi.slash").foregroundStyle(.secondary)
-                    .accessibilityLabel(String(localized: "Unavailable offline"))
-            }
-            if let n = model.itemCount(for: s), n > 0 || s == .forThisMac {
-                Text(verbatim: "\(n)").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            }
+            .font(.callout.weight(selected ? .semibold : .regular))
+            .foregroundStyle(selected ? Theme.accent : Color.primary)
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(selected ? Theme.accentSoft : Color.clear, in: Capsule())
+            .contentShape(Capsule())
         }
-        .tag(s)
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    /// The count a tab shows: always for For this Mac once known, otherwise only when not zero.
+    private func count(_ s: ModelsSection) -> Int? {
+        guard let n = model.itemCount(for: s), n > 0 || s == .forThisMac else { return nil }
+        return n
     }
 
     /// Mean progress of the downloads whose size is known.
@@ -261,14 +285,16 @@ private struct ModelsSidebar: View {
         return fractions.isEmpty ? nil : fractions.reduce(0, +) / Double(fractions.count)
     }
 
-    private var machine: some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func machine(detailed: Bool) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
             Text(model.profile.chip).font(.caption.weight(.semibold))
-            Text(String(localized: "\(Fmt.gb(model.profile.usablePoolGB)) usable by models"))
-                .font(.caption).foregroundStyle(.secondary)
+            if detailed {
+                Text(String(localized: "\(Fmt.gb(model.profile.usablePoolGB)) usable by models"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 

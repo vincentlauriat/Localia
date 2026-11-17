@@ -210,6 +210,8 @@ final class ModelsSnapshotTests: XCTestCase {
             Shot(name: "downloads", model: online, section: .downloads),
             Shot(name: "mlx-for-this-mac", model: mlx, section: .forThisMac, browser: mlxBrowser),
             Shot(name: "min-size", model: online, section: .forThisMac, browser: measured, size: ModelsWindow.minSize),
+            // The widest selected tab (Téléchargements, bold) at the minimum: every tab title stays whole.
+            Shot(name: "min-size-downloads", model: online, section: .downloads, size: ModelsWindow.minSize),
         ]
         for shot in shots {
             shot.model.modelsTab = shot.section.rawValue
