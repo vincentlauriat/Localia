@@ -8352,6 +8352,54 @@
           }
         }
       }
+    },
+    "Quit Localia?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit Localia?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter Localia ?"
+          }
+        }
+      }
+    },
+    "%lld sessions are running. Sessions through Localia keep running; MLX sessions stop.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sessions are running. Sessions through Localia keep running; MLX sessions stop."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sessions sont en cours. Les sessions via Localia continuent ; les sessions MLX s'arrêtent."
+          }
+        }
+      }
+    },
+    "%lld sessions are running. Sessions through Localia keep running.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sessions are running. Sessions through Localia keep running."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld sessions sont en cours. Les sessions via Localia continuent."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

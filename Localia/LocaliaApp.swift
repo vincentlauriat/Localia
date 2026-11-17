@@ -70,11 +70,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !Self.isRunningTests, !shuttingDown else { return .terminateNow }
         shuttingDown = true
+        if let warning = Self.quitWarning(running: model.runningSessions) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = warning.message
+            alert.informativeText = warning.info
+            alert.addButton(withTitle: String(localized: "Quit"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            if alert.runModal() != .alertFirstButtonReturn {
+                shuttingDown = false
+                return .terminateCancel
+            }
+        }
         Task {
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    /// The warning shown on quit while sessions run; nil when none do. MLX sessions stop with Localia, the others carry on.
+    static func quitWarning(running: [RunningSession]) -> (message: String, info: String)? {
+        guard !running.isEmpty else { return nil }
+        let info = running.contains { $0.engine == .mlx }
+            ? String(localized: "\(running.count) sessions are running. Sessions through Localia keep running; MLX sessions stop.")
+            : String(localized: "\(running.count) sessions are running. Sessions through Localia keep running.")
+        return (String(localized: "Quit Localia?"), info)
     }
 }
 

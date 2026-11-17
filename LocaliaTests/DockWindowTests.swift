@@ -92,4 +92,25 @@ final class DockWindowTests: XCTestCase {
         w.show(.models)
         XCTAssertEqual(w.navigation.selectedPage, .models)
     }
+
+    // MARK: Quit confirmation
+
+    private func session(_ engine: EngineID) -> RunningSession {
+        RunningSession(id: UUID(), engine: engine, model: "m", folder: nil)
+    }
+
+    func test_quitWarning_nilWhenNoSessions() {
+        XCTAssertNil(AppDelegate.quitWarning(running: []))
+    }
+
+    /// Locale-independent: the test host may run in French.
+    func test_quitWarning_mentionsMLXOnlyWhenPresent() throws {
+        let plain = try XCTUnwrap(AppDelegate.quitWarning(running: [session(.ollama), session(.ollama)]))
+        XCTAssertFalse(plain.message.isEmpty)
+        XCTAssertTrue(plain.info.contains("2"))
+        XCTAssertFalse(plain.info.contains("MLX"))
+        let withMLX = try XCTUnwrap(AppDelegate.quitWarning(running: [session(.ollama), session(.mlx)]))
+        XCTAssertTrue(withMLX.info.contains("MLX"))
+        XCTAssertTrue(withMLX.info.contains("2"))
+    }
 }
