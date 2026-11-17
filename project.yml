@@ -80,8 +80,8 @@ targets:
       base:
         PRODUCT_NAME: Localia
         PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia
-        MARKETING_VERSION: "1.2.0"
-        CURRENT_PROJECT_VERSION: "6"
+        MARKETING_VERSION: "1.3.0"
+        CURRENT_PROJECT_VERSION: "8"
         SWIFT_VERSION: "6.0"
         ENABLE_HARDENED_RUNTIME: YES
         # The pre-build phase runs Scripts/fetch-llmfit.sh, which needs the network and writes
@@ -105,8 +105,8 @@ targets:
       base:
         PRODUCT_NAME: LocaliaProxyService
         PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia.proxy
-        MARKETING_VERSION: "1.2.0"
-        CURRENT_PROJECT_VERSION: "6"
+        MARKETING_VERSION: "1.3.0"
+        CURRENT_PROJECT_VERSION: "8"
         SWIFT_VERSION: "6.0"
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: NO
