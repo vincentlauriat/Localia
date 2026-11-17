@@ -38,6 +38,18 @@ final class UsageReaderTests: XCTestCase {
         XCTAssertEqual(try reader.requests(since: epoch, limit: 10).map(\.id), [r.id])
     }
 
+    func test_fileWithoutSchema_readsEmpty() throws {
+        XCTAssertTrue(FileManager.default.createFile(atPath: dbURL.path, contents: nil))
+        let reader = UsageStoreReader(url: dbURL)
+        XCTAssertEqual(try reader.dailyTotals(since: epoch), [])
+        XCTAssertEqual(try reader.requests(since: epoch, limit: 10), [])
+        XCTAssertNil(try reader.content(for: UUID()))
+        let writer = try UsageStore(url: dbURL, readOnly: false)
+        let r = record()
+        try writer.insert(r, content: nil)
+        XCTAssertEqual(try reader.requests(since: epoch, limit: 10).map(\.id), [r.id])
+    }
+
     func test_readsWhileWriterInserts() throws {
         let writer = try UsageStore(url: dbURL, readOnly: false)
         let reader = UsageStoreReader(url: dbURL)

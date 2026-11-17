@@ -32,7 +32,9 @@ public final class UsageStoreReader: UsageReading, @unchecked Sendable {
         try withStore { try $0.content(for: id) } ?? nil
     }
 
-    /// Runs `body` on the lazily opened store, or returns nil when the file does not exist yet.
+    /// Runs `body` on the lazily opened store, or returns nil when the file does not exist yet
+    /// or exists without a schema yet (the service created it but has not migrated). In the
+    /// schema case the cached store is dropped so the next call reopens it.
     private func withStore<T>(_ body: (UsageStore) throws -> T) throws -> T? {
         lock.lock()
         defer { lock.unlock() }
@@ -40,6 +42,11 @@ public final class UsageStoreReader: UsageReading, @unchecked Sendable {
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             store = try UsageStore(url: url, readOnly: true)
         }
-        return try body(store!)
+        do {
+            return try body(store!)
+        } catch let error as UsageStoreError where error.message.contains("no such table") {
+            store = nil
+            return nil
+        }
     }
 }
