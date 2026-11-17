@@ -6929,6 +6929,22 @@
         }
       }
     },
+    "Port %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port %lld"
+          }
+        }
+      }
+    },
     "Running": {
       "localizations": {
         "en": {

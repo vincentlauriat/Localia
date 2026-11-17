@@ -10,12 +10,32 @@ struct SettingsView: View {
 
     private var settings: SettingsStore { model.settings }
 
-    /// The Advanced tab's sections, in order. Engines and proxy routes live on `EnginesPage`.
-    static let sections = ["General", "Local mode", "Recommendations", "Localia proxy log",
-                           "Before deleting Localia", "Claude Code"]
+    /// The Advanced tab's sections, in order: this array is what the body renders. Engines, proxy status and
+    /// routes live on `EnginesPage`.
+    enum AdvancedSection: String, CaseIterable, Identifiable {
+        case general, localMode, recommendations, proxyLog, beforeDeleting, claudeCode
+        var id: String { rawValue }
+    }
+    static let sections: [AdvancedSection] = AdvancedSection.allCases
 
     var body: some View {
         Form {
+            ForEach(Self.sections) { section(for: $0) }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 520, minHeight: 560)
+        .task { await model.refreshAll() }
+        .confirmationDialog(String(localized: "Remove Localia from your shell?"), isPresented: $confirmRemoveFromShell) {
+            Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
+        } message: {
+            Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
+        }
+        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
+    }
+
+    @ViewBuilder private func section(for section: AdvancedSection) -> some View {
+        switch section {
+        case .general:
             Section(String(localized: "General")) {
                 Picker(String(localized: "Engine"), selection: Binding(
                     get: { settings.activeEngine },
@@ -27,7 +47,7 @@ struct SettingsView: View {
                     ForEach(terminals, id: \.self) { Text(Self.terminalName($0)).tag($0) }
                 }
             }
-
+        case .localMode:
             Section(String(localized: "Local mode")) {
                 // Where local mode applies is set in the General tab (SettingsRoot), with its confirmation.
                 Picker(String(localized: "When the engine is down"), selection: Binding(
@@ -46,7 +66,7 @@ struct SettingsView: View {
                 Toggle(String(localized: "Switch to local mode when offline"), isOn: Binding(
                     get: { settings.autoLocalWhenOffline }, set: { settings.autoLocalWhenOffline = $0 }))
             }
-
+        case .recommendations:
             Section(String(localized: "Recommendations")) {
                 LabeledContent(String(localized: "llmfit version"), value: model.llmfitVersion ?? "…")
                 HStack {
@@ -56,9 +76,9 @@ struct SettingsView: View {
                         .disabled(model.updatingLlmfit)
                 }
             }
-
+        case .proxyLog:
             ProxyLogSection(model: model)
-
+        case .beforeDeleting:
             Section(String(localized: "Before deleting Localia")) {
                 HStack {
                     Text(String(localized: "Turns local mode off and removes the block Localia added to your shell startup files."))
@@ -68,7 +88,7 @@ struct SettingsView: View {
                     Button(String(localized: "Remove Localia from My Shell")) { confirmRemoveFromShell = true }
                 }
             }
-
+        case .claudeCode:
             Section(String(localized: "Claude Code")) {
                 if let path = model.claudePath {
                     LabeledContent(String(localized: "Installed"), value: path.path)
@@ -82,16 +102,7 @@ struct SettingsView: View {
                     }
                 }
             }
-        }
-        .formStyle(.grouped)
-        .frame(minWidth: 520, minHeight: 560)
-        .task { await model.refreshAll() }
-        .confirmationDialog(String(localized: "Remove Localia from your shell?"), isPresented: $confirmRemoveFromShell) {
-            Button(String(localized: "Remove Localia from My Shell")) { Task { await model.removeFromShell() } }
-        } message: {
-            Text(String(localized: "Local mode is turned off and every claude goes back to the cloud. Your other settings and models are kept."))
-        }
-        .alert(item: ownsAlert ? $model.alert : .constant(nil)) { $0.swiftUIAlert }
+            }
     }
 
     private var terminals: [TerminalApp] {
@@ -146,6 +157,10 @@ struct ProxyStatusSection: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.statusText(model.proxyState)).foregroundStyle(statusColor)
+                    if case .running = model.proxyState {
+                        Text(String(localized: "Port \(LocaliaConstants.proxyPort)"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if case let .unavailable(reason) = model.proxyState {
                         Text(reason).font(.caption).foregroundStyle(.secondary)
                     }
