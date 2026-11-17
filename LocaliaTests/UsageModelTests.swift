@@ -6,9 +6,11 @@ final class FakeUsageReader: UsageReading, @unchecked Sendable {
     private let lock = NSLock()
     private var _daily: [DailyTotal] = []
     private var _error: Error?
+    private var _records: [RequestRecord] = []
     private var _reads = 0
 
     var daily: [DailyTotal] { get { lock.withLock { _daily } } set { lock.withLock { _daily = newValue } } }
+    var records: [RequestRecord] { get { lock.withLock { _records } } set { lock.withLock { _records = newValue } } }
     var error: Error? { get { lock.withLock { _error } } set { lock.withLock { _error = newValue } } }
     var reads: Int { lock.withLock { _reads } }
 
@@ -16,7 +18,7 @@ final class FakeUsageReader: UsageReading, @unchecked Sendable {
         try lock.withLock { _reads += 1; if let _error { throw _error }; return _daily }
     }
     func requests(since: Date, limit: Int) throws -> [RequestRecord] {
-        try lock.withLock { _reads += 1; if let _error { throw _error }; return [] }
+        try lock.withLock { _reads += 1; if let _error { throw _error }; return _records }
     }
     func content(for id: UUID) throws -> RecordedContent? { nil }
 }

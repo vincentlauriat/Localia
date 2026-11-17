@@ -668,16 +668,7 @@ struct MenuBarPanel: View {
     func chooseFolder(tool: LocalToolRow?) {
         dismiss()
         DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.prompt = String(localized: "Launch")
-            panel.message = tool.map { String(localized: "Choose the folder \($0.displayName) works in.") }
-                ?? String(localized: "Choose the folder Claude Code works in.")
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            launch(url, toolID: tool?.id)
+            Task { await FolderLauncher.choose(tool: tool, model: model) }
         }
     }
 

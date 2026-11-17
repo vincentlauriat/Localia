@@ -121,6 +121,50 @@ final class DockSnapshotTests: XCTestCase {
         try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
     }
 
+    // MARK: Sessions page
+
+    func test_sessions_runningAndFinished() async throws {
+        let now = Date()
+        func record(_ session: String, tool: String?, folder: String?, model: String, minutesAgo: Double,
+                    tokens: (Int?, Int?)) -> RequestRecord {
+            RequestRecord(id: UUID(), start: now.addingTimeInterval(-minutesAgo * 60), durationMs: 20 * 60_000, session: session,
+                          tool: tool, folder: folder, engine: .ollama, model: model, api: .anthropic, status: "ok",
+                          httpStatus: 200, usage: TokenUsage(input: tokens.0, output: tokens.1), error: nil)
+        }
+        let reader = FakeUsageReader()
+        reader.records = [
+            record("a1", tool: "Claude Code", folder: "/Users/me/Dev/Localia", model: "gemma3:12b", minutesAgo: 190, tokens: (120_000, 18_000)),
+            record("a2", tool: "Codex", folder: "/Users/me/Dev/site", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", minutesAgo: 600, tokens: (nil, nil)),
+            record(ProxyPath.unattributedSession, tool: nil, folder: nil, model: "gemma3:12b", minutesAgo: 1_500, tokens: (8_000, 900)),
+        ]
+        let usage = UsageModel(reader: reader)
+        await usage.refresh()
+        let model = makeModel(advanced: true)
+        await model.startEngine()
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        let folder = base.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        await model.launch(folder: folder)
+        await model.refreshStatus()
+        XCTAssertEqual(model.runningSessions.count, 1)
+        XCTAssertEqual(SessionsPage.finished(usage.sessions, excluding: model.runningSessions).count, 3)
+        let running = try XCTUnwrap(model.runningSessions.first)
+        let own = SessionSummary(id: running.id.uuidString, tool: "Claude Code", folder: folder.path, engine: .ollama,
+                                 models: ["gemma3:12b"], start: now, end: now, requests: 1, inputTokens: 1, outputTokens: 1)
+        XCTAssertEqual(SessionsPage.finished(usage.sessions + [own], excluding: model.runningSessions).count, 3,
+                       "a running session is not listed twice")
+        XCTAssertEqual(SessionsPage.tokens(usage.sessions.first { $0.id == "a1" }!), 138_000)
+        XCTAssertNil(SessionsPage.tokens(usage.sessions.first { $0.id == "a2" }!))
+        XCTAssertEqual(SessionsPage.toolText(usage.sessions.first { $0.id == ProxyPath.unattributedSession }!),
+                       String(localized: "Started from a terminal"))
+        try snapshot(SessionsPage(model: model, usage: usage), named: "dock-sessions", size: CGSize(width: 900, height: 560))
+        let empty = UsageModel(reader: FakeUsageReader())
+        await empty.refresh()
+        try snapshot(SessionsPage(model: makeModel(advanced: true), usage: empty), named: "dock-sessions-empty",
+                     size: CGSize(width: 900, height: 400))
+    }
+
     // MARK: Usage page
 
     private func usageModel(unknowns: Bool) async -> UsageModel {
