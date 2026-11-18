@@ -510,6 +510,50 @@ async fn monitor_shows_down_without_requests() {
     until(|| r.status().state == "local").await;
 }
 
+/// Falls back from a stopped Ollama to llama.cpp, with the monitor running.
+async fn fallen_back_with_monitor() -> (Arc<FakeProbe>, Arc<ManualClock>, Arc<Router>) {
+    let probe = FakeProbe::new();
+    probe.set(Ollama, EngineHealth::Down);
+    probe.set(LlamaCpp, EngineHealth::Up);
+    probe.list(Ollama, &["qwen3:8b"]);
+    probe.list(LlamaCpp, &["qwen3-8b"]);
+    let clock = ManualClock::new();
+    let r = router(&probe, &clock, ollama_with_llama_equivalent(65536));
+    assert_eq!(r.decide(None).await.unwrap().reason, Reason::EngineDown);
+    r.clone().spawn_monitor();
+    // The monitor's first round runs at once.
+    let calls = probe.calls();
+    until(|| probe.calls() > calls).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(r.status().state, "fallback");
+    (probe, clock, r)
+}
+
+#[tokio::test]
+async fn monitor_returns_status_to_local_when_primary_is_back() {
+    let (probe, clock, r) = fallen_back_with_monitor().await;
+    probe.set(Ollama, EngineHealth::Up);
+    clock.advance(MONITOR_PERIOD);
+    until(|| r.status().state == "local").await;
+    let s = r.status();
+    assert_eq!(s.engine, Some(Ollama));
+    assert_eq!(s.model.as_deref(), Some("qwen3:8b"));
+    assert_eq!(s.reason, None);
+}
+
+#[tokio::test]
+async fn monitor_shows_down_when_fallback_target_dies() {
+    let (probe, clock, r) = fallen_back_with_monitor().await;
+    probe.set(LlamaCpp, EngineHealth::Down);
+    clock.advance(MONITOR_PERIOD);
+    until(|| r.status().state == "down").await;
+    let s = r.status();
+    assert_eq!(s.engine, Some(Ollama));
+    assert_eq!(s.model.as_deref(), Some("qwen3:8b"));
+}
+
 #[tokio::test]
 async fn mark_down_shows_down_at_once() {
     let probe = FakeProbe::new();

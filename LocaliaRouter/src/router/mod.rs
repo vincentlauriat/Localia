@@ -302,6 +302,7 @@ impl Router {
             return base;
         };
         let is_down = |k: EngineKind| st.seen.get(&k) == Some(&EngineHealth::Down);
+        let is_up = |k: EngineKind| st.seen.get(&k) == Some(&EngineHealth::Up);
         let down = RouteStatus {
             state: "down",
             engine: Some(active.engine),
@@ -310,6 +311,12 @@ impl Router {
         };
         match &st.last {
             Some(Err(_)) => down,
+            // The primary is back (seen by the monitor): the next request goes there, so the status says so
+            // without waiting for traffic. Its eligibility is checked again by that request.
+            Some(Ok(d)) if d.reason == Reason::EngineDown && is_up(active.engine) => RouteStatus {
+                state: "local",
+                ..down
+            },
             Some(Ok(d)) if is_down(d.target.engine) => down,
             Some(Ok(d)) => RouteStatus {
                 state: if d.reason == Reason::EngineDown {
@@ -330,13 +337,21 @@ impl Router {
         }
     }
 
-    /// Probes the active engine at once, then every `MONITOR_PERIOD` and after each config push, so the
-    /// status is current when no request arrives.
+    /// Probes the active engine (and, during a fallback, the engine serving it) at once, then every
+    /// `MONITOR_PERIOD` and after each config push, so the status is current when no request arrives.
     pub fn spawn_monitor(self: Arc<Self>) {
         tokio::spawn(async move {
             loop {
-                let engine = self.lock().active().map(|a| a.engine);
-                if let Some(k) = engine {
+                let engines = {
+                    let st = self.lock();
+                    let active = st.active().map(|a| a.engine);
+                    let serving = match &st.last {
+                        Some(Ok(d)) if d.reason == Reason::EngineDown => Some(d.target.engine),
+                        _ => None,
+                    };
+                    (active, serving.filter(|k| Some(*k) != active))
+                };
+                for k in [engines.0, engines.1].into_iter().flatten() {
                     self.probe_health(k).await;
                 }
                 tokio::select! {
