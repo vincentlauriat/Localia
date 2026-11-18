@@ -38,4 +38,20 @@ final class DockStringsTests: XCTestCase {
             XCTAssertNotNil(french[Self.masked(key)], "no fr translation for: \(key)")
         }
     }
+
+    /// The route labels of the Log and the menu-bar trouble label have their exact French copy (RouteLabel
+    /// lives in LocaliaCore, outside the folder the test above scans).
+    func test_dockStrings_routeFrench() throws {
+        let data = try Data(contentsOf: Self.root.appendingPathComponent("Localia/Resources/Localizable.xcstrings"))
+        let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(catalog["strings"] as? [String: [String: Any]])
+        func french(_ key: String) -> String? {
+            let loc = strings[key]?["localizations"] as? [String: Any]
+            return ((loc?["fr"] as? [String: Any])?["stringUnit"] as? [String: Any])?["value"] as? String
+        }
+        XCTAssertEqual(french("Route"), "Itinéraire")
+        XCTAssertEqual(french("Fallback — engine stopped"), "Repli — moteur arrêté")
+        XCTAssertEqual(french("Fixed engine"), "Moteur fixe")
+        XCTAssertEqual(french("Localia, local AI in trouble"), "Localia, l'IA locale a un souci")
+    }
 }

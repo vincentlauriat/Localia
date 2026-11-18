@@ -356,6 +356,8 @@ struct SimpleStatusCard: View {
             return (String(localized: "Set Up"), { Task { await model.runSimpleSetup() } })
         case .lighterModel:
             return (String(localized: "Choose a Model"), chooseModel)
+        case .restartRouter:
+            return (String(localized: "Restart"), { Task { await model.restartProxy() } })
         case .noModelFits, .freeMemory, .cloudLogin, .closeOtherSession:
             return nil
         case .tryAgain, .checkConnection:

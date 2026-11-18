@@ -99,6 +99,13 @@ struct AppDependencies {
     var proxy: any ProxyServiceControlling = InertProxyService()
     /// The usage the proxy recorded. The inert default reads as empty, so tests never touch the real store.
     var usage: any UsageReading = InertUsageReader()
+    /// How often, while local mode is on, the app asks the router where it sends requests (the menu-bar icon).
+    var routePollInterval: Duration = .seconds(10)
+    /// The route poll restarts a failing MLX at most this often.
+    var engineRestartInterval: Duration = .seconds(60)
+    /// When the route poll and the last service check disagree, the poll checks the service again at most this
+    /// often.
+    var proxyRecheckInterval: Duration = .seconds(30)
 
     @MainActor
     static func live() -> AppDependencies {

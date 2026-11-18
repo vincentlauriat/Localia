@@ -112,12 +112,14 @@ public final class LocalModeController: ObservableObject {
                       model: settings.lastModel ?? "", contextTokens: LocaliaConstants.localContextTokens)
     }
 
-    /// The launch target with its base URL routed for `session`: the proxy URL when the engine goes
-    /// through the healthy proxy, else unchanged. `.cloud` is returned as is.
+    /// The launch target as the tool sees it for `session`. Through the healthy router: its `auto` URL and
+    /// the neutral model name (engine and window kept, for the caller's bookkeeping). Direct: unchanged.
+    /// `.cloud` is returned as is.
     public func routed(_ target: LaunchTarget, session: String) -> LaunchTarget {
         guard case let .local(engine, baseURL, model, contextTokens) = target else { return target }
-        return .local(engine: engine, baseURL: routes().baseURL(engine: engine, engineBase: baseURL, session: session),
-                      model: model, contextTokens: contextTokens)
+        let base = routes().baseURL(engine: engine, engineBase: baseURL, session: session)
+        guard ProxyURL.isRouted(base) else { return target }
+        return .local(engine: engine, baseURL: base, model: ProxyURL.neutralModel, contextTokens: contextTokens)
     }
 
     /// Turning on needs an engine and an installed model (or, engine down, a last-used model). Turning off always succeeds in memory, and the
@@ -170,15 +172,19 @@ public final class LocalModeController: ObservableObject {
     }
 
     /// Every write names the active engine (its id picks the probe path, its baseURL the port). Only when
-    /// no engine is registered at all does it fall back to Ollama's default address. A proxied engine gets
-    /// the proxy URL with the session placeholder, which the shim replaces per `claude` run.
+    /// no engine is registered at all does it fall back to Ollama's default address. A routed engine gets
+    /// the router's URL with the session placeholder, which the shim replaces per `claude` run. The real
+    /// model is passed either way: the shim names the neutral one to `claude` and keeps the real one to start it.
     private func writeShimState(on: Bool, _ r: Resolved?) async throws {
         var engine = r?.engine, baseURL = r?.baseURL
         if engine == nil, let active = await source.activeEngine() { engine = active.id; baseURL = active.baseURL }
         let engineBase = baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!
-        let stateBase = routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
+        var stateBase = routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
                                          session: ProxyURL.sessionPlaceholder)
-        let proxied = stateBase.absoluteString.hasPrefix("http://127.0.0.1:\(LocaliaConstants.proxyPort)/s/")
+        // MLX is reachable only through the router (mlx_lm.server speaks no Anthropic): with the router down,
+        // the shim still targets it, so its probe fails and the engine-down policy applies.
+        if engine == .mlx, !ProxyURL.isRouted(stateBase) { stateBase = ProxyURL.routed(session: ProxyURL.sessionPlaceholder) }
+        let proxied = ProxyURL.isRouted(stateBase)
         try shim.writeState(on: on,
                             baseURL: stateBase,
                             model: r?.model ?? settings.lastModel ?? "",

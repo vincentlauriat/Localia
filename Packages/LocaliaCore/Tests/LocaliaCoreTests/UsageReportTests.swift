@@ -13,9 +13,11 @@ final class UsageReportTests: XCTestCase {
     }
 
     private func row(_ day: String, model: String? = "m", tool: String? = "claude", folder: String? = "/p",
-                     requests: Int = 1, input: Int = 0, output: Int = 0, ms: Int = 0) -> DailyTotal {
+                     requests: Int = 1, input: Int = 0, output: Int = 0, ms: Int = 0,
+                     timedOutput: Int = 0, timedMs: Int = 0) -> DailyTotal {
         DailyTotal(day: day, engine: .ollama, model: model, tool: tool, folder: folder,
-                   requests: requests, inputTokens: input, outputTokens: output, durationMs: ms)
+                   requests: requests, inputTokens: input, outputTokens: output, durationMs: ms,
+                   timedOutputTokens: timedOutput, timedDurationMs: timedMs)
     }
 
     func test_period_includesToday_localCalendar() {
@@ -94,5 +96,17 @@ final class UsageReportTests: XCTestCase {
         ], period: .week, now: now, calendar: calendar)
         XCTAssertEqual(report.byModel.map(\.label), ["b", "c", "a"])
         XCTAssertEqual(report.byModel.last?.totals.requests, 2)
+    }
+
+    func test_speedUsesTimedColumns() {
+        let report = UsageReport.make(daily: [row("2026-11-17", output: 100, ms: 7000, timedOutput: 100, timedMs: 2000)],
+                                      period: .day, now: now, calendar: calendar)
+        XCTAssertEqual(report.totals.tokensPerSecond, 50)
+    }
+
+    func test_speedFallsBackForV1Rows() {
+        let report = UsageReport.make(daily: [row("2026-11-17", output: 100, ms: 2000)],
+                                      period: .day, now: now, calendar: calendar)
+        XCTAssertEqual(report.totals.tokensPerSecond, 50)
     }
 }

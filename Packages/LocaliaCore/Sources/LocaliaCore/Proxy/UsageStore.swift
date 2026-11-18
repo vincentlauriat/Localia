@@ -17,10 +17,15 @@ public struct RequestRecord: Equatable, Sendable, Identifiable {
     public var httpStatus: Int
     public var usage: TokenUsage
     public var error: String?
+    /// Engine the router sent the request to (schema v2). Nil for rows written before the router.
+    public var routedTo: String?
+    /// Why the router chose that engine (schema v2).
+    public var reason: String?
 
     public init(id: UUID, start: Date, durationMs: Int, session: String, tool: String?, folder: String?,
                 engine: EngineID, model: String?, api: APIKind, status: String, httpStatus: Int,
-                usage: TokenUsage, error: String?) {
+                usage: TokenUsage, error: String?, routedTo: String? = nil, reason: String? = nil) {
+        self.routedTo = routedTo; self.reason = reason
         self.id = id; self.start = start; self.durationMs = durationMs; self.session = session
         self.tool = tool; self.folder = folder; self.engine = engine; self.model = model; self.api = api
         self.status = status; self.httpStatus = httpStatus; self.usage = usage; self.error = error
@@ -63,9 +68,15 @@ public struct DailyTotal: Equatable, Sendable {
     public var inputTokens: Int
     public var outputTokens: Int
     public var durationMs: Int
+    /// Output tokens of the requests that also reported a duration (schema v2). 0 on v1 rows.
+    public var timedOutputTokens: Int
+    /// Duration of those same requests, so tokens and time always pair up (schema v2). 0 on v1 rows.
+    public var timedDurationMs: Int
 
     public init(day: String, engine: EngineID, model: String?, tool: String?, folder: String?,
-                requests: Int, inputTokens: Int, outputTokens: Int, durationMs: Int) {
+                requests: Int, inputTokens: Int, outputTokens: Int, durationMs: Int,
+                timedOutputTokens: Int = 0, timedDurationMs: Int = 0) {
+        self.timedOutputTokens = timedOutputTokens; self.timedDurationMs = timedDurationMs
         self.day = day; self.engine = engine; self.model = model; self.tool = tool; self.folder = folder
         self.requests = requests; self.inputTokens = inputTokens; self.outputTokens = outputTokens
         self.durationMs = durationMs
@@ -83,6 +94,8 @@ public final class UsageStore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "localia.usage-store")
     private var db: OpaquePointer?
     private let readOnly: Bool
+    /// `PRAGMA user_version` read once at open; the v2 columns are selected only when it is 2 or more.
+    private var schemaVersion = 0
 
     public init(url: URL, readOnly: Bool) throws {
         self.readOnly = readOnly
@@ -99,6 +112,7 @@ public final class UsageStore: @unchecked Sendable {
             try exec("PRAGMA journal_mode=WAL")
             try migrate()
         }
+        schemaVersion = try userVersion()
     }
 
     deinit { if let db { sqlite3_close(db) } }
@@ -111,31 +125,37 @@ public final class UsageStore: @unchecked Sendable {
             do {
                 try run("""
                     INSERT INTO requests (id, start, duration_ms, session, tool, folder, engine, model, api, status,
-                                          http_status, input_tokens, output_tokens, error)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          http_status, input_tokens, output_tokens, error, routed_to, reason)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """, [
                     .text(r.id.uuidString), .double(r.start.timeIntervalSince1970), .int(r.durationMs), .text(r.session),
                     .optText(r.tool), .optText(r.folder), .text(r.engine.rawValue), .optText(r.model),
                     .text(Self.apiName(r.api)), .text(r.status), .int(r.httpStatus),
                     .optInt(r.usage.input), .optInt(r.usage.output), .optText(r.error),
+                    .optText(r.routedTo), .optText(r.reason),
                 ])
+                let timed = (r.usage.output ?? 0) > 0 && r.durationMs > 0
                 if let content {
                     try run("INSERT INTO content (request_id, request, response, truncated) VALUES (?,?,?,?)",
                             [.text(r.id.uuidString), .blob(content.request), .blob(content.response),
                              .int(content.truncated ? 1 : 0)])
                 }
                 try run("""
-                    INSERT INTO daily (day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms)
-                    VALUES (?,?,?,?,?,1,?,?,?)
+                    INSERT INTO daily (day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms,
+                                       timed_output_tokens, timed_duration_ms)
+                    VALUES (?,?,?,?,?,1,?,?,?,?,?)
                     ON CONFLICT(day, engine, model, tool, folder) DO UPDATE SET
                         requests = requests + 1,
                         input_tokens = input_tokens + excluded.input_tokens,
                         output_tokens = output_tokens + excluded.output_tokens,
-                        duration_ms = duration_ms + excluded.duration_ms
+                        duration_ms = duration_ms + excluded.duration_ms,
+                        timed_output_tokens = timed_output_tokens + excluded.timed_output_tokens,
+                        timed_duration_ms = timed_duration_ms + excluded.timed_duration_ms
                     """, [
                     .text(Self.dayString(r.start)), .text(r.engine.rawValue), .text(r.model ?? ""),
                     .text(r.tool ?? ""), .text(r.folder ?? ""),
                     .int(r.usage.input ?? 0), .int(r.usage.output ?? 0), .int(r.durationMs),
+                    .int(timed ? (r.usage.output ?? 0) : 0), .int(timed ? r.durationMs : 0),
                 ])
                 try exec("COMMIT")
             } catch {
@@ -181,9 +201,11 @@ public final class UsageStore: @unchecked Sendable {
 
     public func requests(since: Date, limit: Int) throws -> [RequestRecord] {
         try queue.sync {
-            try query("""
+            let hasRoute = try currentSchemaVersion() >= 2
+            let routeColumns = hasRoute ? ", routed_to, reason" : ""
+            return try query("""
                 SELECT id, start, duration_ms, session, tool, folder, engine, model, api, status, http_status,
-                       input_tokens, output_tokens, error
+                       input_tokens, output_tokens, error\(routeColumns)
                 FROM requests WHERE start >= ? ORDER BY start DESC LIMIT ?
                 """, [.double(since.timeIntervalSince1970), .int(limit)]) { stmt in
                 guard let id = UUID(uuidString: Self.text(stmt, 0) ?? ""),
@@ -194,7 +216,8 @@ public final class UsageStore: @unchecked Sendable {
                     tool: Self.text(stmt, 4), folder: Self.text(stmt, 5), engine: engine, model: Self.text(stmt, 7),
                     api: Self.apiKind(Self.text(stmt, 8)), status: Self.text(stmt, 9) ?? "",
                     httpStatus: Int(sqlite3_column_int64(stmt, 10)),
-                    usage: TokenUsage(input: Self.int(stmt, 11), output: Self.int(stmt, 12)), error: Self.text(stmt, 13))
+                    usage: TokenUsage(input: Self.int(stmt, 11), output: Self.int(stmt, 12)), error: Self.text(stmt, 13),
+                    routedTo: hasRoute ? Self.text(stmt, 14) : nil, reason: hasRoute ? Self.text(stmt, 15) : nil)
             }
         }
     }
@@ -211,8 +234,10 @@ public final class UsageStore: @unchecked Sendable {
 
     public func dailyTotals(since: Date) throws -> [DailyTotal] {
         try queue.sync {
-            try query("""
-                SELECT day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms
+            let hasTimed = try currentSchemaVersion() >= 2
+            let timedColumns = hasTimed ? ", timed_output_tokens, timed_duration_ms" : ""
+            return try query("""
+                SELECT day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms\(timedColumns)
                 FROM daily WHERE day >= ? ORDER BY day, engine, model, tool, folder
                 """, [.text(Self.dayString(since))]) { stmt in
                 guard let engine = EngineID(rawValue: Self.text(stmt, 1) ?? "") else { return nil }
@@ -221,7 +246,9 @@ public final class UsageStore: @unchecked Sendable {
                     model: Self.nonEmpty(Self.text(stmt, 2)), tool: Self.nonEmpty(Self.text(stmt, 3)),
                     folder: Self.nonEmpty(Self.text(stmt, 4)), requests: Int(sqlite3_column_int64(stmt, 5)),
                     inputTokens: Int(sqlite3_column_int64(stmt, 6)), outputTokens: Int(sqlite3_column_int64(stmt, 7)),
-                    durationMs: Int(sqlite3_column_int64(stmt, 8)))
+                    durationMs: Int(sqlite3_column_int64(stmt, 8)),
+                    timedOutputTokens: hasTimed ? Int(sqlite3_column_int64(stmt, 9)) : 0,
+                    timedDurationMs: hasTimed ? Int(sqlite3_column_int64(stmt, 10)) : 0)
             }
         }
     }
@@ -246,8 +273,31 @@ public final class UsageStore: @unchecked Sendable {
                 duration_ms INTEGER NOT NULL,
                 PRIMARY KEY (day, engine, model, tool, folder)
             );
-            PRAGMA user_version = 1;
             """)
+        // v2: additive columns, each guarded so a reset user_version cannot fail the migration.
+        for (table, column, decl) in [
+            ("requests", "routed_to", "TEXT"), ("requests", "reason", "TEXT"),
+            ("daily", "timed_output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ("daily", "timed_duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ] where !(try columns(of: table).contains(column)) {
+            try exec("ALTER TABLE \(table) ADD COLUMN \(column) \(decl)")
+        }
+        try exec("PRAGMA user_version = 2")
+    }
+
+    private func columns(of table: String) throws -> [String] {
+        try query("PRAGMA table_info(\(table))", []) { Self.text($0, 1) }
+    }
+
+    /// The schema version, read again while it is below 2: the router may migrate the database after this
+    /// reader opened it (the first launch after an update). Called on `queue`.
+    private func currentSchemaVersion() throws -> Int {
+        if schemaVersion < 2 { schemaVersion = try userVersion() }
+        return schemaVersion
+    }
+
+    private func userVersion() throws -> Int {
+        try query("PRAGMA user_version", []) { Int(sqlite3_column_int64($0, 0)) }.first ?? 0
     }
 
     // MARK: SQLite helpers

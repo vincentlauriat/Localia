@@ -78,8 +78,12 @@ fi
 }
 [ "$NOTARIZE" = "0" ] || echo "> Notarizing with $NOTARY_DESC"
 
-# 1. Regenerate the Xcode project. The pre-build phase runs Scripts/fetch-llmfit.sh,
-#    which fails the build when the pinned llmfit checksum does not match.
+# 1. Build the Rust router (universal arm64 + x86_64, minimum macOS 14.0, --locked), then regenerate the Xcode project.
+#    The copy phase embeds LocaliaRouter/dist/LocaliaProxyService as Contents/MacOS/LocaliaProxyService.
+#    The pre-build phase runs Scripts/fetch-llmfit.sh, which fails the build when the pinned llmfit
+#    checksum does not match.
+echo "> build the router (cargo)"
+"$ROOT/Scripts/build-router.sh" >/dev/null
 echo "> xcodegen generate"
 xcodegen generate >/dev/null
 
@@ -100,6 +104,19 @@ STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 STAGING="$STAGING_DIR/$APP_NAME.app"
 ditto --norsrc --noextattr --noacl "$APP" "$STAGING"
+
+# The embedded router: universal (arm64 and x86_64), each slice runs on macOS 14, and the app carries this
+# build's number (the router reports the enclosing app's CFBundleVersion on /localia/health).
+ROUTER="$STAGING/Contents/MacOS/LocaliaProxyService"
+ROUTER_ARCHS="$(lipo -archs "$ROUTER" | tr ' ' '\n' | sort | xargs)"
+[ "$ROUTER_ARCHS" = "arm64 x86_64" ] || { echo "x Router architectures are '$ROUTER_ARCHS', expected arm64 and x86_64." >&2; exit 1; }
+for arch in arm64 x86_64; do
+  ROUTER_MINOS="$(vtool -arch "$arch" -show-build "$ROUTER" | awk '$1 == "minos" {print $2; exit}')"
+  [ -n "$ROUTER_MINOS" ] && [ "$(printf '%s\n14.0\n' "$ROUTER_MINOS" | sort -V | tail -1)" = "14.0" ] || {
+    echo "x Router $arch minimum macOS is '$ROUTER_MINOS', expected 14.0 or lower." >&2; exit 1; }
+done
+STAGED_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$STAGING/Contents/Info.plist")"
+[ "$STAGED_BUILD" = "$BUILD_NUMBER" ] || { echo "x Staged CFBundleVersion '$STAGED_BUILD' differs from BUILD_NUMBER '$BUILD_NUMBER'." >&2; exit 1; }
 
 # Sparkle command-line tools, pinned and checksum-verified (same version as the framework in project.yml).
 SPARKLE_VERSION="2.10.1"
@@ -126,10 +143,12 @@ if [ -n "${SPARKLE_ACCOUNT:-}" ]; then
 fi
 
 # 4. Sign deepest first. Apple's timestamp server is flaky: retry.
+# Usage: codesign_ts <path> [extra codesign options...]
 codesign_ts() {
   local target="$1" i
+  shift
   for i in 1 2 3 4 5; do
-    if codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$target"; then
+    if codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$@" "$target"; then
       return 0
     fi
     echo "  ...codesign retry $i/5 in 5s" >&2
@@ -142,8 +161,16 @@ codesign_ts() {
 echo "> codesign Contents/Helpers/llmfit (before the app)"
 codesign_ts "$STAGING/Contents/Helpers/llmfit"
 
-echo "> codesign Contents/MacOS/LocaliaProxyService (before the app)"
-codesign_ts "$STAGING/Contents/MacOS/LocaliaProxyService"
+# The Rust router replaces the Swift LocaliaProxyService under the same name, path and launch agent.
+# The linker signs it as "LocaliaProxyService-<hash>": pin the identifier the Swift helper shipped with,
+# so its designated requirement (and the launch agent's code identity) stays the same across updates.
+echo "> codesign Contents/MacOS/LocaliaProxyService (the router, before the app)"
+codesign_ts "$ROUTER" --identifier LocaliaProxyService
+ROUTER_SIG="$(codesign -dv "$ROUTER" 2>&1)"
+echo "$ROUTER_SIG" | grep -c "^Identifier=LocaliaProxyService$" >/dev/null || { echo "x Router identifier is not LocaliaProxyService." >&2; exit 1; }
+echo "$ROUTER_SIG" | grep -E -c "^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime.*\)" >/dev/null || { echo "x Router is not signed with the hardened runtime." >&2; exit 1; }
+echo "  router entitlements: $(codesign -d --entitlements - --xml "$ROUTER" 2>/dev/null | tr -d '\n' | head -c 200)"
+"$ROOT/Scripts/check-router-embed.sh" "$STAGING"
 
 SPARKLE_FW="$STAGING/Contents/Frameworks/Sparkle.framework"
 if [ -d "$SPARKLE_FW" ]; then

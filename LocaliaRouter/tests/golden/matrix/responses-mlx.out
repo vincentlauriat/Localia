@@ -1,0 +1,1 @@
+{"created_at":0,"error":null,"id":"resp_1","incomplete_details":null,"model":"localia","object":"response","output":[{"content":[{"annotations":[],"text":"The secret word is **PAMPLEMOUSSE-42**.","type":"output_text"}],"id":"msg_1","role":"assistant","status":"completed","type":"message"}],"status":"completed","usage":{"input_tokens":220,"output_tokens":16,"total_tokens":236}}

@@ -596,6 +596,20 @@ final class ShellShimTests: XCTestCase {
         for n in 1...3 { XCTAssertNil(read("pwned\(n)"), "pwned\(n)") }
     }
 
+    /// The router's `auto/health` may probe an engine twice (1 s each) on a cold cache: through the router the
+    /// engine probe gives it 3 s, so a slow `/api/tags` never reads as an engine down. Direct, and for the
+    /// router's own probe, it stays at 1 s.
+    func test_engineProbeAllowsTheRoutersReadyCheck() {
+        for zsh in [true, false] {
+            let text = shim().shimScript(zsh: zsh)
+            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m "$_l_pmax" "$_l_probe""#).count - 1, 2)
+            XCTAssertEqual(text.components(separatedBy: #"if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi"#)
+                .count - 1, 2, "set before each engine probe, from the state as read then")
+            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m 1 "$_l_pprobe""#).count - 1, 2)
+            XCTAssertTrue(text.contains(" _l_pmax"), "declared local")
+        }
+    }
+
     func test_shimToolsAreAliasProof() throws {
         try installAndState(on: true, policy: .autoStart)
         for name in ["claude.zsh", "claude.bash"] {
@@ -1066,5 +1080,96 @@ final class ShellShimTests: XCTestCase {
             XCTAssertEqual(ProxyPath.parse(basePath),
                            ProxyPath(session: ProxyPath.unattributedSession, engine: .ollama, rest: "/v1/messages"), shell)
         }
+    }
+
+    /// Routed through the router: the engine probe is the `auto` health, every model variable is the
+    /// neutral name, and the start link still names the real model (the app starts that one).
+    func test_shimState_routedProbeIsAutoHealth_modelLocalia() throws {
+        try shim().writeState(on: true, baseURL: ProxyURL.routed(session: ProxyURL.sessionPlaceholder),
+                              model: "qwen3-coder:30b", contextTokens: 65536, policy: .autoStart,
+                              profile: .full, engine: .ollama, proxyProbe: proxyHealth)
+        let text = try XCTUnwrap(stateText)
+        XCTAssertTrue(text.contains("""
+
+        base=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto
+        model=localia
+        recordmodel=qwen3-coder:30b
+        policy=autoStart
+        profile=full
+        probe=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto/health
+        proxyprobe=http://127.0.0.1:11438/localia/health
+        start=localia://start?model=qwen3-coder%3A30b
+
+        """), text)
+        for key in ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
+            XCTAssertTrue(text.contains("\nenv=\(key)=localia\n"), key)
+        }
+        XCTAssertTrue(text.contains("\nenv=ANTHROPIC_BASE_URL=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto\n"), text)
+        XCTAssertTrue(text.contains("\nenv=CLAUDE_CODE_MAX_CONTEXT_TOKENS=65536\n"), text)
+        // The real name appears only where the app needs it: the start link and the session record.
+        XCTAssertEqual(text.components(separatedBy: "qwen3-coder").count - 1, 2, text)
+    }
+
+    /// A routed run tells `claude` the neutral model but records the real one, so the app keeps that model
+    /// loaded while the run lasts.
+    func test_shim_routedRun_recordsTheRealModel_andTrackerProtectsIt() async throws {
+        try exe("claude", """
+        for f in "$HOME"/Library/Application\\ Support/Localia/sessions/*.session; do cat "$f" > "$HOME/seen.session"; done
+        printf '%s\\n' "$ANTHROPIC_MODEL" > "$HOME/model.txt"
+        exit 7
+        """)
+        try proxyAwareCurl()
+        touch("healthy"); touch("proxy_up")
+        try shim().install()
+        try shim().writeState(on: true, baseURL: ProxyURL.routed(session: ProxyURL.sessionPlaceholder),
+                              model: "qwen3-coder:30b", contextTokens: 65536, policy: .fail,
+                              profile: .full, engine: .ollama, proxyProbe: proxyHealth)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("seen.session"))
+            XCTAssertEqual(try run(shell).status, 7, shell)
+            XCTAssertEqual(read("model.txt"), "localia\n", shell)
+            let seen = try XCTUnwrap(read("seen.session"), "\(shell): no record while claude ran")
+            XCTAssertTrue(seen.contains("engine=ollama\nmodel=qwen3-coder:30b\n"), seen)
+
+            // The same record, with a live pid, in a tracker's directory: the real model is in use.
+            let dir = home.appendingPathComponent("tracker-\(shell)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let live = seen.split(separator: "\n").map { $0.hasPrefix("pid=") ? "pid=\(getpid())" : String($0) }
+                .joined(separator: "\n") + "\n"
+            try live.write(to: dir.appendingPathComponent("\(UUID().uuidString).session"), atomically: true, encoding: .utf8)
+            let inUse = await SessionTracker(statusDir: dir).modelsStillInUse()
+            XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "qwen3-coder:30b")], shell)
+        }
+    }
+
+    /// Direct: byte for byte the 1.3 state, whatever engine.
+    func test_shimState_directUnchanged() throws {
+        try shim().writeState(on: true, baseURL: URL(string: "http://127.0.0.1:11435")!, model: "m",
+                              contextTokens: 32768, policy: .fail, profile: .full, engine: .llamaCpp, proxyProbe: nil)
+        XCTAssertEqual(stateText, """
+        # Localia local-mode state. Data only: the shim reads it line by line and never sources it.
+        version=1
+        on=1
+        engine=llamaCpp
+        base=http://127.0.0.1:11435
+        model=m
+        policy=fail
+        profile=full
+        probe=http://127.0.0.1:11435/health
+        start=localia://start?model=m
+        wait=\(ShellShim.startWaitSeconds(.llamaCpp))
+        env=ANTHROPIC_API_KEY=\(ClaudeCodeTool.apiKey)
+        env=ANTHROPIC_BASE_URL=http://127.0.0.1:11435
+        env=ANTHROPIC_DEFAULT_HAIKU_MODEL=m
+        env=ANTHROPIC_DEFAULT_OPUS_MODEL=m
+        env=ANTHROPIC_DEFAULT_SONNET_MODEL=m
+        env=ANTHROPIC_MODEL=m
+        env=CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+        env=CLAUDE_CODE_MAX_CONTEXT_TOKENS=32768
+        env=CLAUDE_CODE_SUBAGENT_MODEL=m
+        unset=ANTHROPIC_AUTH_TOKEN
+
+        """)
     }
 }

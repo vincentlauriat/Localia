@@ -43,6 +43,11 @@ protocol ProxyServiceControlling: AnyObject {
     func erase(log: Bool, stats: Bool) async throws
     /// Unregisters the LaunchAgent, so deleting the app leaves no agent behind.
     func uninstall() async
+    /// Where the router sends requests now, from the last `refreshRoute()`.
+    var route: ProxyServiceManager.RouteStatus? { get }
+    /// Asks the router for its route (one health call); `state` is left as it is. Returns whether it answered
+    /// (a 1.3 service answers without a route).
+    @discardableResult func refreshRoute() async -> Bool
 }
 
 /// No proxy wired (the default of `AppDependencies`, used by tests): never healthy, does nothing, so every
@@ -57,6 +62,8 @@ final class InertProxyService: ProxyServiceControlling, Sendable {
     func push(_ config: ProxyConfig) async {}
     func erase(log: Bool, stats: Bool) async throws {}
     func uninstall() async {}
+    var route: ProxyServiceManager.RouteStatus? { nil }
+    func refreshRoute() async -> Bool { false }
 }
 
 enum ProxyServiceError: LocalizedError, Equatable {
@@ -79,6 +86,58 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     typealias Fetch = @Sendable (URLRequest) async throws -> (Data, Int)
 
     @Published private(set) var state: ProxyState = .unknown
+    /// Where the router sends requests now, from the last `refreshRoute()`; nil when it did not say (a 1.3
+    /// service, no answer).
+    @Published private(set) var route: RouteStatus?
+
+    /// The `route` object of `/localia/health` (`RouteStatus` in `LocaliaRouter/src/router/mod.rs`). Every field
+    /// but `state` is decoded leniently: an engine this build does not know reads as nil.
+    struct RouteStatus: Decodable, Equatable {
+        /// `idle` | `local` | `fallback` | `down`.
+        let state: String
+        let engine: EngineID?
+        let model: String?
+        /// `primary` | `engine-down` | `pinned`.
+        let reason: String?
+        /// `unknown` | `ok` | `slow`.
+        let speed: String
+        /// An engine whose answer stream died after it started.
+        let engineFailure: EngineID?
+
+        init(state: String, engine: EngineID?, model: String?, reason: String?, speed: String,
+             engineFailure: EngineID?) {
+            self.state = state; self.engine = engine; self.model = model; self.reason = reason
+            self.speed = speed; self.engineFailure = engineFailure
+        }
+
+        private enum CodingKeys: String, CodingKey { case state, engine, model, reason, speed, engineFailure }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decode(String.self, forKey: .state)
+            engine = (try? c.decodeIfPresent(EngineID.self, forKey: .engine)) ?? nil
+            model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
+            reason = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? nil
+            speed = (try? c.decodeIfPresent(String.self, forKey: .speed)) ?? "unknown"
+            engineFailure = (try? c.decodeIfPresent(EngineID.self, forKey: .engineFailure)) ?? nil
+        }
+    }
+
+    /// `/localia/health`. A missing or malformed `route` reads as nil, so it never hides a healthy service.
+    struct Health: Decodable {
+        let ok: Bool
+        let version: String
+        let route: RouteStatus?
+
+        private enum CodingKeys: String, CodingKey { case ok, version, route }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            version = try c.decode(String.self, forKey: .version)
+            route = (try? c.decodeIfPresent(RouteStatus.self, forKey: .route)) ?? nil
+        }
+    }
 
     var isHealthy: Bool { if case .running = state { true } else { false } }
 
@@ -144,6 +203,14 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     }
 
     func answers() async -> Bool { await healthVersion() != nil }
+
+    /// One health call (1 s at most) for the route; `state` is left as the last check set it.
+    @discardableResult
+    func refreshRoute() async -> Bool {
+        let h = await health()
+        route = h?.route
+        return h != nil
+    }
 
     private func run(force: Bool) async {
         checkID &+= 1
@@ -237,11 +304,12 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         }
     }
 
-    private func healthVersion() async -> String? {
-        struct Health: Decodable { let ok: Bool; let version: String }
+    private func healthVersion() async -> String? { await health()?.version }
+
+    private func health() async -> Health? {
         guard let (data, status) = try? await fetch(URLRequest(url: url("/localia/health"))), status == 200,
               let h = try? JSONDecoder().decode(Health.self, from: data), h.ok else { return nil }
-        return h.version
+        return h
     }
 
     func push(_ config: ProxyConfig) async {

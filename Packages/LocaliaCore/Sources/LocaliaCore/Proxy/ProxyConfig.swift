@@ -1,23 +1,61 @@
 import Foundation
 import Security
 
+/// One model on one engine, as the router targets it (`LocaliaRouter/src/config.rs`).
+public struct TargetSpec: Codable, Equatable, Sendable {
+    public var engine: EngineID
+    public var model: String
+    /// The context window the engine gives this model, > 0.
+    public var contextTokens: Int
+
+    public init(engine: EngineID, model: String, contextTokens: Int) {
+        self.engine = engine; self.model = model; self.contextTokens = contextTokens
+    }
+}
+
+/// What the router answers the neutral model name with: the active model, then the same model on the other
+/// engines when the active one is down.
+public struct RoutingConfig: Codable, Equatable, Sendable {
+    public var active: TargetSpec?
+    public var equivalents: [TargetSpec]
+    /// The model `mlx_lm.server` serves, if any.
+    public var mlxModel: String?
+
+    public init(active: TargetSpec?, equivalents: [TargetSpec] = [], mlxModel: String? = nil) {
+        self.active = active; self.equivalents = equivalents; self.mlxModel = mlxModel
+    }
+
+    private enum CodingKeys: String, CodingKey { case active, equivalents, mlxModel }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        active = try c.decodeIfPresent(TargetSpec.self, forKey: .active)
+        equivalents = try c.decodeIfPresent([TargetSpec].self, forKey: .equivalents) ?? []
+        mlxModel = try c.decodeIfPresent(String.self, forKey: .mlxModel)
+    }
+}
+
 public struct ProxyConfig: Codable, Equatable, Sendable {
     public static let retentionRange = 1...90
 
     public var logContent: Bool = false
     public var retentionDays: Int = 7 { didSet { retentionDays = Self.clamp(retentionDays) } }
+    /// nil is left out of the body: the router then keeps the routing it saved.
+    public var routing: RoutingConfig?
 
-    public init(logContent: Bool = false, retentionDays: Int = 7) {
+    public init(logContent: Bool = false, retentionDays: Int = 7, routing: RoutingConfig? = nil) {
         self.logContent = logContent
         self.retentionDays = Self.clamp(retentionDays)   // didSet does not run in init
+        self.routing = routing
     }
 
-    private enum CodingKeys: String, CodingKey { case logContent, retentionDays }
+    private enum CodingKeys: String, CodingKey { case logContent, retentionDays, routing }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         logContent = try c.decodeIfPresent(Bool.self, forKey: .logContent) ?? false
         retentionDays = Self.clamp(try c.decodeIfPresent(Int.self, forKey: .retentionDays) ?? 7)
+        routing = try c.decodeIfPresent(RoutingConfig.self, forKey: .routing)
     }
 
     private static func clamp(_ d: Int) -> Int { min(max(d, retentionRange.lowerBound), retentionRange.upperBound) }

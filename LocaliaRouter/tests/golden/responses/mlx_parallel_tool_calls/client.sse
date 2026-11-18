@@ -1,0 +1,33 @@
+event: response.created
+data: {"response":{"created_at":1700000000,"error":null,"id":"resp_1","incomplete_details":null,"model":"localia","object":"response","output":[],"status":"in_progress","usage":null},"sequence_number":0,"type":"response.created"}
+
+event: response.in_progress
+data: {"response":{"created_at":1700000000,"error":null,"id":"resp_1","incomplete_details":null,"model":"localia","object":"response","output":[],"status":"in_progress","usage":null},"sequence_number":1,"type":"response.in_progress"}
+
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"call_1","id":"fc_1","name":"Read","status":"in_progress","type":"function_call"},"output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"{\"file_path\":\"a.txt\"}","item_id":"fc_1","output_index":0,"sequence_number":3,"type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.done
+data: {"arguments":"{\"file_path\":\"a.txt\"}","item_id":"fc_1","output_index":0,"sequence_number":4,"type":"response.function_call_arguments.done"}
+
+event: response.output_item.done
+data: {"item":{"arguments":"{\"file_path\":\"a.txt\"}","call_id":"call_1","id":"fc_1","name":"Read","status":"completed","type":"function_call"},"output_index":0,"sequence_number":5,"type":"response.output_item.done"}
+
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"call_2","id":"fc_2","name":"Glob","status":"in_progress","type":"function_call"},"output_index":1,"sequence_number":6,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"{\"pattern\":\"*.md\"}","item_id":"fc_2","output_index":1,"sequence_number":7,"type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.done
+data: {"arguments":"{\"pattern\":\"*.md\"}","item_id":"fc_2","output_index":1,"sequence_number":8,"type":"response.function_call_arguments.done"}
+
+event: response.output_item.done
+data: {"item":{"arguments":"{\"pattern\":\"*.md\"}","call_id":"call_2","id":"fc_2","name":"Glob","status":"completed","type":"function_call"},"output_index":1,"sequence_number":9,"type":"response.output_item.done"}
+
+event: response.completed
+data: {"response":{"created_at":1700000000,"error":null,"id":"resp_1","incomplete_details":null,"model":"localia","object":"response","output":[{"arguments":"{\"file_path\":\"a.txt\"}","call_id":"call_1","id":"fc_1","name":"Read","status":"completed","type":"function_call"},{"arguments":"{\"pattern\":\"*.md\"}","call_id":"call_2","id":"fc_2","name":"Glob","status":"completed","type":"function_call"}],"status":"completed","usage":{"input_tokens":30,"output_tokens":25,"total_tokens":55}},"sequence_number":10,"type":"response.completed"}
+

@@ -4,14 +4,12 @@ import Foundation
 /// MLX (`mlx-lm`) as an inference engine, Apple silicon only. Installs a pinned `uv` (official standalone
 /// build, SHA-256 checked) under `AppSupport/engines/mlx/`, which creates a private Python and a venv with
 /// `mlx-lm` pinned to an exact version. Models are `mlx-community` repos downloaded into
-/// `AppSupport/models/mlx/<org>/<repo>/`. One `mlx_lm.server` serves the loaded model on a private port;
-/// Claude Code talks to an in-app `AnthropicGateway` (`baseURL`) that translates Anthropic Messages to it.
-public actor MLXEngine: Engine {
+/// `AppSupport/models/mlx/<org>/<repo>/`. One `mlx_lm.server` serves the loaded model on `baseURL`; clients
+/// reach it through Localia's router, which translates Anthropic Messages and Responses to chat completions.
+public actor MLXEngine: Engine, FailureRestarting {
     public nonisolated let id = EngineID.mlx
-    /// The Anthropic gateway.
+    /// `mlx_lm.server` (OpenAI chat completions), reached by the router and the speed meter.
     public nonisolated let baseURL: URL
-    /// `mlx_lm.server` (OpenAI chat completions), reached only through the gateway and the speed meter.
-    public nonisolated let upstreamURL: URL
 
     public static let uvVersion = "0.13.7"
     public static let uvSHA256 = "81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731"
@@ -40,19 +38,15 @@ public actor MLXEngine: Engine {
     private let uvArchiveURL: URL
     private let uvSHA256: String
     private let inspector: ProcessInspecting
-    private let gateway: AnthropicGateway
     private let served = ServedName()
     private var ownServer: (any ServerHandle)?
     private var queueTail: Task<Void, Never>?
     private var restarts: RestartPolicy
     /// Model MLX stopped serving because it ran out of memory again, until `takeFailure()` reads it.
     private var failure: String?
-    /// Lets the gateway (created before `self` exists) reach the engine.
-    private let deadRelay = DeadRelay()
 
     public init(
-        baseURL: URL = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxGatewayPort)")!,
-        upstreamURL: URL = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxServerPort)")!,
+        baseURL: URL = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxServerPort)")!,
         session: URLSession = .shared,
         runner: ProcessRunning = Shell(),
         downloader: Downloader = Downloader(),
@@ -70,7 +64,6 @@ public actor MLXEngine: Engine {
     ) {
         self.restarts = RestartPolicy(window: restartWindow, grace: restartGrace)
         self.baseURL = baseURL
-        self.upstreamURL = upstreamURL
         self.session = session
         self.runner = runner
         self.downloader = downloader
@@ -84,12 +77,6 @@ public actor MLXEngine: Engine {
         self.uvArchiveURL = uvArchiveURL
         self.uvSHA256 = uvSHA256
         self.inspector = inspector
-        let served = self.served
-        let relay = self.deadRelay
-        self.gateway = AnthropicGateway(port: UInt16(baseURL.port ?? LocaliaConstants.mlxGatewayPort),
-                                        upstream: upstreamURL, servedModel: { served.get() }, session: session,
-                                        onUpstreamDead: { relay.fire() })
-        relay.set { [weak self] in Task { await self?.upstreamDied() } }
         // Downloads abandoned by an earlier run (crash, quit mid-download) hold GBs nobody can see.
         Self.removeIncompleteModels(in: Paths.models(base: appSupportBase).appendingPathComponent("mlx", isDirectory: true))
     }
@@ -141,9 +128,11 @@ public actor MLXEngine: Engine {
         return failure
     }
 
-    /// The server's generation thread died (Metal out of memory): restart it with the same model, at most once
-    /// per `restartWindow`. Past that, stop it and keep the reason for `takeFailure()`.
-    func upstreamDied() async {
+    /// The router saw the server fail (its generation thread died, out of Metal memory, or it stopped
+    /// answering): restart it with the same model, at most once per `restartWindow`. Past that, stop it and keep
+    /// the reason for `takeFailure()`. Nothing happens when no model Localia started is served (the user
+    /// stopped MLX, or switched model).
+    public func restartAfterFailure() async {
         guard let name = served.get() else { return }
         // In the load queue, so it never runs alongside a user's load or unload.
         try? await serialized { await $0.handleDeath(of: name) }
@@ -256,26 +245,23 @@ public actor MLXEngine: Engine {
     // MARK: - Serving
 
     private func upstreamHealthy() async -> Bool {
-        var req = URLRequest(url: upstreamURL.appendingPathComponent("health"))
+        var req = URLRequest(url: baseURL.appendingPathComponent("health"))
         req.timeoutInterval = 2
         guard let (_, resp) = try? await session.data(for: req) else { return false }
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// Serving means Claude Code can reach a model: the gateway runs and `mlx_lm.server` answers.
-    public func isServing() async -> Bool {
-        gateway.isRunning ? await upstreamHealthy() : false
-    }
+    /// Serving means `mlx_lm.server` answers its `/health`.
+    public func isServing() async -> Bool { await upstreamHealthy() }
 
     /// `mlx_lm.server` serves one model, so `load` starts it. A server still running from before an app
-    /// restart gets its gateway back here.
+    /// restart is kept here.
     public func startServing() async throws {
         if await upstreamHealthy() {
-            // Never put the gateway in front of a server Localia did not start.
+            // Never adopt a server Localia did not start.
             guard ownServer != nil || record.recordedPID() != nil else {
-                throw EngineError.server("Port \(upstreamURL.port ?? LocaliaConstants.mlxServerPort) is already in use by another server.")
+                throw EngineError.server("Port \(baseURL.port ?? LocaliaConstants.mlxServerPort) is already in use by another server.")
             }
-            try await gateway.start()
             return
         }
         guard case .installed = await installState() else { throw EngineError.notInstalled }
@@ -285,7 +271,6 @@ public actor MLXEngine: Engine {
     public func serverPID() -> Int32? { ownServer?.pid ?? record.recordedPID() }
 
     public func stopServing() async throws {
-        gateway.stop()
         let handle = ownServer
         ownServer = nil
         served.set(nil)
@@ -512,7 +497,7 @@ public actor MLXEngine: Engine {
 
     // MARK: - Load
 
-    /// (Re)starts `mlx_lm.server` on this model, waits for `/health`, warms it up and starts the gateway.
+    /// (Re)starts `mlx_lm.server` on this model, waits for `/health` and warms it up.
     /// A server that already serves this model is kept. Loads and unloads are serialized.
     public func load(_ modelName: String, contextTokens: Int) async throws {
         try await serialized { try await $0.performLoad(modelName) }
@@ -531,12 +516,9 @@ public actor MLXEngine: Engine {
     private func performLoad(_ modelName: String) async throws {
         guard case .installed = await installState() else { throw EngineError.notInstalled }
         let dir = try modelDir(modelName)
-        if await servedName() == modelName {
-            try await gateway.start()
-            return
-        }
+        if await servedName() == modelName { return }
         try await stopServing()   // our own server only; a foreign one is never touched
-        let port = upstreamURL.port ?? LocaliaConstants.mlxServerPort
+        let port = baseURL.port ?? LocaliaConstants.mlxServerPort
         if await upstreamHealthy() { throw EngineError.server("Port \(port) is already in use by another server.") }
 
         let handle = try launcher.launch(executable: python, arguments: Self.serverArguments(modelDir: dir, port: port),
@@ -546,7 +528,6 @@ public actor MLXEngine: Engine {
         do {
             try await waitUntilHealthy(handle: handle)
             await warmUp()
-            try await gateway.start()
         } catch {
             try? await stopServing()
             throw error
@@ -567,7 +548,7 @@ public actor MLXEngine: Engine {
 
     /// One-token generation, so the first real answer does not pay for Metal kernel compilation.
     private func warmUp() async {
-        var req = URLRequest(url: upstreamURL.appendingPathComponent("v1/chat/completions"))
+        var req = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
         req.httpMethod = "POST"
         req.timeoutInterval = 120
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -590,7 +571,7 @@ public actor MLXEngine: Engine {
               let data = try? Data(contentsOf: url),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         for c in [obj, obj["text_config"] as? [String: Any] ?? [:]] {
-            if let n = AnthropicTranslation.positiveInt(c["max_position_embeddings"]) { return n }
+            if let n = JSONNumbers.positiveInt(c["max_position_embeddings"]) { return n }
         }
         return nil
     }
@@ -604,7 +585,7 @@ public actor MLXEngine: Engine {
     }
 }
 
-/// Model name the gateway lists, readable from its queue.
+/// Name of the model the server serves, readable outside the actor.
 private final class ServedName: @unchecked Sendable {
     private let lock = NSLock()
     private var name: String?
@@ -633,12 +614,4 @@ struct RestartPolicy: Sendable {
 
     /// The restart finished: failures in the next `grace` still belong to the old incident.
     mutating func restarted(at date: Date) { last = date }
-}
-
-/// Forwards the gateway's "upstream died" callback to the engine once it exists.
-private final class DeadRelay: @unchecked Sendable {
-    private let lock = NSLock()
-    private var handler: (@Sendable () -> Void)?
-    func set(_ h: @escaping @Sendable () -> Void) { lock.lock(); handler = h; lock.unlock() }
-    func fire() { lock.lock(); let h = handler; lock.unlock(); h?() }
 }

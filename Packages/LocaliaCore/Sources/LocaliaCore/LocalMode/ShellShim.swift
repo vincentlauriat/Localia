@@ -201,22 +201,31 @@ public struct ShellShim: ShellShimming {
 
     // MARK: - State
 
-    /// `proxyProbe` is the Localia proxy's health URL, given only when `baseURL` goes through the proxy
+    /// `proxyProbe` is the Localia router's health URL, given only when `baseURL` goes through the router
     /// (it then holds `ProxyURL.sessionPlaceholder`, which the shim replaces per run). Nil adds nothing,
-    /// so a direct state is exactly what it was before the proxy existed.
+    /// so a direct state is exactly what it was before the router existed.
+    /// Through the router's `auto` URL, `claude` gets the neutral model name and the engine probe is the
+    /// router's `auto/health`; `start=` and `recordmodel=` keep the real `model`, the one the app starts
+    /// and the one the run's `.session` record names.
     public func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                            profile: LaunchProfile, engine: EngineID, proxyProbe: URL? = nil) throws {
-        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: model, contextTokens: contextTokens,
+        let routed = proxyProbe != nil && ProxyURL.isRouted(baseURL)
+        let toolModel = routed ? ProxyURL.neutralModel : model
+        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: toolModel, contextTokens: contextTokens,
                                                   profile: profile,
                                                   configDir: profile == .light ? configDir : nil)
-        let probe = baseURL.appendingPathComponent(Self.healthPath(engine)).absoluteString
+        let probe = baseURL.appendingPathComponent(routed ? "health" : Self.healthPath(engine)).absoluteString
         var lines = [
             "# Localia local-mode state. Data only: the shim reads it line by line and never sources it.",
             "version=1",
             "on=\(on ? 1 : 0)",
             "engine=\(engine.rawValue)",
             "base=\(baseURL.absoluteString)",
-            "model=\(model)",
+            "model=\(toolModel)",
+        ]
+        // The real model, for the `.session` record only: the app protects it while the run lasts.
+        if routed { lines.append("recordmodel=\(model)") }
+        lines += [
             "policy=\(policy.rawValue)",
             "profile=\(profile.rawValue)",
             "probe=\(probe)",
@@ -309,9 +318,9 @@ public struct ShellShim: ShellShimming {
         # crashed, quit or deleted app can never leave `claude` pointing at a dead local server.
         # `command claude` always runs the real binary (the cloud version).
         function claude {
-        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_out _l_v _l_what
+        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_recmodel _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_pmax _l_out _l_v _l_what
           _l_state=\(state)
-          _l_on=0; _l_probe=; _l_pprobe=; _l_pdown=0; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_rec=
+          _l_on=0; _l_probe=; _l_pprobe=; _l_pdown=0; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_recmodel=; _l_rec=
           if [ -r "$_l_state" ]; then
             while IFS= read -r _l_line || [ -n "$_l_line" ]; do
               case $_l_line in
@@ -323,6 +332,7 @@ public struct ShellShim: ShellShimming {
                 base=*) _l_base=${_l_line#base=} ;;
                 engine=*) _l_engine=${_l_line#engine=} ;;
                 model=*) _l_model=${_l_line#model=} ;;
+                recordmodel=*) _l_recmodel=${_l_line#recordmodel=} ;;
                 wait=*)
                   # Digits only (1-999, no leading zero) before it reaches $(( )).
                   case ${_l_line#wait=} in ''|*[!0-9]*|0*|????*) ;; *) _l_wait=${_l_line#wait=} ;; esac
@@ -342,11 +352,13 @@ public struct ShellShim: ShellShimming {
         \(Self.substituteSession("_l_base", indent: "  "))
           case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
           case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
-          # The Localia proxy first (when the state goes through it), then the engine behind it.
+          # The Localia proxy first (when the state goes through it), then the engine behind it. Through the
+          # router the engine probe is its ready check, which may probe the engine twice: give it 3 s.
+          if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi
           if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
             _l_pdown=1
           fi
-          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m "$_l_pmax" "$_l_probe" >/dev/null 2>&1; then
             _l_ready=1
           else
             case $_l_policy in
@@ -387,9 +399,10 @@ public struct ShellShim: ShellShimming {
                   case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
                   case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
                   _l_pdown=0
+                  if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi
                   if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
                     _l_pdown=1
-                  elif [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+                  elif [ -n "$_l_probe" ] && command curl -fsS -m "$_l_pmax" "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi
@@ -413,6 +426,8 @@ public struct ShellShim: ShellShimming {
                 ;;
             esac
           fi
+          # Through the router `claude` is told the neutral model; the record names the real one.
+          if [ -n "$_l_recmodel" ]; then _l_model=$_l_recmodel; fi
           # Register this run for the app's Sessions card: one record file naming claude's own pid (the
           # subshell below writes it, then `exec`s claude, so its pid IS claude's). The file is removed when
           # claude exits; the app also drops it once that pid is gone. Best effort: never blocks `claude`.

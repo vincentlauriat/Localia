@@ -303,6 +303,44 @@ final class ProxyServiceManagerTests: XCTestCase {
         }
     }
 
+    /// A 1.3 service has no `route`; the router's is decoded, an unknown engine in it is dropped, and a
+    /// malformed one never makes a healthy service look silent. The service state is never touched.
+    func test_refreshRoute_decodesRouteAndIgnoresMissingField() async {
+        final class Body: @unchecked Sendable { var text = "" }
+        let body = Body()
+        let m = ProxyServiceManager(registrar: FakeRegistrar(status: .enabled),
+                                    fetch: { _ in (Data(body.text.utf8), 200) }, appVersion: "6",
+                                    tokenURL: dir.appendingPathComponent("token"),
+                                    pollInterval: .milliseconds(5), deadline: .milliseconds(200))
+        body.text = #"{"ok":true,"version":"6"}"#
+        let answered13 = await m.refreshRoute()
+        XCTAssertTrue(answered13, "a 1.3 service answers, without a route")
+        XCTAssertNil(m.route)
+
+        body.text = #"{"ok":true,"version":"6","route":{"state":"fallback","engine":"llamaCpp","model":"q","#
+            + #""reason":"engine-down","speed":"ok","engineFailure":"mlx"}}"#
+        await m.refreshRoute()
+        XCTAssertEqual(m.route, ProxyServiceManager.RouteStatus(state: "fallback", engine: .llamaCpp, model: "q",
+                                                                reason: "engine-down", speed: "ok", engineFailure: .mlx))
+
+        body.text = #"{"ok":true,"version":"6","route":{"state":"idle","engine":"future","speed":"unknown"}}"#
+        await m.refreshRoute()
+        XCTAssertEqual(m.route, ProxyServiceManager.RouteStatus(state: "idle", engine: nil, model: nil,
+                                                                reason: nil, speed: "unknown", engineFailure: nil))
+
+        body.text = #"{"ok":true,"version":"6","route":{"nonsense":1}}"#
+        await m.refreshRoute()
+        XCTAssertNil(m.route)
+        let answers = await m.answers()
+        XCTAssertTrue(answers, "a malformed route must not hide a healthy service")
+
+        body.text = "not json"
+        let answeredGarbage = await m.refreshRoute()
+        XCTAssertFalse(answeredGarbage, "no usable health answer reads as silent")
+        XCTAssertNil(m.route)
+        XCTAssertEqual(m.state, .unknown)
+    }
+
     func test_erase_withoutToken_throws() async {
         let m = make(FakeRegistrar(status: .enabled), StubHTTP(versions: ["6"]))
         do { try await m.erase(log: true, stats: true); XCTFail("expected throw") } catch {

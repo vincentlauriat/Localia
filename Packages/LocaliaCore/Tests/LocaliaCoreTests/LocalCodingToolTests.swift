@@ -134,17 +134,17 @@ final class LocalCodingToolTests: XCTestCase {
 
     // MARK: OpenCode
 
-    /// MLX: OpenCode and Pi go through the gateway, which passes chat completions to mlx_lm.server (renaming
-    /// the model); Codex needs the Responses API, which MLX lacks.
-    func test_mlx_endpointIsTheGateway_andCodexNeedsResponses() throws {
-        let gateway = MLXEngine().baseURL
-        XCTAssertEqual(gateway.port, LocaliaConstants.mlxGatewayPort)
-        let target = LaunchTarget.local(engine: .mlx, baseURL: gateway, model: "mlx-community/Qwen3-8B-4bit", contextTokens: 40960)
+    /// MLX: the engine's URL is mlx_lm.server itself (launches reach it through the router); Codex needs the
+    /// Responses API, which MLX lacks.
+    func test_mlx_endpointIsTheServer_andCodexNeedsResponses() throws {
+        let server = MLXEngine(appSupportBase: dir).baseURL
+        XCTAssertEqual(server.port, LocaliaConstants.mlxServerPort)
+        let target = LaunchTarget.local(engine: .mlx, baseURL: server, model: "mlx-community/Qwen3-8B-4bit", contextTokens: 40960)
         let open = text(try OpenCodeTool().configFiles(target: target, folder: dir, existing: [:])["opencode.json"])
-        XCTAssertTrue(open.contains(#""baseURL" : "http://127.0.0.1:11436/v1""#), open)
+        XCTAssertTrue(open.contains(#""baseURL" : "http://127.0.0.1:11437/v1""#), open)
         XCTAssertTrue(open.contains("mlx-community/Qwen3-8B-4bit"), open)
         let pi = text(try PiTool().configFiles(target: target, folder: dir, existing: [:])[PiTool.modelsFile])
-        XCTAssertTrue(pi.contains("http://127.0.0.1:11436/v1"), pi)
+        XCTAssertTrue(pi.contains("http://127.0.0.1:11437/v1"), pi)
         XCTAssertTrue(CodexTool().needsResponsesAPI)
         XCTAssertFalse(OpenCodeTool().needsResponsesAPI)
         XCTAssertFalse(PiTool().needsResponsesAPI)
@@ -358,5 +358,40 @@ final class LocalCodingToolTests: XCTestCase {
         runner.status = 1
         let c = await PiTool(searchPaths: [bin], runner: runner).version(at: bin)
         XCTAssertNil(c)
+    }
+
+    // MARK: Through the router
+
+    private var routedTarget: LaunchTarget {
+        .local(engine: .mlx, baseURL: ProxyURL.routed(session: "S-1"), model: ProxyURL.neutralModel, contextTokens: 65536)
+    }
+
+    /// Codex appends `/responses` to its base: the router serves it under `…/auto/v1`.
+    func test_codexConfig_routed_usesLocaliaModelAndAutoV1() throws {
+        let toml = text(try CodexTool().configFiles(target: routedTarget, folder: dir, existing: [:])[CodexTool.configFile])
+        XCTAssertTrue(toml.contains(#"model = "localia""#), toml)
+        XCTAssertTrue(toml.contains(#"base_url = "http://127.0.0.1:11438/s/S-1/auto/v1""#), toml)
+        XCTAssertTrue(toml.contains("model_context_window = 65536"), toml)
+    }
+
+    func test_opencode_and_pi_routed_useLocalia() async throws {
+        let open = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(
+            OpenCodeTool().configFiles(target: routedTarget, folder: dir, existing: [:])[OpenCodeTool.configFile])) as? [String: Any])
+        XCTAssertEqual(open["model"] as? String, "localia/localia")
+        let provider = try XCTUnwrap((open["provider"] as? [String: Any])?["localia"] as? [String: Any])
+        XCTAssertEqual((provider["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:11438/s/S-1/auto/v1")
+        XCTAssertEqual((provider["models"] as? [String: Any]).map { Array($0.keys) }, ["localia"])
+        let opencode = OpenCodeTool(searchPaths: [try fakeBinary("opencode")])
+        _ = await opencode.locate(refresh: false)
+        XCTAssertEqual(opencode.command(target: routedTarget, profile: .light, configDir: dir).arguments.suffix(2),
+                       ["-m", "localia/localia"])
+
+        let files = try PiTool().configFiles(target: routedTarget, folder: dir, existing: [:])
+        let models = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(files[PiTool.modelsFile])) as? [String: Any])
+        let pi = try XCTUnwrap((models["providers"] as? [String: Any])?["localia"] as? [String: Any])
+        XCTAssertEqual(pi["baseUrl"] as? String, "http://127.0.0.1:11438/s/S-1/auto/v1")
+        XCTAssertEqual((pi["models"] as? [[String: Any]])?.first?["id"] as? String, "localia")
+        let settings = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(files[PiTool.settingsFile])) as? [String: Any])
+        XCTAssertEqual(settings["defaultModel"] as? String, "localia")
     }
 }

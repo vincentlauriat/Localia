@@ -1233,6 +1233,22 @@
         }
       }
     },
+    "Click Restart, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click Restart, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquez sur Redémarrer, puis réessayez."
+          }
+        }
+      }
+    },
     "Click Set Up to get your AI ready.": {
       "localizations": {
         "en": {
@@ -3169,6 +3185,22 @@
         }
       }
     },
+    "Localia needs a restart": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia needs a restart"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia doit redémarrer"
+          }
+        }
+      }
+    },
     "Localia Settings": {
       "localizations": {
         "en": {
@@ -3341,6 +3373,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Localia va ajouter ce bloc à vos fichiers de démarrage du shell. Une sauvegarde est faite d'abord. Le bloc est retiré si vous revenez à Sessions Localia uniquement, ou avec Retirer Localia de mon shell dans les Réglages. Supprimer l'app ne le retire pas."
+          }
+        }
+      }
+    },
+    "Localia's router is needed for this model. Click Restart, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia's router is needed for this model. Click Restart, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le routeur de Localia est nécessaire pour ce modèle. Cliquez sur Redémarrer, puis réessayez."
           }
         }
       }
@@ -8625,6 +8673,102 @@
           "stringUnit": {
             "state": "translated",
             "value": "Annulée"
+          }
+        }
+      }
+    },
+    "Localia's router is not running": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia's router is not running"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le routeur de Localia ne répond pas"
+          }
+        }
+      }
+    },
+    "Direct — no fallback, not counted": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct — no fallback, not counted"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct — sans repli, non compté"
+          }
+        }
+      }
+    },
+    "Route": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Route"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Itinéraire"
+          }
+        }
+      }
+    },
+    "Fallback — engine stopped": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fallback — engine stopped"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repli — moteur arrêté"
+          }
+        }
+      }
+    },
+    "Fixed engine": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fixed engine"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moteur fixe"
+          }
+        }
+      }
+    },
+    "Localia, local AI in trouble": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, local AI in trouble"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, l'IA locale a un souci"
           }
         }
       }

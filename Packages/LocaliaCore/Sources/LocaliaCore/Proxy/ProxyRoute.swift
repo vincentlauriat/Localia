@@ -39,8 +39,22 @@ public enum ProxyURL {
     /// Placeholder the shell shim replaces with the real session id.
     public static let sessionPlaceholder = "@LOCALIA_SESSION@"
 
+    /// The one model name tools send through the router, which answers it with the model it picks.
+    public static let neutralModel = "localia"
+
+    /// Pinned to one engine. Sessions started before the router keep working on these paths.
     public static func base(port: Int = LocaliaConstants.proxyPort, session: String, engine: EngineID) -> URL {
         URL(string: "http://127.0.0.1:\(port)/s/\(session)/\(engine.rawValue)")!
+    }
+
+    /// The router's own segment: it picks the engine and model for each request.
+    public static func routed(port: Int = LocaliaConstants.proxyPort, session: String) -> URL {
+        URL(string: "http://127.0.0.1:\(port)/s/\(session)/auto")!
+    }
+
+    /// Whether `url` is a `routed(...)` URL on the router's port.
+    public static func isRouted(_ url: URL, port: Int = LocaliaConstants.proxyPort) -> Bool {
+        url.absoluteString.hasPrefix("http://127.0.0.1:\(port)/s/") && url.lastPathComponent == "auto"
     }
 }
 
@@ -52,12 +66,12 @@ public struct RouteResolver: Sendable {
         self.routes = routes; self.proxyHealthy = proxyHealthy
     }
 
-    /// Unhealthy proxy → direct. MLX is always proxied (its gateway is in-app). Otherwise the per-engine
-    /// choice, proxy by default.
+    /// Unhealthy router → direct. MLX always goes through the router (it has no Direct choice since the
+    /// router serves it). Otherwise the per-engine choice, the router by default.
     public func baseURL(engine: EngineID, engineBase: URL, session: String) -> URL {
         guard proxyHealthy else { return engineBase }
         if engine == .mlx || (routes[engine] ?? .proxy) == .proxy {
-            return ProxyURL.base(session: session, engine: engine)
+            return ProxyURL.routed(session: session)
         }
         return engineBase
     }

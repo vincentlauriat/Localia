@@ -63,6 +63,11 @@ struct InstalledRow: Identifiable, Equatable {
     let isDefault: Bool
 }
 
+/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble (the router does not
+/// answer or is known not to run, falls back to another engine, has none left, or an answer stream died on its
+/// engine).
+enum MenuBarState: Equatable { case off, local, trouble }
+
 /// The single place that composes the core types. Views only read its state and call its methods.
 @MainActor
 final class AppModel: ObservableObject {
@@ -104,6 +109,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var proxyState: ProxyState = .unknown
     /// A check started from the Settings "Restart" button is running.
     @Published private(set) var proxyRestarting = false
+    /// Where the router sends requests, polled while local mode is on; nil when off or when it did not say.
+    @Published private(set) var route: ProxyServiceManager.RouteStatus?
+    /// The last route poll got no answer from the router. False before the first poll, so a launch never
+    /// raises a false alarm.
+    @Published private(set) var routerSilent = false
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
@@ -166,6 +176,16 @@ final class AppModel: ObservableObject {
     private var cancelledDownloads: Set<String> = []
     private var pollTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
+    /// Polls the router's route while local mode is on.
+    private var routePollTask: Task<Void, Never>?
+    /// The route poll may restart MLX for the failure it shows; re-armed once a poll shows none.
+    private var mlxRestartArmed = true
+    private var lastMLXRestart: ContinuousClock.Instant?
+    /// The route poll's own service check (`recheckProxyIfStale`): running now, when it last ran, and the wait
+    /// before the next one (nil: `proxyRecheckInterval`; doubled by each check that changes nothing).
+    private var proxyRecheckRunning = false
+    private var lastProxyRecheck: ContinuousClock.Instant?
+    private var proxyRecheckWait: Duration?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
     /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
@@ -196,6 +216,8 @@ final class AppModel: ObservableObject {
         bridge.model = self
         settings.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
         controller.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
+        // Every way local mode changes (the switch, going offline, a reset) starts or stops the route poll.
+        controller.$isOn.removeDuplicates().sink { [weak self] on in self?.pollRoute(on) }.store(in: &bag)
         Task { await registry.setActive(deps.settings.activeEngine) }
     }
 
@@ -203,6 +225,8 @@ final class AppModel: ObservableObject {
 
     /// Starts background work (status polling, recommendations, offline monitor). Not called in tests.
     func start() async {
+        // Before anything writes the shim state: 1.4 settings drop MLX Direct (the router serves MLX).
+        settings.migrateForRouter()
         // Shells opened from now on get this build's shim function (an update may have changed it).
         do { try controller.refreshShimFiles() } catch {
             log.error("cannot refresh the shell shim: \(String(describing: error), privacy: .public)")
@@ -216,7 +240,7 @@ final class AppModel: ObservableObject {
             }
         }
         startPathMonitor()
-        Task { await ensureProxy() }
+        Task { await startRouting() }
         Task { await refreshRecommendations() }
         // Login shells and `--version` can be slow: never on the path of the engine status.
         Task { await refreshLocalTools(refresh: true) }
@@ -232,7 +256,7 @@ final class AppModel: ObservableObject {
     /// Unloads what Localia loaded and stops the servers it started (never the user's own). A model or an
     /// engine that a Localia session still uses is left running, so quitting never cuts a live session.
     func shutdown() async {
-        pollTask?.cancel(); statusTask?.cancel(); pathMonitor?.cancel()
+        pollTask?.cancel(); statusTask?.cancel(); routePollTask?.cancel(); pathMonitor?.cancel()
         for t in downloadTasks.values { t.cancel() }
         let inUse = Set(await busyKeys())
         for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
@@ -461,6 +485,85 @@ final class AppModel: ObservableObject {
 
     var isLocalModeOn: Bool { controller.isOn }
 
+    var menuBarState: MenuBarState {
+        guard isLocalModeOn else { return .off }
+        if case .unavailable = proxyState { return .trouble }
+        if routerSilent { return .trouble }
+        guard let route else { return .local }
+        return route.state == "fallback" || route.state == "down" || route.engineFailure != nil ? .trouble : .local
+    }
+
+    /// One loop while local mode is on: asks the router right away, then every `routePollInterval`. Turning
+    /// local mode off cancels it and forgets the route. The loop never holds the model across its sleep.
+    private func pollRoute(_ on: Bool) {
+        routePollTask?.cancel()
+        routePollTask = nil
+        guard on else { route = nil; routerSilent = false; mlxRestartArmed = true; return }
+        let proxy = proxy, interval = deps.routePollInterval
+        routePollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let answered = await proxy.refreshRoute()
+                guard !Task.isCancelled, self != nil else { return }
+                self?.applyRoute(proxy.route, answered: answered)
+                self?.recheckProxyIfStale(answered: answered)
+                await self?.restartMLXIfFailing(proxy.route)
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    private func applyRoute(_ newRoute: ProxyServiceManager.RouteStatus?, answered: Bool) {
+        if route != newRoute { route = newRoute }
+        if routerSilent == answered { routerSilent = !answered }
+    }
+
+    /// The poll and the last service check disagree: the router came back after a check found it down (a slow
+    /// first start, launchd's respawn delay), or it died while it counted as running. Check again, so the icon,
+    /// the fallback and the shim state follow without waiting for a launch. Not before the first check (it is
+    /// still running), and apart from the poll, so the menu bar keeps updating during a slow check. A check that
+    /// changes nothing (an older router that keeps answering, whose version never matches) doubles the wait
+    /// before the next one, up to ten `proxyRecheckInterval`s, so its streams are not cut on every poll; the
+    /// wait resets once the poll and the state agree again.
+    private func recheckProxyIfStale(answered: Bool) {
+        guard proxyState != .unknown else { return }
+        let base = deps.proxyRecheckInterval
+        guard answered != proxy.isHealthy else { proxyRecheckWait = nil; return }
+        let wait = proxyRecheckWait ?? base
+        guard !proxyRecheckRunning, lastProxyRecheck.map({ ContinuousClock.now - $0 >= wait }) ?? true else { return }
+        proxyRecheckRunning = true
+        lastProxyRecheck = .now
+        Task { [weak self] in
+            guard let self else { return }
+            let healthyBefore = self.proxy.isHealthy
+            await self.ensureProxy()
+            if self.proxy.isHealthy == healthyBefore { self.proxyRecheckWait = min(wait * 2, base * 10) }
+            self.proxyRecheckRunning = false
+        }
+    }
+
+    /// The router reports MLX failing (its generation died, or its server is down): with "Start it
+    /// automatically", restart it once per failure (the router keeps reporting a dead generation until an answer
+    /// succeeds) and at most once per `engineRestartInterval`. MLX only restarts a model Localia started and
+    /// still serves, so a user who stopped it is left alone.
+    private func restartMLXIfFailing(_ route: ProxyServiceManager.RouteStatus?) async {
+        let dead = route?.engineFailure == .mlx
+        let down = route?.state == "down" && route?.engine == .mlx
+        guard dead || down else { mlxRestartArmed = true; return }
+        guard mlxRestartArmed, settings.engineDownPolicy == .autoStart,
+              lastMLXRestart.map({ ContinuousClock.now - $0 >= deps.engineRestartInterval }) ?? true,
+              let mlx = await registry.engine(.mlx) as? any FailureRestarting else { return }
+        // A "down" the router has not checked again while MLX answers once more: nothing to restart.
+        if !dead, await mlx.isServing() { return }
+        mlxRestartArmed = false
+        lastMLXRestart = .now
+        // Apart from the poll, so the menu bar keeps updating during a long reload.
+        Task { [weak self] in
+            await mlx.restartAfterFailure()
+            await self?.refreshStatus()
+            await self?.pushAfterLoadChange(on: .mlx)
+        }
+    }
+
     func setLocalMode(_ on: Bool) async {
         switchingLocalMode = true
         defer { switchingLocalMode = false }
@@ -487,6 +590,7 @@ final class AppModel: ObservableObject {
         await refreshShim()
         await refreshStatus()
         await refreshLaunchTarget()
+        await pushProxyConfig()
     }
 
     /// Policy, profile and similar settings feed the shim state.
@@ -494,10 +598,22 @@ final class AppModel: ObservableObject {
         Task { await refreshShim() }
     }
 
+    /// At app start: the first router check, then the shim state, so open shells pick up this build's
+    /// routing (the router's `auto` URL) on their next `claude`. Written only once the check has told
+    /// routed from Direct: before it, the router counts as down and the state would say Direct.
+    func startRouting() async {
+        guard !(await ensureProxy()) else { return }
+        do { try await controller.refreshShimState() } catch {
+            log.error("cannot refresh the shell shim state: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     /// Checks (registers, restarts) the proxy service, pushes the settings to it when it runs, and switches
     /// proxied engines to direct, visibly, when it cannot run. The shim state follows the routing.
     /// `force` (Settings "Restart") re-registers the service even when it answers.
-    func ensureProxy(force: Bool = false) async {
+    /// Returns whether it re-wrote the shim state (the routing changed).
+    @discardableResult
+    func ensureProxy(force: Bool = false) async -> Bool {
         let wasHealthy = routing.resolver.proxyHealthy
         let wasFallback = proxyFallbackActive
         if force { await proxy.restart() } else { await proxy.ensureRunning() }
@@ -505,14 +621,16 @@ final class AppModel: ObservableObject {
         switch proxy.state {
         case .running:
             proxyFallbackActive = false
-            await proxy.push(settings.proxyConfig)
+            await sendProxyConfig()
         case let .unavailable(reason):
             if !wasFallback { log.error("proxy unavailable, engines go direct: \(reason, privacy: .public)") }
             proxyFallbackActive = true
         case .unknown:
             break
         }
-        if routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) { await refreshShim() }
+        guard routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) else { return false }
+        await refreshShim()
+        return true
     }
 
     /// Settings "Restart": re-registers the service (unless it is off in Login Items) and pushes the settings.
@@ -541,7 +659,58 @@ final class AppModel: ObservableObject {
     /// Only while the service runs: otherwise `ensureProxy` pushes the settings at its next successful check.
     private func pushProxyConfig() async {
         guard proxy.isHealthy else { return }
-        await proxy.push(settings.proxyConfig)
+        await sendProxyConfig()
+    }
+
+    /// Bumped by every push: a push whose routing took longer to read than a newer one's is dropped, so the
+    /// router never ends on an older config.
+    private var pushGeneration = 0
+
+    private func sendProxyConfig() async {
+        pushGeneration &+= 1
+        let generation = pushGeneration
+        let routing = await routingConfig()
+        guard generation == pushGeneration else { return }
+        var config = settings.proxyConfig
+        config.routing = routing
+        await proxy.push(config)
+    }
+
+    /// What the router answers the neutral model name with: the selected model on the active engine, then the
+    /// same llmfit candidate installed on each other engine (ollama, llama.cpp, MLX order). A served name with
+    /// no candidate id has no equivalent.
+    func routingConfig() async -> RoutingConfig {
+        let activeEngine = settings.activeEngine
+        var active: TargetSpec?
+        var equivalents: [TargetSpec] = []
+        // A stopped engine is not "no model" (as for launches): its last-used model stays the active one.
+        let stoppedEngineModel = unreachableEngines.contains(activeEngine) ? settings.lastModel : nil
+        if let model = selectedModel ?? stoppedEngineModel, !model.isEmpty {
+            active = TargetSpec(engine: activeEngine, model: model,
+                                contextTokens: await contextTokens(engine: activeEngine, model: model))
+            if let id = settings.modelIDs[model] {
+                for engine in EngineID.allCases where engine != activeEngine {
+                    for row in installed where row.engine == engine && settings.modelIDs[row.name] == id {
+                        equivalents.append(TargetSpec(engine: engine, model: row.name,
+                                                      contextTokens: await contextTokens(engine: engine, model: row.name)))
+                    }
+                }
+            }
+        }
+        let mlxLoaded = try? await registry.engine(.mlx)?.loadedModels()
+        return RoutingConfig(active: active, equivalents: equivalents, mlxModel: mlxLoaded?.first?.name)
+    }
+
+    /// The engine's window for the model; `localContextTokens` (what launches load with) when it gives none.
+    private func contextTokens(engine id: EngineID, model: String) async -> Int {
+        guard let engine = await registry.engine(id) else { return LocaliaConstants.localContextTokens }
+        let window = await engine.contextWindow(model)
+        return window > 0 ? window : LocaliaConstants.localContextTokens
+    }
+
+    /// llama.cpp and MLX serve one model: loading or unloading one changes what the router may reach there.
+    private func pushAfterLoadChange(on engine: EngineID) async {
+        if engine.servesOneModel { await pushProxyConfig() }
     }
 
     /// Settings "Erase…": throws the service's error, which the sheet shows inline.
@@ -556,10 +725,14 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The router follows the model in use: the launch target is resolved again (it names the selected
+    /// model while local mode is on), then pushed.
     private func noteModelUsed(_ model: String) async {
         do { try await controller.noteModelUsed(model) } catch {
             show(error, title: String(localized: "Could not update local mode for every claude"))
         }
+        await refreshLaunchTarget()
+        await pushProxyConfig()
     }
 
     // MARK: - Launch
@@ -594,9 +767,11 @@ final class AppModel: ObservableObject {
         localTools = rows
     }
 
-    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can.
+    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can. The
+    /// router speaks the Responses API for every engine: only a direct engine without it is a reason.
     func unavailableReason(_ tool: LocalToolRow) -> String? {
-        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI else { return nil }
+        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI,
+              !routing.resolver.proxyHealthy else { return nil }
         return String(localized: "Needs the Responses API, which \(Self.engineName(settings.activeEngine)) does not offer")
     }
 
@@ -604,6 +779,13 @@ final class AppModel: ObservableObject {
         let real = url.resolvingSymlinksInPath()
         let date = (try? FileManager.default.attributesOfItem(atPath: real.path)[.modificationDate]) as? Date
         return "\(real.path)|\(date?.timeIntervalSince1970 ?? 0)"
+    }
+
+    /// What the tool is given: through the router, its `auto` URL and the neutral model with the real
+    /// window; direct, the target itself.
+    private func toolTarget(_ target: LaunchTarget, _ routedBase: URL?) -> LaunchTarget {
+        guard let routedBase, case let .local(engine, _, _, window) = target else { return target }
+        return .local(engine: engine, baseURL: routedBase, model: ProxyURL.neutralModel, contextTokens: window)
     }
 
     /// `toolID` nil launches Claude Code; otherwise one of `deps.localTools`, which run in local mode only.
@@ -633,12 +815,6 @@ final class AppModel: ObservableObject {
                              message: String(localized: "\(localTool.displayName) runs only with a local model. Turn on local mode, then try again."))
             return
         }
-        if let localTool, localTool.needsResponsesAPI, case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
-            let engine = Self.engineName(engineID)
-            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
-                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
-            return
-        }
         let sessionID = UUID()
         if case .local = target {
             if case .unknown = proxy.state {
@@ -650,7 +826,31 @@ final class AppModel: ObservableObject {
                 await ensureProxy()
             }
         }
-        target = controller.routed(target, session: sessionID.uuidString)
+        // Decided once, so the tool's URL cannot change while the model loads. Through the router the tool
+        // gets its `auto` URL and the neutral model; `target` keeps the real model for the engine side.
+        var routedBase: URL?
+        if case let .local(_, url, _, _) = controller.routed(target, session: sessionID.uuidString),
+           ProxyURL.isRouted(url) {
+            routedBase = url
+        }
+        if let localTool, localTool.needsResponsesAPI, routedBase == nil,
+           case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
+            let engine = Self.engineName(engineID)
+            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
+                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
+            return
+        }
+        if routedBase == nil, case .local(.mlx, _, _, _) = target {
+            // MLX has no Direct choice: only the router speaks Anthropic and Responses to mlx_lm.server, so
+            // with the router down, offer to restart it.
+            alert = AppAlert(title: String(localized: "Localia's router is not running"),
+                             message: String(localized: "Localia's router is needed for this model. Click Restart, then try again."),
+                             action: .init(title: String(localized: "Restart")) { [weak self] in
+                                 await self?.restartProxy()
+                             },
+                             hint: .restartRouter)
+            return
+        }
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
         defer { if let reserved { release(reserved) } }
@@ -705,7 +905,7 @@ final class AppModel: ObservableObject {
             }
             if let localTool {
                 do {
-                    configDir = try localTool.prepareConfig(target: target, folder: folder,
+                    configDir = try localTool.prepareConfig(target: toolTarget(target, routedBase), folder: folder,
                                                             dir: Paths.tool(localTool.id, base: deps.appSupportBase))
                 } catch {
                     busyMessage = nil
@@ -715,15 +915,18 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        let command = tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
+        let command = tool.command(target: toolTarget(target, routedBase), profile: settings.launchProfile,
+                                   configDir: configDir)
         do {
             let url: URL
             do {
                 // The proxy tells sessions apart by this record; a failure must not block the launch.
                 if session != nil {
                     do {
+                        var window = LocaliaConstants.localContextTokens
+                        if case let .local(_, _, _, w) = target { window = w }
                         try SessionAttribution.write(session: sessionID, tool: tool.displayName, folder: folder,
-                                                     dir: Paths.sessions(base: deps.appSupportBase))
+                                                     contextTokens: window, dir: Paths.sessions(base: deps.appSupportBase))
                     } catch {
                         log.error("Could not record the session attribution: \(error.localizedDescription)")
                     }
@@ -845,6 +1048,7 @@ final class AppModel: ObservableObject {
         busyMessage = nil
         await forgetReplaced(on: engine)
         loadedByLocalia.insert(ModelKey(engine: engine.id, model: model))
+        await pushAfterLoadChange(on: engine.id)
         return .loadedByLocalia
     }
 
@@ -857,6 +1061,7 @@ final class AppModel: ObservableObject {
             log.error("unload after failed launch: \(String(describing: error), privacy: .public)")
         }
         loadedByLocalia.remove(key)
+        await pushAfterLoadChange(on: key.engine)
     }
 
     /// Measured memory, else the estimate of a listed candidate, else the estimate saved at download,
@@ -907,6 +1112,7 @@ final class AppModel: ObservableObject {
                   let e = await registry.engine(f.engine) else { continue }
             try? await e.unload(f.model)
             loadedByLocalia.remove(key)
+            await pushAfterLoadChange(on: f.engine)
         }
         await refreshStatus()
     }
@@ -989,6 +1195,7 @@ final class AppModel: ObservableObject {
             try? await e.stopServing()
         }
         await refreshStatus()
+        await pushProxyConfig()
     }
 
     /// Ollama starts its server. llama-server and mlx_lm.server serve exactly one model, so starting them loads
@@ -1039,6 +1246,7 @@ final class AppModel: ObservableObject {
         }
         try? await e.stopServing()
         await refreshStatus()
+        await pushAfterLoadChange(on: e.id)
         if activeServing {
             alert = AppAlert(title: String(localized: "Engine left running"),
                              message: String(localized: "This server was not started by Localia, so it was left running."))
@@ -1092,6 +1300,7 @@ final class AppModel: ObservableObject {
             try await engine.load(model, contextTokens: LocaliaConstants.localContextTokens)
             await forgetReplaced(on: engine)
             loadedForShim.insert(key)
+            await pushAfterLoadChange(on: engine.id)
         } catch {
             log.error("localia://start failed: \(String(describing: error), privacy: .public)")
         }
@@ -1135,6 +1344,7 @@ final class AppModel: ObservableObject {
             self.downloads[c.id] = nil
             self.downloadTasks[c.id] = nil
             await self.refreshInstalled()
+            await self.pushProxyConfig()
         }
     }
 
@@ -1200,6 +1410,7 @@ final class AppModel: ObservableObject {
             show(error, title: String(localized: "Could not delete the model"))
         }
         await refreshInstalled()
+        await pushProxyConfig()
     }
 
     /// Makes `row` the model launches and chat use (Models window "Set as Default", or a click in the panel),

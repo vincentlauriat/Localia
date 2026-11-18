@@ -1,0 +1,14 @@
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","reasoning":"Let me"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"reasoning":" think."}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":"\n\n"}}]}
+
+data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":"Answer: 4."}}]}
+
+data: {"choices":[{"index":0,"finish_reason":"stop","delta":{}}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":9}}
+
+data: [DONE]
+

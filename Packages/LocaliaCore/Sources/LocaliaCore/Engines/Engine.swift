@@ -6,8 +6,7 @@ public enum EngineID: String, Sendable, Codable, CaseIterable {
     /// The engine runs one model at a time: loading another one replaces the model a session uses.
     public var servesOneModel: Bool { self != .ollama }
 
-    /// The engine's `/v1` serves the OpenAI Responses API (Codex). `mlx_lm.server` has only chat completions,
-    /// which the MLX gateway passes through.
+    /// The engine's `/v1` serves the OpenAI Responses API (Codex). `mlx_lm.server` has only chat completions.
     public var servesResponsesAPI: Bool { self != .mlx }
 }
 
@@ -38,6 +37,13 @@ public enum EngineError: Error, Equatable {
     case serverDidNotStart
     case assetNotFound(String)
     case checksumNotFound(String)
+}
+
+/// An engine the app restarts when Localia's router reports it failing (MLX: a dead generation, or a server
+/// that stopped answering).
+public protocol FailureRestarting: Engine {
+    /// Restarts what the engine served, if Localia started it; does nothing otherwise.
+    func restartAfterFailure() async
 }
 
 public protocol Engine: Sendable {

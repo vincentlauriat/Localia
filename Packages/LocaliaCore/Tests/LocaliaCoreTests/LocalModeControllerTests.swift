@@ -250,11 +250,11 @@ final class LocalModeControllerTests: XCTestCase {
 
     // MARK: proxy routing
 
-    private func makeRouted(healthy: Bool, routes: [EngineID: EngineRoute] = [.ollama: .proxy])
-        -> (LocalModeController, FakeShim) {
+    private func makeRouted(healthy: Bool, routes: [EngineID: EngineRoute] = [.ollama: .proxy],
+                            engine: ModelEngine? = nil) -> (LocalModeController, FakeShim) {
         let shim = FakeShim()
         let c = LocalModeController(settings: InMemoryLocalModeSettings(), shim: shim,
-                                    source: FakeSource(engine: ModelEngine(id: .ollama, baseURL: url, models: ["a"])),
+                                    source: FakeSource(engine: engine ?? ModelEngine(id: .ollama, baseURL: url, models: ["a"])),
                                     routes: { RouteResolver(routes: routes, proxyHealthy: healthy) })
         return (c, shim)
     }
@@ -267,8 +267,8 @@ final class LocalModeControllerTests: XCTestCase {
         guard case let .local(_, unrouted, _, _) = target else { return XCTFail() }
         XCTAssertEqual(unrouted, url)
         guard case let .local(engine, baseURL, model, window) = c.routed(target, session: "S-1") else { return XCTFail() }
-        XCTAssertEqual(engine, .ollama); XCTAssertEqual(model, "a"); XCTAssertEqual(window, 32768)
-        XCTAssertEqual(baseURL, URL(string: "http://127.0.0.1:11438/s/S-1/ollama")!)
+        XCTAssertEqual(engine, .ollama); XCTAssertEqual(model, ProxyURL.neutralModel); XCTAssertEqual(window, 32768)
+        XCTAssertEqual(baseURL, URL(string: "http://127.0.0.1:11438/s/S-1/auto")!)
     }
 
     func test_target_usesEngineURL_whenUnhealthy() async throws {
@@ -286,7 +286,9 @@ final class LocalModeControllerTests: XCTestCase {
         let (c, shim) = makeRouted(healthy: true)
         try await c.setScope(.everyClaude)
         try await c.setOn(true)
-        XCTAssertEqual(shim.states.last?.baseURL, ProxyURL.base(session: ProxyURL.sessionPlaceholder, engine: .ollama))
+        XCTAssertEqual(shim.states.last?.baseURL, ProxyURL.routed(session: ProxyURL.sessionPlaceholder))
+        // The real model: the shim writes the neutral name itself, and keeps the real one to start the engine.
+        XCTAssertEqual(shim.states.last?.model, "a")
         XCTAssertEqual(shim.states.last?.engine, .ollama)
         XCTAssertEqual(shim.states.last?.proxyProbe, URL(string: "http://127.0.0.1:11438/localia/health")!)
 
@@ -295,5 +297,44 @@ final class LocalModeControllerTests: XCTestCase {
         try await direct.setOn(true)
         XCTAssertEqual(directShim.states.last?.baseURL, url)
         XCTAssertNil(directShim.states.last?.proxyProbe)
+    }
+
+    /// MLX is reachable only through the router (`mlx_lm.server` speaks no Anthropic): with the router down, the
+    /// shim still targets the router and probes it, so its engine-down policy applies instead of a raw server.
+    func test_shimState_mlxNeverPointsAtTheServer_whenRouterDown() async throws {
+        let server = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxServerPort)")!
+        let (c, shim) = makeRouted(healthy: false, routes: [.mlx: .direct],
+                                   engine: ModelEngine(id: .mlx, baseURL: server, models: ["mlx-community/A-4bit"]))
+        try await c.setScope(.everyClaude)
+        try await c.setOn(true)
+        let state = try XCTUnwrap(shim.states.last)
+        XCTAssertNotEqual(state.baseURL.port, LocaliaConstants.mlxServerPort)
+        XCTAssertEqual(state.baseURL, ProxyURL.routed(session: ProxyURL.sessionPlaceholder))
+        XCTAssertEqual(state.proxyProbe, URL(string: "http://127.0.0.1:11438/localia/health")!)
+        XCTAssertEqual(state.engine, .mlx)
+        XCTAssertEqual(state.model, "mlx-community/A-4bit")
+    }
+
+    /// A routed launch names the neutral model; the engine and the window it was resolved with are kept.
+    func test_controller_routedUsesNeutralModel_keepsWindow() async throws {
+        let (c, _) = makeRouted(healthy: true)
+        try await c.setOn(true)
+        let target = LaunchTarget.local(engine: .ollama, baseURL: url, model: "a", contextTokens: 65536)
+        guard case let .local(engine, baseURL, model, window) = c.routed(target, session: "S-1") else { return XCTFail() }
+        XCTAssertEqual(engine, .ollama)
+        XCTAssertEqual(baseURL, URL(string: "http://127.0.0.1:11438/s/S-1/auto")!)
+        XCTAssertEqual(model, "localia")
+        XCTAssertEqual(window, 65536)
+    }
+
+    /// Direct (route chosen, or the router not answering): the target is exactly what was resolved.
+    func test_controller_directKeepsRealModel() async throws {
+        let target = LaunchTarget.local(engine: .ollama, baseURL: url, model: "a", contextTokens: 65536)
+        for (healthy, routes) in [(false, [EngineID.ollama: EngineRoute.proxy]), (true, [.ollama: .direct])] {
+            let (c, _) = makeRouted(healthy: healthy, routes: routes)
+            guard case let .local(engine, baseURL, model, window) = c.routed(target, session: "S-1") else { return XCTFail() }
+            XCTAssertEqual(engine, .ollama); XCTAssertEqual(baseURL, url)
+            XCTAssertEqual(model, "a"); XCTAssertEqual(window, 65536)
+        }
     }
 }

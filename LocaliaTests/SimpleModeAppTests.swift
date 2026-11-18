@@ -355,7 +355,7 @@ final class SimpleModeAppTests: XCTestCase {
 
     func testSimpleCopyNeverNamesTechnicalThings() async throws {
         let hints: [SimpleHint] = [.tryAgain, .checkConnection, .freeMemory, .lighterModel, .setUp, .installClaude,
-                                   .closeOtherSession, .cloudLogin, .noModelFits]
+                                   .closeOtherSession, .cloudLogin, .noModelFits, .restartRouter]
         for hint in hints {
             for apps in [[], ["Microsoft Teams", "Google Chrome"]] {
                 let issue = SimpleIssue(hint: hint, heavyApps: apps)

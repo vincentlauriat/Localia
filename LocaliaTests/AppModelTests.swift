@@ -28,6 +28,9 @@ final class AppModelTests: XCTestCase {
                            cloudLogin: Bool = true, localTools: [any LocalCodingTool] = [],
                            mlxRepos: FakeMLXRepos = FakeMLXRepos(),
                            proxy: any ProxyServiceControlling = InertProxyService(),
+                           routePollInterval: Duration = .seconds(10),
+                           engineRestartInterval: Duration = .seconds(60),
+                           proxyRecheckInterval: Duration = .seconds(30),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -55,17 +58,279 @@ final class AppModelTests: XCTestCase {
             notify: { [weak self] in self?.notified.append($0) },
             localTools: localTools,
             mlxRepos: mlxRepos,
-            proxy: proxy)
+            proxy: proxy,
+            routePollInterval: routePollInterval,
+            engineRestartInterval: engineRestartInterval,
+            proxyRecheckInterval: proxyRecheckInterval)
         return AppModel(deps: deps, confirmMemory: { _ in true })
+    }
+
+    // MARK: Router route (menu bar)
+
+    private func waitUntil(_ cond: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(2)
+        while !cond() {
+            guard Date() < end else { return XCTFail("timed out", file: file, line: line) }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    private func route(_ state: String, failure: EngineID? = nil) -> ProxyServiceManager.RouteStatus {
+        .init(state: state, engine: .ollama, model: "m", reason: state == "fallback" ? "engine-down" : "primary",
+              speed: "ok", engineFailure: failure)
+    }
+
+    func test_menuBarState_offWhenLocalModeOff() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = route("down")
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        XCTAssertEqual(model.menuBarState, .off, "a router in trouble does not matter while local mode is off")
+        await model.setLocalMode(true)
+        await waitUntil { model.menuBarState == .trouble }
+        await model.setLocalMode(false)
+        XCTAssertEqual(model.menuBarState, .off)
+    }
+
+    func test_menuBarState_troubleOnFallbackAndDown() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.menuBarState, .local, "no route yet (a 1.3 service, no answer): plain local")
+        for (status, expected) in [(route("local"), MenuBarState.local), (route("idle"), .local),
+                                   (route("fallback"), .trouble), (route("down"), .trouble),
+                                   (route("local", failure: .mlx), .trouble), (route("local"), .local)] {
+            proxy.route = status
+            await waitUntil { model.route == status }
+            XCTAssertEqual(model.menuBarState, expected, "\(status)")
+        }
+    }
+
+    /// A router that does not answer is trouble once a poll has failed, never before the first poll (no false
+    /// alarm at launch), and the icon goes back to local when it answers again.
+    func test_menuBarState_troubleWhenRouterDoesNotAnswer() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.routeAnswers = false
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true
+        }
+        XCTAssertTrue(model.isLocalModeOn)
+        XCTAssertEqual(proxy.routeRefreshes, 0)
+        XCTAssertEqual(model.menuBarState, .local, "not polled yet: no alarm")
+        await waitUntil { model.menuBarState == .trouble }
+        XCTAssertNil(model.route)
+        proxy.routeAnswers = true
+        await waitUntil { model.menuBarState == .local }
+        await model.setLocalMode(false)
+        XCTAssertEqual(model.menuBarState, .off)
+    }
+
+    /// The service manager already knows the router is not running: trouble without waiting for a poll.
+    func test_menuBarState_troubleWhenServiceUnavailable() async {
+        let proxy = FakeProxyService(state: .unavailable(reason: "x"))
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy)
+        await model.ensureProxy()
+        XCTAssertEqual(model.menuBarState, .off)
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.menuBarState, .trouble)
+    }
+
+    /// The first check found the router down, then launchd brought it back: the route poll checks again, so
+    /// the icon, the fallback and the shim state go back to routed without a launch or an app restart.
+    func test_routePoll_recoversARouterThatComesBack() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .unavailable(reason: "slow start"))
+        proxy.routeAnswers = false
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+        }
+        await model.startRouting()
+        XCTAssertEqual(model.menuBarState, .trouble)
+        XCTAssertEqual(shim.bases.last, engine.baseURL, "Direct while the router is down")
+        proxy.stateAfterCheck = .running(version: "dev")
+        proxy.routeAnswers = true
+        await waitUntil { model.menuBarState == .local }
+        XCTAssertEqual(model.proxyState, .running(version: "dev"))
+        XCTAssertFalse(model.proxyFallbackActive)
+        await waitUntil { shim.bases.last.map { ProxyURL.isRouted($0) } == true }
+        await waitUntil { !proxy.pushed.isEmpty }
+    }
+
+    /// The router died for good while it counted as running: the poll checks again and the shim goes Direct.
+    func test_routePoll_goesDirectWhenARunningRouterDies() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .unknown)
+        proxy.stateAfterCheck = .running(version: "dev")
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+        }
+        await model.startRouting()
+        XCTAssertEqual(shim.bases.last.map { ProxyURL.isRouted($0) }, true)
+        proxy.stateAfterCheck = .unavailable(reason: "gone")
+        proxy.routeAnswers = false
+        await waitUntil { model.proxyState == .unavailable(reason: "gone") }
+        await waitUntil { shim.bases.last == engine.baseURL }
+        XCTAssertTrue(model.proxyFallbackActive)
+        XCTAssertEqual(model.menuBarState, .trouble)
+    }
+
+    /// A check that does not change the outcome is not repeated on every poll.
+    func test_routePoll_recheckIsThrottled() async throws {
+        let proxy = FakeProxyService(state: .unavailable(reason: "x"))
+        proxy.routeAnswers = true   // answers, yet every check still finds it unavailable
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true
+        }
+        await model.ensureProxy()
+        let before = proxy.checks
+        await waitUntil { proxy.checks > before }
+        await waitUntil { proxy.routeRefreshes >= 10 }
+        XCTAssertEqual(proxy.checks, before + 1, "at most one check per recheck interval")
+    }
+
+    /// An older router that keeps answering while every check finds it unavailable (its version never matches):
+    /// each recheck that changes nothing doubles the wait before the next, so the agent is not restarted (and
+    /// its streams cut) on every poll.
+    func test_routePoll_recheckBacksOffWhileNothingChanges() async {
+        let proxy = FakeProxyService(state: .unavailable(reason: "version"))
+        proxy.routeAnswers = true
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(1),
+                              proxyRecheckInterval: .milliseconds(1)) {
+            $0.localModeOn = true
+        }
+        await model.ensureProxy()
+        let before = proxy.checks
+        let end = Date().addingTimeInterval(5)
+        while proxy.routeRefreshes < 150, Date() < end { try? await Task.sleep(for: .milliseconds(1)) }
+        let checks = proxy.checks - before
+        XCTAssertGreaterThanOrEqual(checks, 2, "it still rechecks")
+        XCTAssertLessThan(checks * 4, proxy.routeRefreshes, "checks \(checks), polls \(proxy.routeRefreshes)")
+    }
+
+    func test_routePoll_stopsWhenLocalModeOff() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = route("fallback")
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(proxy.routeRefreshes, 0, "no polling while local mode is off")
+        await model.setLocalMode(true)
+        await waitUntil { proxy.routeRefreshes >= 2 }
+        await model.setLocalMode(false)
+        XCTAssertNil(model.route, "the route is forgotten when local mode turns off")
+        let count = proxy.routeRefreshes
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(proxy.routeRefreshes, count, "the poll stopped")
+        XCTAssertNil(model.route)
+    }
+
+    // MARK: MLX restart from the route poll
+
+    private func mlxRoute(_ state: String, failure: EngineID? = nil) -> ProxyServiceManager.RouteStatus {
+        .init(state: state, engine: .mlx, model: "m1", reason: "primary", speed: "ok", engineFailure: failure)
+    }
+
+    private func waitForRestarts(_ engine: FakeEngine, _ n: Int, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(2)
+        while await engine.failureRestarts < n {
+            guard Date() < end else { return XCTFail("timed out", file: file, line: line) }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    /// The router finds MLX down (the server crashed): with "Start it automatically", the app restarts it once
+    /// for that failure; with another policy it never does.
+    func test_routeDownMLX_restartsEngineWhenPolicyAutoStart() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = mlxRoute("down")
+        let mlx = FakeEngine(id: .mlx, installed: ["m1"])
+        let model = makeModel(engine: mlx, proxy: proxy, routePollInterval: .milliseconds(5),
+                              engineRestartInterval: .milliseconds(1)) {
+            $0.localModeOn = true
+            $0.engineDownPolicy = .autoStart
+        }
+        await waitForRestarts(mlx, 1)
+        await waitUntil { proxy.routeRefreshes >= 6 }
+        let once = await mlx.failureRestarts
+        XCTAssertEqual(once, 1, "a down that lasts is one failure, not one per poll")
+        await model.setLocalMode(false)
+
+        for policy in [EngineDownPolicy.fallBackToCloud, .fail] {
+            let p = FakeProxyService(state: .running(version: "dev"))
+            p.route = mlxRoute("down")
+            let other = FakeEngine(id: .mlx, installed: ["m1"])
+            let m = makeModel(engine: other, proxy: p, routePollInterval: .milliseconds(5),
+                              engineRestartInterval: .milliseconds(1)) {
+                $0.localModeOn = true
+                $0.engineDownPolicy = policy
+            }
+            await waitUntil { p.routeRefreshes >= 6 }
+            let none = await other.failureRestarts
+            XCTAssertEqual(none, 0, "\(policy): never restarted")
+            await m.setLocalMode(false)
+        }
+
+        // Down on another engine, or MLX already answering again (a stale "down"): nothing to restart.
+        let p = FakeProxyService(state: .running(version: "dev"))
+        p.route = .init(state: "down", engine: .ollama, model: "m1", reason: "primary", speed: "ok", engineFailure: nil)
+        let serving = FakeEngine(id: .mlx, installed: ["m1"])
+        try await serving.startServing()
+        let m = makeModel(engine: serving, proxy: p, routePollInterval: .milliseconds(5),
+                          engineRestartInterval: .milliseconds(1)) { $0.localModeOn = true }
+        await waitUntil { p.routeRefreshes >= 4 }
+        p.route = mlxRoute("down")
+        let seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 4 }
+        let still = await serving.failureRestarts
+        XCTAssertEqual(still, 0)
+        await m.setLocalMode(false)
+    }
+
+    /// A dead generation stays reported until an answer succeeds: one restart per failure, and at most one a minute
+    /// even when failures come and go.
+    func test_engineFailureMLX_restartsAtMostOncePerMinute() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = mlxRoute("local", failure: .mlx)
+        let mlx = FakeEngine(id: .mlx, installed: ["m1"])
+        let model = makeModel(engine: mlx, proxy: proxy, routePollInterval: .milliseconds(5)) { $0.localModeOn = true }
+        await waitForRestarts(mlx, 1)
+        await waitUntil { proxy.routeRefreshes >= 6 }
+        proxy.route = mlxRoute("local")
+        var seen = proxy.routeRefreshes
+        await waitUntil { proxy.routeRefreshes >= seen + 2 }
+        proxy.route = mlxRoute("local", failure: .mlx)
+        seen = proxy.routeRefreshes
+        await waitUntil { proxy.routeRefreshes >= seen + 6 }
+        let once = await mlx.failureRestarts
+        XCTAssertEqual(once, 1, "a second failure within the minute waits")
+        await model.setLocalMode(false)
+
+        // Past the interval, a new failure restarts again; a sticky one still does not.
+        let p = FakeProxyService(state: .running(version: "dev"))
+        p.route = mlxRoute("local", failure: .mlx)
+        let quick = FakeEngine(id: .mlx, installed: ["m1"])
+        let m = makeModel(engine: quick, proxy: p, routePollInterval: .milliseconds(5),
+                          engineRestartInterval: .milliseconds(1)) { $0.localModeOn = true }
+        await waitForRestarts(quick, 1)
+        seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 6 }
+        let sticky = await quick.failureRestarts
+        XCTAssertEqual(sticky, 1, "the same failure is restarted once")
+        p.route = mlxRoute("local")
+        seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 2 }
+        p.route = mlxRoute("local", failure: .mlx)
+        await waitForRestarts(quick, 2)
+        await m.setLocalMode(false)
     }
 
     func test_changingRetention_pushesConfig() async {
         let proxy = FakeProxyService(state: .running(version: "dev"))
         let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
         await model.setLogRetentionDays(30)
-        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30, routing: RoutingConfig(active: nil))])
         await model.setLogContent(true)
-        XCTAssertEqual(proxy.pushed.last, ProxyConfig(logContent: true, retentionDays: 30))
+        XCTAssertEqual(proxy.pushed.last, ProxyConfig(logContent: true, retentionDays: 30, routing: RoutingConfig(active: nil)))
     }
 
     func test_changingSettings_whileProxyDown_pushesNothing_butTheNextCheckDoes() async {
@@ -75,9 +340,78 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(proxy.pushed.isEmpty)
         proxy.state = .running(version: "dev")
         await model.restartProxy()
-        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30, routing: RoutingConfig(active: nil))])
         XCTAssertEqual(model.proxyState, .running(version: "dev"))
         XCTAssertFalse(model.proxyRestarting)
+    }
+
+    /// The same llmfit candidate on the other engines, in the order ollama, llama.cpp, MLX, each with its own
+    /// engine's window; MLX's loaded model is named for the router.
+    func test_routingConfig_listsSameCandidateOnOtherEngines_inOrder() async {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["q-gguf"], contextWindow: 65536)
+        let ollama = FakeEngine(installed: ["other", "q-localia"], contextWindow: 32768)
+        let mlx = FakeEngine(id: .mlx, installed: ["q-mlx"], loaded: ["q-mlx"], contextWindow: 40960)
+        let model = makeModel(engine: mlx, others: [llama, ollama]) {
+            $0.activeEngine = .llamaCpp
+            $0.lastModel = "q-gguf"
+            $0.modelIDs = ["q-gguf": "org/Q", "q-localia": "org/Q", "q-mlx": "org/Q", "other": "org/O"]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        let routing = await model.routingConfig()
+        XCTAssertEqual(routing, RoutingConfig(
+            active: TargetSpec(engine: .llamaCpp, model: "q-gguf", contextTokens: 65536),
+            equivalents: [TargetSpec(engine: .ollama, model: "q-localia", contextTokens: 32768),
+                          TargetSpec(engine: .mlx, model: "q-mlx", contextTokens: 40960)],
+            mlxModel: "q-mlx"))
+    }
+
+    /// A served name with no candidate id (a model the user pulled themselves) is never an equivalent, even
+    /// under the same name; nothing is equivalent to an active model without one.
+    func test_routingConfig_skipsModelsWithoutCandidateID() async {
+        let ollama = FakeEngine(installed: ["plain"])
+        let llama = FakeEngine(id: .llamaCpp, installed: ["plain", "q-gguf"])
+        let model = makeModel(engine: ollama, others: [llama]) {
+            $0.lastModel = "plain"
+            $0.modelIDs = ["q-gguf": "org/Q"]
+        }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let routing = await model.routingConfig()
+        XCTAssertEqual(routing.active, TargetSpec(engine: .ollama, model: "plain", contextTokens: 32768))
+        XCTAssertEqual(routing.equivalents, [])
+        XCTAssertNil(routing.mlxModel)
+    }
+
+    /// Choosing another model pushes it to the router as the active one, also while local mode is on (the
+    /// launch target is resolved again first).
+    func test_pushAfterModelChange() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let ollama = FakeEngine(installed: ["m1", "m2"])
+        let model = makeModel(engine: ollama, proxy: proxy) { $0.lastModel = "m1"; $0.defaultModel = "m1" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        let row = try XCTUnwrap(model.installed.first { $0.name == "m2" })
+        await model.setDefault(row)
+        XCTAssertEqual(proxy.pushed.last?.routing?.active, TargetSpec(engine: .ollama, model: "m2", contextTokens: 32768))
+    }
+
+    /// The start check pushes the routing too, and a download or a delete pushes it again.
+    func test_pushOnStartCheck_andAfterDownloadAndDelete() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let llama = FakeEngine(id: .llamaCpp, installed: ["g1"])
+        let model = makeModel(engine: llama, proxy: proxy) {
+            $0.activeEngine = .llamaCpp; $0.lastModel = "g1"; $0.modelIDs = ["g1": "org/G"]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.ensureProxy()
+        XCTAssertEqual(proxy.pushed.last?.routing?.active?.model, "g1")
+        let pushes = proxy.pushed.count
+        let row = try XCTUnwrap(model.installed.first { $0.name == "g1" })
+        await model.delete(row)
+        XCTAssertGreaterThan(proxy.pushed.count, pushes)
     }
 
     /// Settings "Restart" forces a restart of the service, not just another check.
@@ -117,6 +451,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(proxy.probes, 1)
         guard case let .local(_, baseURL, _, _) = tool.targets.last else { return XCTFail("\(tool.targets)") }
         XCTAssertEqual(baseURL.port, LocaliaConstants.proxyPort)
+    }
+
+    /// At start the shim state is written once the first router check is done, never Direct before it:
+    /// a running router gives the `auto` URL, a down one the engine's own address.
+    func test_startRouting_writesTheShimStateAfterTheRouterCheck() async {
+        for running in [true, false] {
+            let shim = FakeShim()
+            let proxy = FakeProxyService(state: .unknown)
+            proxy.stateAfterCheck = running ? .running(version: "dev") : .unavailable(reason: "off")
+            let engine = FakeEngine(installed: ["m1"])
+            let model = makeModel(engine: engine, shim: shim, proxy: proxy) {
+                $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+            }
+            XCTAssertEqual(shim.bases, [], "nothing is written before start")
+            await model.startRouting()
+            XCTAssertEqual(proxy.checks, 1)
+            XCTAssertEqual(shim.bases.count, 1, "one write, after the check: \(shim.bases)")
+            XCTAssertEqual(shim.bases.first.map { ProxyURL.isRouted($0) }, running, "\(shim.bases)")
+            if !running { XCTAssertEqual(shim.bases.first, engine.baseURL) }
+        }
+        // The check changes nothing (the state stays unknown): written anyway, so a new build's shim follows.
+        let shim = FakeShim()
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), shim: shim, proxy: FakeProxyService(state: .unknown)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude
+        }
+        await model.startRouting()
+        XCTAssertEqual(shim.bases.count, 1)
     }
 
     func test_changingRoute_refreshesTheShimState() async {
@@ -241,14 +602,54 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
     }
 
-    func test_codex_refusedOnMLX_openCodeAllowed() async throws {
-        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
-        let terminal = FakeTerminal()
-        let model = makeModel(engine: engine, terminal: terminal,
-                              localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
-                                           OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])]) {
+    private func mlxModel(proxy: any ProxyServiceControlling, engine: FakeEngine, terminal: FakeTerminal,
+                          tool: FakeTool = FakeTool()) -> AppModel {
+        makeModel(engine: engine, tool: tool, terminal: terminal,
+                  localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
+                               OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])],
+                  proxy: proxy) {
             $0.activeEngine = .mlx
         }
+    }
+
+    /// Through the router, Codex runs on MLX: the router speaks the Responses API for it. The tool gets the
+    /// neutral model on the `auto` URL; the engine side (load, last model, session) keeps the real model.
+    func test_launchCodexOnMLX_routed_isAllowed() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = mlxModel(proxy: FakeProxyService(state: .running(version: "dev")), engine: engine, terminal: terminal)
+        await model.refreshAll()
+        await model.refreshLocalTools()
+        let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "codex")
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+        let toml = try String(contentsOf: Paths.tool("codex", base: base).appendingPathComponent("config.toml"), encoding: .utf8)
+        XCTAssertTrue(toml.contains(#"model = "localia""#), toml)
+        XCTAssertTrue(toml.range(of: #"base_url = "http://127\.0\.0\.1:11438/s/[0-9A-F-]{36}/auto/v1""#,
+                                 options: .regularExpression) != nil, toml)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, ["mlx-community/M-4bit"])
+        XCTAssertEqual(model.settings.lastModel, "mlx-community/M-4bit")
+        let inUse = await model.modelsInUse()
+        XCTAssertEqual(inUse, [ModelKey(engine: .mlx, model: "mlx-community/M-4bit")])
+        // The router reads the window the tool was launched with from the session's attribution.
+        let attribs = try FileManager.default.contentsOfDirectory(at: Paths.sessions(base: base), includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "attrib" }
+        XCTAssertEqual(attribs.count, 1)
+        let attrib = try String(contentsOf: try XCTUnwrap(attribs.first), encoding: .utf8)
+        XCTAssertTrue(attrib.hasPrefix("tool=Codex\n"), attrib)
+        XCTAssertTrue(attrib.hasSuffix("\ncontext=32768\n"), attrib)
+    }
+
+    /// Without the router, MLX has no Responses API: Codex is refused before anything is loaded (unreachable
+    /// once settings are migrated and the router runs, but the guard stays).
+    func test_launchCodexOnMLX_direct_isBlocked() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = mlxModel(proxy: InertProxyService(), engine: engine, terminal: terminal)
         await model.refreshAll()
         await model.refreshLocalTools()
         let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
@@ -261,13 +662,41 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(terminal.opened.isEmpty)
         let loads = await engine.loads
         XCTAssertEqual(loads, [], "nothing is loaded for a launch that cannot work")
-        model.alert = nil
-        await model.launch(folder: try folder(), toolID: "opencode")
-        XCTAssertNil(model.alert)
-        XCTAssertEqual(terminal.opened.count, 1)
         // On another engine Codex is offered again.
         await model.setActiveEngine(.ollama)
         XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
+    }
+
+    /// MLX is reached only through the router: with the router down a launch stops before loading anything
+    /// and offers to restart it.
+    func test_launchMLX_routerDown_showsRestartAlert() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal(), tool = FakeTool()
+        let proxy = FakeProxyService(state: .unavailable(reason: "off"))
+        let model = mlxModel(proxy: proxy, engine: engine, terminal: terminal, tool: tool)
+        await model.refreshAll()
+        await model.refreshLocalTools()
+        await model.setLocalMode(true)
+        for toolID in [nil, "opencode"] as [String?] {
+            model.alert = nil
+            await model.launch(folder: try folder(), toolID: toolID)
+            let alert = try XCTUnwrap(model.alert, "\(String(describing: toolID))")
+            XCTAssertEqual(alert.title, String(localized: "Localia's router is not running"))
+            XCTAssertEqual(alert.message,
+                           String(localized: "Localia's router is needed for this model. Click Restart, then try again."))
+            XCTAssertEqual(alert.action?.title, String(localized: "Restart"))
+            // Simple mode: no engine named, and the sentence matches the button.
+            let simple = alert.simplified(heavyApps: [])
+            XCTAssertEqual(simple.message, String(localized: "Click Restart, then try again."))
+            XCTAssertEqual(simple.action?.title, String(localized: "Restart"))
+        }
+        XCTAssertTrue(terminal.opened.isEmpty)
+        XCTAssertTrue(tool.targets.isEmpty)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [])
+        let restartsBefore = proxy.restarts
+        await model.alert?.action?.run()
+        XCTAssertEqual(proxy.restarts, restartsBefore + 1)
     }
 
     func test_localTool_refusedOutsideLocalMode() async throws {
@@ -1055,6 +1484,8 @@ actor FakeEngine: Engine {
     private(set) var unloads: [String] = []
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    /// `restartAfterFailure()` calls (the route poll saw the engine failing).
+    private(set) var failureRestarts = 0
     private var loaded: Set<String>
     private let failInstalled: Bool
     /// llama.cpp semantics: one model at a time, a load replaces it.
@@ -1120,7 +1551,10 @@ actor FakeEngine: Engine {
     }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }
     func contextWindow(_ modelName: String) async -> Int { window }
+    func restartAfterFailure() async { failureRestarts += 1 }
 }
+
+extension FakeEngine: FailureRestarting {}
 
 /// A login shell that finds nothing.
 final class FailingRunner: ProcessRunning, @unchecked Sendable {
@@ -1181,9 +1615,12 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     private let lock = NSLock()
     private var _uninstalls = 0
     private var _states: [Bool] = []
+    private var _bases: [URL] = []
     var uninstalls: Int { lock.lock(); defer { lock.unlock() }; return _uninstalls }
     /// `on` of each state write.
     var states: [Bool] { lock.lock(); defer { lock.unlock() }; return _states }
+    /// `baseURL` of each state write.
+    var bases: [URL] { lock.lock(); defer { lock.unlock() }; return _bases }
     init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
@@ -1191,7 +1628,7 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
-        lock.withLock { _states.append(on) }
+        lock.withLock { _states.append(on); _bases.append(baseURL) }
     }
 }
 
@@ -1264,7 +1701,13 @@ final class FakeProxyService: ProxyServiceControlling {
     /// The state a check or a restart leaves; nil keeps it.
     var stateAfterCheck: ProxyState?
     private(set) var checks = 0, restarts = 0, probes = 0
+    /// What the router says it does now; `refreshRoute()` counts its calls.
+    var route: ProxyServiceManager.RouteStatus?
+    /// Whether the router answers the route poll; nil follows `state`.
+    var routeAnswers: Bool?
+    private(set) var routeRefreshes = 0
     init(state: ProxyState) { self.state = state }
+    func refreshRoute() async -> Bool { routeRefreshes += 1; return routeAnswers ?? isHealthy }
     func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func answers() async -> Bool { probes += 1; return answering ?? isHealthy }
