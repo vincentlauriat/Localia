@@ -181,9 +181,11 @@ final class AppModel: ObservableObject {
     /// The route poll may restart MLX for the failure it shows; re-armed once a poll shows none.
     private var mlxRestartArmed = true
     private var lastMLXRestart: ContinuousClock.Instant?
-    /// The route poll's own service check (`recheckProxyIfStale`): running now, and when it last ran.
+    /// The route poll's own service check (`recheckProxyIfStale`): running now, when it last ran, and the wait
+    /// before the next one (nil: `proxyRecheckInterval`; doubled by each check that changes nothing).
     private var proxyRecheckRunning = false
     private var lastProxyRecheck: ContinuousClock.Instant?
+    private var proxyRecheckWait: Duration?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
     /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
@@ -503,7 +505,7 @@ final class AppModel: ObservableObject {
                 let answered = await proxy.refreshRoute()
                 guard !Task.isCancelled, self != nil else { return }
                 self?.applyRoute(proxy.route, answered: answered)
-                await self?.recheckProxyIfStale(answered: answered)
+                self?.recheckProxyIfStale(answered: answered)
                 await self?.restartMLXIfFailing(proxy.route)
                 try? await Task.sleep(for: interval)
             }
@@ -518,14 +520,25 @@ final class AppModel: ObservableObject {
     /// The poll and the last service check disagree: the router came back after a check found it down (a slow
     /// first start, launchd's respawn delay), or it died while it counted as running. Check again, so the icon,
     /// the fallback and the shim state follow without waiting for a launch. Not before the first check (it is
-    /// still running), and at most once per `proxyRecheckInterval`.
-    private func recheckProxyIfStale(answered: Bool) async {
-        guard proxyState != .unknown, answered != proxy.isHealthy, !proxyRecheckRunning,
-              lastProxyRecheck.map({ ContinuousClock.now - $0 >= deps.proxyRecheckInterval }) ?? true else { return }
+    /// still running), and apart from the poll, so the menu bar keeps updating during a slow check. A check that
+    /// changes nothing (an older router that keeps answering, whose version never matches) doubles the wait
+    /// before the next one, up to ten `proxyRecheckInterval`s, so its streams are not cut on every poll; the
+    /// wait resets once the poll and the state agree again.
+    private func recheckProxyIfStale(answered: Bool) {
+        guard proxyState != .unknown else { return }
+        let base = deps.proxyRecheckInterval
+        guard answered != proxy.isHealthy else { proxyRecheckWait = nil; return }
+        let wait = proxyRecheckWait ?? base
+        guard !proxyRecheckRunning, lastProxyRecheck.map({ ContinuousClock.now - $0 >= wait }) ?? true else { return }
         proxyRecheckRunning = true
         lastProxyRecheck = .now
-        defer { proxyRecheckRunning = false }
-        await ensureProxy()
+        Task { [weak self] in
+            guard let self else { return }
+            let healthyBefore = self.proxy.isHealthy
+            await self.ensureProxy()
+            if self.proxy.isHealthy == healthyBefore { self.proxyRecheckWait = min(wait * 2, base * 10) }
+            self.proxyRecheckRunning = false
+        }
     }
 
     /// The router reports MLX failing (its generation died, or its server is down): with "Start it

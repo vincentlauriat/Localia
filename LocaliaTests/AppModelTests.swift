@@ -189,6 +189,25 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(proxy.checks, before + 1, "at most one check per recheck interval")
     }
 
+    /// An older router that keeps answering while every check finds it unavailable (its version never matches):
+    /// each recheck that changes nothing doubles the wait before the next, so the agent is not restarted (and
+    /// its streams cut) on every poll.
+    func test_routePoll_recheckBacksOffWhileNothingChanges() async {
+        let proxy = FakeProxyService(state: .unavailable(reason: "version"))
+        proxy.routeAnswers = true
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(1),
+                              proxyRecheckInterval: .milliseconds(1)) {
+            $0.localModeOn = true
+        }
+        await model.ensureProxy()
+        let before = proxy.checks
+        let end = Date().addingTimeInterval(5)
+        while proxy.routeRefreshes < 150, Date() < end { try? await Task.sleep(for: .milliseconds(1)) }
+        let checks = proxy.checks - before
+        XCTAssertGreaterThanOrEqual(checks, 2, "it still rechecks")
+        XCTAssertLessThan(checks * 4, proxy.routeRefreshes, "checks \(checks), polls \(proxy.routeRefreshes)")
+    }
+
     func test_routePoll_stopsWhenLocalModeOff() async throws {
         let proxy = FakeProxyService(state: .running(version: "dev"))
         proxy.route = route("fallback")
