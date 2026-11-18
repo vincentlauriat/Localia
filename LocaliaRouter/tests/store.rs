@@ -157,6 +157,23 @@ fn unknown_output_tokens_do_not_grow_timed_columns() {
     assert_eq!(null, None);
 }
 
+#[test]
+fn zero_output_or_zero_duration_rows_are_not_timed() {
+    let d = tempfile::tempdir().unwrap();
+    let s = Store::open(&db(&d)).unwrap();
+    const ID3: &str = "0000000c-0000-0000-0000-00000000000c";
+    s.insert(&row(ID1, 1_763_035_200.0, 2000, Some(100)), None).unwrap();
+    s.insert(&row(ID2, 1_763_035_201.0, 5000, Some(0)), None).unwrap();
+    s.insert(&row(ID3, 1_763_035_202.0, 0, Some(40)), None).unwrap();
+    let c = Connection::open(db(&d)).unwrap();
+    let (to, td, dur, o): (i64, i64, i64, i64) = c
+        .query_row("SELECT timed_output_tokens, timed_duration_ms, duration_ms, output_tokens FROM daily", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap();
+    assert_eq!((to, td, dur, o), (100, 2000, 7000, 140));
+}
+
 fn count(c: &Connection, t: &str) -> i64 {
     c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap()
 }

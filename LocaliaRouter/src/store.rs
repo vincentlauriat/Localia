@@ -187,9 +187,10 @@ impl Store {
                 params![id, c.request, c.response, c.truncated as i64],
             )?;
         }
+        // Same rule as the Swift writer: only rows with output and a duration count as timed.
         let (timed_out, timed_ms) = match r.output_tokens {
-            Some(o) => (o, r.duration_ms),
-            None => (0, 0),
+            Some(o) if o > 0 && r.duration_ms > 0 => (o, r.duration_ms),
+            _ => (0, 0),
         };
         tx.execute(
             "INSERT INTO daily (day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms,
