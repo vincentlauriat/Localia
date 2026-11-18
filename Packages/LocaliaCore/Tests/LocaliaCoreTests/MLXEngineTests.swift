@@ -81,8 +81,7 @@ final class MLXEngineTests: XCTestCase {
         }
     }
 
-    private func engine(launcher: any ServerLauncher = FakeLauncher(), gatewayPort: Int = Int.random(in: 30000...50000),
-                        health: (@Sendable () -> Int)? = nil) -> MLXEngine {
+    private func engine(launcher: any ServerLauncher = FakeLauncher(), health: (@Sendable () -> Int)? = nil) -> MLXEngine {
         let health = health ?? {
             guard let l = launcher as? FakeLauncher else { return 503 }
             return l.spawnCount > 0 && l.handle.isRunning ? 200 : 503
@@ -94,7 +93,7 @@ final class MLXEngineTests: XCTestCase {
             default: return StubResponse(status: 404)
             }
         }
-        return MLXEngine(baseURL: URL(string: "http://127.0.0.1:\(gatewayPort)")!, upstreamURL: URL(string: "http://mlx.test:1")!,
+        return MLXEngine(baseURL: URL(string: "http://mlx.test:1")!,
                          session: EngineStubProtocol.session(), launcher: launcher, appSupportBase: tmp,
                          startupTimeout: 1, pollInterval: 0.02, inspector: FakeInspector())
     }
@@ -288,15 +287,31 @@ final class MLXEngineTests: XCTestCase {
 
     func test_startServing_refusesForeignServer() async throws {
         try fakeInstall()
-        let port = Int.random(in: 30000...50000)
-        let e = engine(gatewayPort: port, health: { 200 })   // something else answers on the server port
-        do { try await e.startServing(); XCTFail("must not front a foreign server") } catch {
+        let e = engine(health: { 200 })   // something else answers on the server port
+        do { try await e.startServing(); XCTFail("must not adopt a foreign server") } catch {
             guard case EngineError.server = error else { return XCTFail("\(error)") }
         }
-        let serving = await e.isServing()
-        XCTAssertFalse(serving)
-        let gatewayUp = (try? await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)) != nil
-        XCTAssertFalse(gatewayUp)
+    }
+
+    /// Clients reach MLX through the router, which talks to `mlx_lm.server` itself: no gateway port.
+    func test_mlxBaseURLIsServerPort() {
+        let e = MLXEngine(appSupportBase: tmp)
+        XCTAssertEqual(e.baseURL, URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxServerPort)"))
+        XCTAssertEqual(LocaliaConstants.mlxServerPort, 11437)
+    }
+
+    /// Serving is `mlx_lm.server`'s `/health` answering 200, nothing else.
+    func test_mlxServingIsServerHealth() async throws {
+        let status = Locked(503)
+        let e = engine(health: { status.value })
+        let down = await e.isServing()
+        XCTAssertFalse(down)
+        status.value = 200
+        let up = await e.isServing()
+        XCTAssertTrue(up)
+        status.value = 500
+        let broken = await e.isServing()
+        XCTAssertFalse(broken)
     }
 
     // MARK: - Context window
@@ -329,12 +344,11 @@ final class MLXEngineTests: XCTestCase {
 
     // MARK: - Serving
 
-    func test_load_launchesServerWithPrivatePort_startsGateway_unloadStops() async throws {
+    func test_load_launchesServer_unloadStops() async throws {
         try fakeInstall()
         try fakeModel("mlx-community/A-4bit")
         let launcher = FakeLauncher()
-        let port = Int.random(in: 30000...50000)
-        let e = engine(launcher: launcher, gatewayPort: port)
+        let e = engine(launcher: launcher)
         let before = await e.isServing()
         XCTAssertFalse(before)
         try await e.load("mlx-community/A-4bit", contextTokens: 65536)
@@ -349,9 +363,6 @@ final class MLXEngineTests: XCTestCase {
         XCTAssertTrue(serving)
         let loaded = try await e.loadedModels()
         XCTAssertEqual(loaded.map(\.name), ["mlx-community/A-4bit"])
-        // The gateway answers on baseURL.
-        let (_, resp) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)
-        XCTAssertEqual((resp as? HTTPURLResponse)?.statusCode, 200)
         // Same model again: kept.
         try await e.load("mlx-community/A-4bit", contextTokens: 65536)
         XCTAssertEqual(launcher.spawnCount, 1)
@@ -363,20 +374,17 @@ final class MLXEngineTests: XCTestCase {
         XCTAssertFalse(after)
     }
 
-    func test_switchingModels_restartsServer_andGatewayComesBack() async throws {
+    func test_switchingModels_restartsServer() async throws {
         try fakeInstall()
         try fakeModel("mlx-community/A-4bit")
         try fakeModel("mlx-community/B-4bit")
         let launcher = FreshLauncher()
-        let port = Int.random(in: 30000...50000)
-        let e = engine(launcher: launcher, gatewayPort: port, health: { launcher.anyRunning ? 200 : 503 })
-        let health = URL(string: "http://127.0.0.1:\(port)/health")!
+        let e = engine(launcher: launcher, health: { launcher.anyRunning ? 200 : 503 })
         try await e.load("mlx-community/A-4bit", contextTokens: 65536)
-        _ = try await URLSession.shared.data(from: health)   // a connection, as Claude Code would have made
         try await e.load("mlx-community/B-4bit", contextTokens: 65536)
         XCTAssertEqual(launcher.count, 2)
-        let (_, resp) = try await URLSession.shared.data(from: health)
-        XCTAssertEqual((resp as? HTTPURLResponse)?.statusCode, 200)
+        let serving = await e.isServing()
+        XCTAssertTrue(serving)
         let loaded = try await e.loadedModels()
         XCTAssertEqual(loaded.map(\.name), ["mlx-community/B-4bit"])
         try await e.stopServing()
@@ -430,8 +438,7 @@ final class MLXEngineTests: XCTestCase {
             default: return StubResponse(status: 404)
             }
         }
-        return MLXEngine(baseURL: URL(string: "http://127.0.0.1:\(Int.random(in: 30000...50000))")!,
-                         upstreamURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
+        return MLXEngine(baseURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
                          launcher: launcher, appSupportBase: tmp, startupTimeout: 0.5, pollInterval: 0.02,
                          inspector: FakeInspector(), restartWindow: 600, restartGrace: 0)
     }
@@ -451,7 +458,7 @@ final class MLXEngineTests: XCTestCase {
         let failure = await e.takeFailure()
         XCTAssertNil(failure)
         try await e.unload("mlx-community/B-4bit")
-        await e.upstreamDied()
+        await e.restartAfterFailure()
         XCTAssertEqual(launcher.count, 2, "nothing served: nothing to restart")
     }
 
@@ -462,7 +469,7 @@ final class MLXEngineTests: XCTestCase {
         let e = deathEngine(launcher)
         try await e.load("mlx-community/A-4bit", contextTokens: 65536)
         launcher.failNext = true
-        await e.upstreamDied()
+        await e.restartAfterFailure()
         let failure = await e.takeFailure()
         XCTAssertEqual(failure, "mlx-community/A-4bit")
         let serving = await e.isServing()
@@ -480,19 +487,18 @@ final class MLXEngineTests: XCTestCase {
             default: return StubResponse(status: 404)
             }
         }
-        let e = MLXEngine(baseURL: URL(string: "http://127.0.0.1:\(Int.random(in: 30000...50000))")!,
-                          upstreamURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
+        let e = MLXEngine(baseURL: URL(string: "http://mlx.test:1")!, session: EngineStubProtocol.session(),
                           launcher: launcher, appSupportBase: tmp, startupTimeout: 1, pollInterval: 0.02,
                           inspector: FakeInspector(), restartWindow: 600, restartGrace: 0)
         try await e.load("mlx-community/A-4bit", contextTokens: 65536)
         XCTAssertEqual(launcher.count, 1)
-        await e.upstreamDied()
+        await e.restartAfterFailure()
         XCTAssertEqual(launcher.count, 2, "restarted with the same model")
         let loaded = try await e.loadedModels()
         XCTAssertEqual(loaded.map(\.name), ["mlx-community/A-4bit"])
         let none = await e.takeFailure()
         XCTAssertNil(none)
-        await e.upstreamDied()
+        await e.restartAfterFailure()
         XCTAssertEqual(launcher.count, 2, "no second restart within the window")
         let serving = await e.isServing()
         XCTAssertFalse(serving, "stopped instead")
@@ -536,6 +542,17 @@ private final class LockedFlag: @unchecked Sendable {
     private var v: Bool
     init(_ v: Bool) { self.v = v }
     var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return v }
+        set { lock.lock(); v = newValue; lock.unlock() }
+    }
+}
+
+/// Thread-safe status code a stub handler can read.
+private final class Locked: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: Int
+    init(_ v: Int) { self.v = v }
+    var value: Int {
         get { lock.lock(); defer { lock.unlock() }; return v }
         set { lock.lock(); v = newValue; lock.unlock() }
     }

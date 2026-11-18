@@ -178,6 +178,9 @@ final class AppModel: ObservableObject {
     private var statusTask: Task<Void, Never>?
     /// Polls the router's route while local mode is on.
     private var routePollTask: Task<Void, Never>?
+    /// The route poll may restart MLX for the failure it shows; re-armed once a poll shows none.
+    private var mlxRestartArmed = true
+    private var lastMLXRestart: ContinuousClock.Instant?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
     /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
@@ -497,6 +500,7 @@ final class AppModel: ObservableObject {
                 let answered = await proxy.refreshRoute()
                 guard !Task.isCancelled, self != nil else { return }
                 self?.applyRoute(proxy.route, answered: answered)
+                await self?.restartMLXIfFailing(proxy.route)
                 try? await Task.sleep(for: interval)
             }
         }
@@ -505,6 +509,29 @@ final class AppModel: ObservableObject {
     private func applyRoute(_ newRoute: ProxyServiceManager.RouteStatus?, answered: Bool) {
         if route != newRoute { route = newRoute }
         if routerSilent == answered { routerSilent = !answered }
+    }
+
+    /// The router reports MLX failing (its generation died, or its server is down): with "Start it
+    /// automatically", restart it once per failure (the router keeps reporting a dead generation until an answer
+    /// succeeds) and at most once per `engineRestartInterval`. MLX only restarts a model Localia started and
+    /// still serves, so a user who stopped it is left alone.
+    private func restartMLXIfFailing(_ route: ProxyServiceManager.RouteStatus?) async {
+        let dead = route?.engineFailure == .mlx
+        let down = route?.state == "down" && route?.engine == .mlx
+        guard dead || down else { mlxRestartArmed = true; return }
+        guard mlxRestartArmed, settings.engineDownPolicy == .autoStart,
+              lastMLXRestart.map({ ContinuousClock.now - $0 >= deps.engineRestartInterval }) ?? true,
+              let mlx = await registry.engine(.mlx) as? any FailureRestarting else { return }
+        // A "down" the router has not checked again while MLX answers once more: nothing to restart.
+        if !dead, await mlx.isServing() { return }
+        mlxRestartArmed = false
+        lastMLXRestart = .now
+        // Apart from the poll, so the menu bar keeps updating during a long reload.
+        Task { [weak self] in
+            await mlx.restartAfterFailure()
+            await self?.refreshStatus()
+            await self?.pushAfterLoadChange(on: .mlx)
+        }
     }
 
     func setLocalMode(_ on: Bool) async {
@@ -784,8 +811,8 @@ final class AppModel: ObservableObject {
             return
         }
         if routedBase == nil, case .local(.mlx, _, _, _) = target {
-            // MLX has no Direct choice: with the router down, offer to restart it rather than launch on the
-            // in-app gateway, which gives no fallback, no metering and no Responses API.
+            // MLX has no Direct choice: only the router speaks Anthropic and Responses to mlx_lm.server, so
+            // with the router down, offer to restart it.
             alert = AppAlert(title: String(localized: "Localia's router is not running"),
                              message: String(localized: "MLX models need it. Restart it, then try again."),
                              action: .init(title: String(localized: "Restart")) { [weak self] in

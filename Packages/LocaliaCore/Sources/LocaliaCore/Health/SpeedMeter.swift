@@ -83,7 +83,7 @@ public struct SpeedMeter: Sendable {
     /// prompt's prefill is not counted.
     private func measureMLX(_ engine: any Engine) async throws -> (Double, Double) {
         guard let mlx = engine as? MLXEngine else { throw SpeedMeterError.unsupportedEngine }
-        var req = URLRequest(url: mlx.upstreamURL.appendingPathComponent("v1/chat/completions"))
+        var req = URLRequest(url: mlx.baseURL.appendingPathComponent("v1/chat/completions"))
         req.httpMethod = "POST"
         req.timeoutInterval = 300
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -100,7 +100,7 @@ public struct SpeedMeter: Sendable {
         for try await line in bytes.lines {
             guard line.hasPrefix("data:"), let obj = try? JSONSerialization.jsonObject(
                 with: Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)) as? [String: Any] else { continue }
-            if let u = obj["usage"] as? [String: Any], let c = AnthropicTranslation.nonNegativeInt(u["completion_tokens"]) {
+            if let u = obj["usage"] as? [String: Any], let c = JSONNumbers.nonNegativeInt(u["completion_tokens"]) {
                 completion = c
             }
             guard let delta = ((obj["choices"] as? [Any])?.first as? [String: Any])?["delta"] as? [String: Any],

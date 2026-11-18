@@ -45,6 +45,13 @@ final class FlowGraphTests: XCTestCase {
         XCTAssertNil(edge(g, "claude→mlx"))
     }
 
+    /// The router talks to mlx_lm.server itself: the MLX node shows the server's port, not a gateway's.
+    func test_flowGraph_mlxShowsServerPort() {
+        XCTAssertEqual(FlowGraph.port(.mlx), LocaliaConstants.mlxServerPort)
+        let g = FlowGraph.make(input(engines: [.mlx], routes: [.mlx: .proxy]), advanced: true, now: now)
+        XCTAssertEqual(g.nodes.first { $0.id == "mlx" }?.detail, FlowGraph.portLabel(11437))
+    }
+
     func test_fallbackActive_proxyWarning_andDirectEdges() {
         let g = FlowGraph.make(input(engines: [.ollama, .mlx], routes: [.ollama: .proxy], fallback: true),
                                advanced: true, now: now)

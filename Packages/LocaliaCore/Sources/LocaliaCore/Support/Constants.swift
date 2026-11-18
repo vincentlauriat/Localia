@@ -13,9 +13,8 @@ public enum LocaliaConstants {
     public static let gpuHeadroomGB = 1.5
     public static let ollamaPort = 11434
     public static let llamaServerPort = 11435
-    /// Anthropic gateway in front of `mlx_lm.server` (what Claude Code talks to).
-    public static let mlxGatewayPort = 11436
-    /// `mlx_lm.server` itself, reached only through the gateway.
+    // 11436 stays unused: it was the in-app MLX gateway's port before the router served MLX.
+    /// `mlx_lm.server`, reached by the router (and the speed meter).
     public static let mlxServerPort = 11437
     /// Localia proxy in front of the engines (tools reach it at `/s/<session>/<engine>/...`).
     public static let proxyPort = 11438

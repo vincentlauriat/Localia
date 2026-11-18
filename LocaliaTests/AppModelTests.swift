@@ -29,6 +29,7 @@ final class AppModelTests: XCTestCase {
                            mlxRepos: FakeMLXRepos = FakeMLXRepos(),
                            proxy: any ProxyServiceControlling = InertProxyService(),
                            routePollInterval: Duration = .seconds(10),
+                           engineRestartInterval: Duration = .seconds(60),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -57,7 +58,8 @@ final class AppModelTests: XCTestCase {
             localTools: localTools,
             mlxRepos: mlxRepos,
             proxy: proxy,
-            routePollInterval: routePollInterval)
+            routePollInterval: routePollInterval,
+            engineRestartInterval: engineRestartInterval)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -144,6 +146,106 @@ final class AppModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(proxy.routeRefreshes, count, "the poll stopped")
         XCTAssertNil(model.route)
+    }
+
+    // MARK: MLX restart from the route poll
+
+    private func mlxRoute(_ state: String, failure: EngineID? = nil) -> ProxyServiceManager.RouteStatus {
+        .init(state: state, engine: .mlx, model: "m1", reason: "primary", speed: "ok", engineFailure: failure)
+    }
+
+    private func waitForRestarts(_ engine: FakeEngine, _ n: Int, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(2)
+        while await engine.failureRestarts < n {
+            guard Date() < end else { return XCTFail("timed out", file: file, line: line) }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    /// The router finds MLX down (the server crashed): with "Start it automatically", the app restarts it once
+    /// for that failure; with another policy it never does.
+    func test_routeDownMLX_restartsEngineWhenPolicyAutoStart() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = mlxRoute("down")
+        let mlx = FakeEngine(id: .mlx, installed: ["m1"])
+        let model = makeModel(engine: mlx, proxy: proxy, routePollInterval: .milliseconds(5),
+                              engineRestartInterval: .milliseconds(1)) {
+            $0.localModeOn = true
+            $0.engineDownPolicy = .autoStart
+        }
+        await waitForRestarts(mlx, 1)
+        await waitUntil { proxy.routeRefreshes >= 6 }
+        let once = await mlx.failureRestarts
+        XCTAssertEqual(once, 1, "a down that lasts is one failure, not one per poll")
+        await model.setLocalMode(false)
+
+        for policy in [EngineDownPolicy.fallBackToCloud, .fail] {
+            let p = FakeProxyService(state: .running(version: "dev"))
+            p.route = mlxRoute("down")
+            let other = FakeEngine(id: .mlx, installed: ["m1"])
+            let m = makeModel(engine: other, proxy: p, routePollInterval: .milliseconds(5),
+                              engineRestartInterval: .milliseconds(1)) {
+                $0.localModeOn = true
+                $0.engineDownPolicy = policy
+            }
+            await waitUntil { p.routeRefreshes >= 6 }
+            let none = await other.failureRestarts
+            XCTAssertEqual(none, 0, "\(policy): never restarted")
+            await m.setLocalMode(false)
+        }
+
+        // Down on another engine, or MLX already answering again (a stale "down"): nothing to restart.
+        let p = FakeProxyService(state: .running(version: "dev"))
+        p.route = .init(state: "down", engine: .ollama, model: "m1", reason: "primary", speed: "ok", engineFailure: nil)
+        let serving = FakeEngine(id: .mlx, installed: ["m1"])
+        try await serving.startServing()
+        let m = makeModel(engine: serving, proxy: p, routePollInterval: .milliseconds(5),
+                          engineRestartInterval: .milliseconds(1)) { $0.localModeOn = true }
+        await waitUntil { p.routeRefreshes >= 4 }
+        p.route = mlxRoute("down")
+        let seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 4 }
+        let still = await serving.failureRestarts
+        XCTAssertEqual(still, 0)
+        await m.setLocalMode(false)
+    }
+
+    /// A dead generation stays reported until an answer succeeds: one restart per failure, and at most one a minute
+    /// even when failures come and go.
+    func test_engineFailureMLX_restartsAtMostOncePerMinute() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = mlxRoute("local", failure: .mlx)
+        let mlx = FakeEngine(id: .mlx, installed: ["m1"])
+        let model = makeModel(engine: mlx, proxy: proxy, routePollInterval: .milliseconds(5)) { $0.localModeOn = true }
+        await waitForRestarts(mlx, 1)
+        await waitUntil { proxy.routeRefreshes >= 6 }
+        proxy.route = mlxRoute("local")
+        var seen = proxy.routeRefreshes
+        await waitUntil { proxy.routeRefreshes >= seen + 2 }
+        proxy.route = mlxRoute("local", failure: .mlx)
+        seen = proxy.routeRefreshes
+        await waitUntil { proxy.routeRefreshes >= seen + 6 }
+        let once = await mlx.failureRestarts
+        XCTAssertEqual(once, 1, "a second failure within the minute waits")
+        await model.setLocalMode(false)
+
+        // Past the interval, a new failure restarts again; a sticky one still does not.
+        let p = FakeProxyService(state: .running(version: "dev"))
+        p.route = mlxRoute("local", failure: .mlx)
+        let quick = FakeEngine(id: .mlx, installed: ["m1"])
+        let m = makeModel(engine: quick, proxy: p, routePollInterval: .milliseconds(5),
+                          engineRestartInterval: .milliseconds(1)) { $0.localModeOn = true }
+        await waitForRestarts(quick, 1)
+        seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 6 }
+        let sticky = await quick.failureRestarts
+        XCTAssertEqual(sticky, 1, "the same failure is restarted once")
+        p.route = mlxRoute("local")
+        seen = p.routeRefreshes
+        await waitUntil { p.routeRefreshes >= seen + 2 }
+        p.route = mlxRoute("local", failure: .mlx)
+        await waitForRestarts(quick, 2)
+        await m.setLocalMode(false)
     }
 
     func test_changingRetention_pushesConfig() async {
@@ -1300,6 +1402,8 @@ actor FakeEngine: Engine {
     private(set) var unloads: [String] = []
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    /// `restartAfterFailure()` calls (the route poll saw the engine failing).
+    private(set) var failureRestarts = 0
     private var loaded: Set<String>
     private let failInstalled: Bool
     /// llama.cpp semantics: one model at a time, a load replaces it.
@@ -1365,7 +1469,10 @@ actor FakeEngine: Engine {
     }
     func unload(_ modelName: String) async throws { unloads.append(modelName); loaded.remove(modelName) }
     func contextWindow(_ modelName: String) async -> Int { window }
+    func restartAfterFailure() async { failureRestarts += 1 }
 }
+
+extension FakeEngine: FailureRestarting {}
 
 /// A login shell that finds nothing.
 final class FailingRunner: ProcessRunning, @unchecked Sendable {

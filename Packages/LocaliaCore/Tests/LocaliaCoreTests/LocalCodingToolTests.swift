@@ -134,17 +134,17 @@ final class LocalCodingToolTests: XCTestCase {
 
     // MARK: OpenCode
 
-    /// MLX: OpenCode and Pi go through the gateway, which passes chat completions to mlx_lm.server (renaming
-    /// the model); Codex needs the Responses API, which MLX lacks.
-    func test_mlx_endpointIsTheGateway_andCodexNeedsResponses() throws {
-        let gateway = MLXEngine().baseURL
-        XCTAssertEqual(gateway.port, LocaliaConstants.mlxGatewayPort)
-        let target = LaunchTarget.local(engine: .mlx, baseURL: gateway, model: "mlx-community/Qwen3-8B-4bit", contextTokens: 40960)
+    /// MLX: the engine's URL is mlx_lm.server itself (launches reach it through the router); Codex needs the
+    /// Responses API, which MLX lacks.
+    func test_mlx_endpointIsTheServer_andCodexNeedsResponses() throws {
+        let server = MLXEngine(appSupportBase: dir).baseURL
+        XCTAssertEqual(server.port, LocaliaConstants.mlxServerPort)
+        let target = LaunchTarget.local(engine: .mlx, baseURL: server, model: "mlx-community/Qwen3-8B-4bit", contextTokens: 40960)
         let open = text(try OpenCodeTool().configFiles(target: target, folder: dir, existing: [:])["opencode.json"])
-        XCTAssertTrue(open.contains(#""baseURL" : "http://127.0.0.1:11436/v1""#), open)
+        XCTAssertTrue(open.contains(#""baseURL" : "http://127.0.0.1:11437/v1""#), open)
         XCTAssertTrue(open.contains("mlx-community/Qwen3-8B-4bit"), open)
         let pi = text(try PiTool().configFiles(target: target, folder: dir, existing: [:])[PiTool.modelsFile])
-        XCTAssertTrue(pi.contains("http://127.0.0.1:11436/v1"), pi)
+        XCTAssertTrue(pi.contains("http://127.0.0.1:11437/v1"), pi)
         XCTAssertTrue(CodexTool().needsResponsesAPI)
         XCTAssertFalse(OpenCodeTool().needsResponsesAPI)
         XCTAssertFalse(PiTool().needsResponsesAPI)

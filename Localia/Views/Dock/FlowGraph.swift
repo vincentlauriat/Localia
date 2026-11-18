@@ -78,7 +78,7 @@ struct FlowGraph: Equatable {
         switch engine {
         case .ollama: LocaliaConstants.ollamaPort
         case .llamaCpp: LocaliaConstants.llamaServerPort
-        case .mlx: LocaliaConstants.mlxGatewayPort
+        case .mlx: LocaliaConstants.mlxServerPort
         }
     }
 
