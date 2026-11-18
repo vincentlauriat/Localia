@@ -188,6 +188,33 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(ProxyConfig(retentionDays: 1000).retentionDays, 90)
     }
 
+    /// The router serves MLX itself, so MLX Direct goes; Ollama and llama.cpp keep the user's choice.
+    func test_migration_keepsOllamaDirect_dropsMLXDirect() {
+        let s = SettingsStore(defaults: defaults)
+        XCTAssertEqual(s.routerSettingsVersion, 0)
+        s.engineRoutes = [.ollama: .direct, .llamaCpp: .proxy, .mlx: .direct]
+        s.migrateForRouter()
+        XCTAssertEqual(s.engineRoutes, [.ollama: .direct, .llamaCpp: .proxy])
+        XCTAssertEqual(s.routerSettingsVersion, 1)
+
+        let r = SettingsStore(defaults: defaults)
+        XCTAssertEqual(r.engineRoutes, [.ollama: .direct, .llamaCpp: .proxy])
+        XCTAssertEqual(r.routerSettingsVersion, 1)
+        // A second run changes nothing, even a route set since.
+        r.engineRoutes[.mlx] = .direct
+        r.migrateForRouter()
+        XCTAssertEqual(r.engineRoutes, [.ollama: .direct, .llamaCpp: .proxy, .mlx: .direct])
+        XCTAssertEqual(r.routerSettingsVersion, 1)
+    }
+
+    /// A fresh install (no routes saved) is migrated too, and keeps the default routes.
+    func test_migration_freshInstall_setsVersion_keepsDefaults() {
+        let s = SettingsStore(defaults: defaults)
+        s.migrateForRouter()
+        XCTAssertEqual(s.engineRoutes, [.ollama: .proxy, .llamaCpp: .proxy])
+        XCTAssertEqual(SettingsStore(defaults: defaults).routerSettingsVersion, 1)
+    }
+
     func test_record_updatesSpeedRatioFromUnscaledEstimates() {
         let s = SettingsStore(defaults: defaults)
         let est = ["a": 40.0, "b": 20.0]

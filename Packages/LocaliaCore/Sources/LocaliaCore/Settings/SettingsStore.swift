@@ -52,6 +52,10 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     @Published public var measurements: Measurements {
         didSet { defaults.set(try? JSONEncoder().encode(measurements), forKey: "measurements") }
     }
+    /// 1 once `migrateForRouter()` ran (0 before: settings of 1.4 or earlier, or a fresh install).
+    @Published public private(set) var routerSettingsVersion: Int {
+        didSet { defaults.set(routerSettingsVersion, forKey: "routerSettingsVersion") }
+    }
 
     public var recentFolders: [String] {
         get { load() }
@@ -82,6 +86,15 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
             ? 7 : Self.clampRetention(defaults.integer(forKey: "logRetentionDays"))
         measurements = defaults.data(forKey: "measurements")
             .flatMap { try? JSONDecoder().decode(Measurements.self, from: $0) } ?? Measurements()
+        routerSettingsVersion = defaults.integer(forKey: "routerSettingsVersion")
+    }
+
+    /// Settings of 1.4 and earlier, once: the router serves MLX itself, so an MLX "Direct" route is dropped.
+    /// Ollama and llama.cpp keep the user's choice. Runs once; later calls change nothing.
+    public func migrateForRouter() {
+        guard routerSettingsVersion < 1 else { return }
+        if engineRoutes[.mlx] != nil { engineRoutes[.mlx] = nil }
+        routerSettingsVersion = 1
     }
 
     /// Stores a measurement and recomputes `speedRatio` against the UNSCALED llmfit estimates
@@ -99,7 +112,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         min(max(d, ProxyConfig.retentionRange.lowerBound), ProxyConfig.retentionRange.upperBound)
     }
 
-    /// What the proxy should apply now (pushed on every successful start check).
+    /// The log settings the router should apply now; `AppModel` adds the routing before each push.
     public var proxyConfig: ProxyConfig { ProxyConfig(logContent: logContent, retentionDays: logRetentionDays) }
 
     nonisolated private static func raw<T: RawRepresentable>(_ d: UserDefaults, _ key: String, _ fallback: T) -> T

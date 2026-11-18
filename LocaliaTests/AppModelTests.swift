@@ -63,9 +63,9 @@ final class AppModelTests: XCTestCase {
         let proxy = FakeProxyService(state: .running(version: "dev"))
         let model = makeModel(engine: FakeEngine(installed: []), proxy: proxy)
         await model.setLogRetentionDays(30)
-        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30, routing: RoutingConfig(active: nil))])
         await model.setLogContent(true)
-        XCTAssertEqual(proxy.pushed.last, ProxyConfig(logContent: true, retentionDays: 30))
+        XCTAssertEqual(proxy.pushed.last, ProxyConfig(logContent: true, retentionDays: 30, routing: RoutingConfig(active: nil)))
     }
 
     func test_changingSettings_whileProxyDown_pushesNothing_butTheNextCheckDoes() async {
@@ -75,9 +75,78 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(proxy.pushed.isEmpty)
         proxy.state = .running(version: "dev")
         await model.restartProxy()
-        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30)])
+        XCTAssertEqual(proxy.pushed, [ProxyConfig(logContent: false, retentionDays: 30, routing: RoutingConfig(active: nil))])
         XCTAssertEqual(model.proxyState, .running(version: "dev"))
         XCTAssertFalse(model.proxyRestarting)
+    }
+
+    /// The same llmfit candidate on the other engines, in the order ollama, llama.cpp, MLX, each with its own
+    /// engine's window; MLX's loaded model is named for the router.
+    func test_routingConfig_listsSameCandidateOnOtherEngines_inOrder() async {
+        let llama = FakeEngine(id: .llamaCpp, installed: ["q-gguf"], contextWindow: 65536)
+        let ollama = FakeEngine(installed: ["other", "q-localia"], contextWindow: 32768)
+        let mlx = FakeEngine(id: .mlx, installed: ["q-mlx"], loaded: ["q-mlx"], contextWindow: 40960)
+        let model = makeModel(engine: mlx, others: [llama, ollama]) {
+            $0.activeEngine = .llamaCpp
+            $0.lastModel = "q-gguf"
+            $0.modelIDs = ["q-gguf": "org/Q", "q-localia": "org/Q", "q-mlx": "org/Q", "other": "org/O"]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        let routing = await model.routingConfig()
+        XCTAssertEqual(routing, RoutingConfig(
+            active: TargetSpec(engine: .llamaCpp, model: "q-gguf", contextTokens: 65536),
+            equivalents: [TargetSpec(engine: .ollama, model: "q-localia", contextTokens: 32768),
+                          TargetSpec(engine: .mlx, model: "q-mlx", contextTokens: 40960)],
+            mlxModel: "q-mlx"))
+    }
+
+    /// A served name with no candidate id (a model the user pulled themselves) is never an equivalent, even
+    /// under the same name; nothing is equivalent to an active model without one.
+    func test_routingConfig_skipsModelsWithoutCandidateID() async {
+        let ollama = FakeEngine(installed: ["plain"])
+        let llama = FakeEngine(id: .llamaCpp, installed: ["plain", "q-gguf"])
+        let model = makeModel(engine: ollama, others: [llama]) {
+            $0.lastModel = "plain"
+            $0.modelIDs = ["q-gguf": "org/Q"]
+        }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let routing = await model.routingConfig()
+        XCTAssertEqual(routing.active, TargetSpec(engine: .ollama, model: "plain", contextTokens: 32768))
+        XCTAssertEqual(routing.equivalents, [])
+        XCTAssertNil(routing.mlxModel)
+    }
+
+    /// Choosing another model pushes it to the router as the active one, also while local mode is on (the
+    /// launch target is resolved again first).
+    func test_pushAfterModelChange() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let ollama = FakeEngine(installed: ["m1", "m2"])
+        let model = makeModel(engine: ollama, proxy: proxy) { $0.lastModel = "m1"; $0.defaultModel = "m1" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        let row = try XCTUnwrap(model.installed.first { $0.name == "m2" })
+        await model.setDefault(row)
+        XCTAssertEqual(proxy.pushed.last?.routing?.active, TargetSpec(engine: .ollama, model: "m2", contextTokens: 32768))
+    }
+
+    /// The start check pushes the routing too, and a download or a delete pushes it again.
+    func test_pushOnStartCheck_andAfterDownloadAndDelete() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let llama = FakeEngine(id: .llamaCpp, installed: ["g1"])
+        let model = makeModel(engine: llama, proxy: proxy) {
+            $0.activeEngine = .llamaCpp; $0.lastModel = "g1"; $0.modelIDs = ["g1": "org/G"]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.ensureProxy()
+        XCTAssertEqual(proxy.pushed.last?.routing?.active?.model, "g1")
+        let pushes = proxy.pushed.count
+        let row = try XCTUnwrap(model.installed.first { $0.name == "g1" })
+        await model.delete(row)
+        XCTAssertGreaterThan(proxy.pushed.count, pushes)
     }
 
     /// Settings "Restart" forces a restart of the service, not just another check.
