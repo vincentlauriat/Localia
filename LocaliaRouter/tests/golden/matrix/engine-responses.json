@@ -1,0 +1,1 @@
+{"id":"resp_ollama2","object":"response","status":"completed","model":"qwen3:8b","output":[{"type":"message","id":"msg_ollama2","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":120,"output_tokens":33,"total_tokens":153}}

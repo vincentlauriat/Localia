@@ -13,4 +13,4 @@ pub mod store;
 pub mod token;
 pub mod version;
 
-pub use server::{listen, serve, EnginePorts, ServiceConfig};
+pub use server::{listen, serve, serve_with, EnginePorts, ServiceConfig};

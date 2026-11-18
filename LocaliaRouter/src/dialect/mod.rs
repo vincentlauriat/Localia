@@ -49,3 +49,25 @@ pub trait StreamEncoder: Send {
         Vec::new()
     }
 }
+
+/// A dialect's encoder chosen at run time.
+impl StreamEncoder for Box<dyn StreamEncoder> {
+    fn start(&mut self) -> Vec<Bytes> {
+        (**self).start()
+    }
+    fn event(&mut self, e: &StreamEvent) -> Vec<Bytes> {
+        (**self).event(e)
+    }
+    fn finish(&mut self) -> Vec<Bytes> {
+        (**self).finish()
+    }
+    fn fail(&mut self, message: &str) -> Vec<Bytes> {
+        (**self).fail(message)
+    }
+    fn keepalive(&mut self) -> Vec<Bytes> {
+        (**self).keepalive()
+    }
+    fn engine_keepalive(&mut self) -> Vec<Bytes> {
+        (**self).engine_keepalive()
+    }
+}

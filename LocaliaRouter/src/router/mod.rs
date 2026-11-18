@@ -199,7 +199,7 @@ impl Router {
             }
             return Err(RouteError::NoActiveModel);
         };
-        let result = self.choose(&cfg, &active, declared_context).await;
+        let result = self.choose(&cfg, &active, declared_context, true).await;
         let mut st = self.lock();
         if st.generation == generation {
             st.last = Some(result.clone());
@@ -207,14 +207,35 @@ impl Router {
         result
     }
 
+    /// Whether a request would be served now: the same choice as `decide`, but a `Loading` primary counts as
+    /// not ready (no wait), and the route status is left as it is. For the shim's `<base>/health` probe.
+    pub async fn ready(&self, declared_context: Option<u32>) -> bool {
+        let (cfg, active) = {
+            let st = self.lock();
+            (st.cfg.clone(), st.active().cloned())
+        };
+        let (Some(cfg), Some(active)) = (cfg, active) else {
+            return false;
+        };
+        self.choose(&cfg, &active, declared_context, false)
+            .await
+            .is_ok()
+    }
+
+    /// The router's clock, for the relay's keepalive timer.
+    pub fn clock(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
+    }
+
     async fn choose(
         &self,
         cfg: &RoutingConfig,
         active: &TargetSpec,
         declared_context: Option<u32>,
+        wait: bool,
     ) -> Result<Decision, RouteError> {
         let mut health = self.probe_health(active.engine).await;
-        if health == EngineHealth::Loading {
+        if wait && health == EngineHealth::Loading {
             let deadline = self.clock.now() + LOAD_GRACE;
             while health == EngineHealth::Loading && self.clock.now() < deadline {
                 self.clock.sleep(LOAD_POLL).await;

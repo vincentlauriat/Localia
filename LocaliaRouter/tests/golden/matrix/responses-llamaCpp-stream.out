@@ -1,0 +1,9 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_ollama1","object":"response","status":"in_progress","model":"qwen3:8b","output":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_ollama1","output_index":0,"content_index":0,"delta":"Hello"}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_ollama1","object":"response","status":"completed","model":"qwen3:8b","output":[{"type":"message","id":"msg_ollama1","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":120,"output_tokens":33,"total_tokens":153}}}
+

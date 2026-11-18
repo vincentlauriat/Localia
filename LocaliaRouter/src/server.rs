@@ -7,7 +7,8 @@
 //! `localhost:<port>`, gets 403 before any handler runs.
 
 use crate::config::ProxyConfig;
-use crate::router::{HttpProbe, Router, SystemClock};
+use crate::relay::{self, ProxyPath};
+use crate::router::{Clock, HttpProbe, Router, SystemClock};
 use crate::store::Store;
 use crate::token;
 use anyhow::Context;
@@ -73,6 +74,8 @@ pub struct AppState {
     pub token: String,
     pub service: ServiceConfig,
     pub router: Arc<Router>,
+    /// The client relayed requests go out with.
+    pub http: reqwest::Client,
 }
 
 /// Anthropic-shaped error body: `{"type":"error","error":{"type":…,"message":…}}`.
@@ -88,7 +91,7 @@ pub fn error_response(status: StatusCode, kind: &str, message: &str) -> Response
     json_response(status, error_body(kind, message))
 }
 
-fn json_response(status: StatusCode, body: Vec<u8>) -> Response<Body> {
+pub fn json_response(status: StatusCode, body: Vec<u8>) -> Response<Body> {
     let mut r = Response::new(Body::from(body));
     *r.status_mut() = status;
     r.headers_mut().insert(
@@ -108,6 +111,15 @@ pub async fn listen(cfg: ServiceConfig) -> anyhow::Result<()> {
 
 /// Opens the data directory (token, config, store) and serves `listener` until it fails.
 pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<()> {
+    serve_with(cfg, listener, Arc::new(SystemClock)).await
+}
+
+/// `serve` with the clock the router's waits and the relay's keepalive timer run on (tests drive it by hand).
+pub async fn serve_with(
+    cfg: ServiceConfig,
+    listener: TcpListener,
+    clock: Arc<dyn Clock>,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("cannot create {}", cfg.data_dir.display()))?;
     let token = token::load_or_create(&cfg.data_dir.join("token"))
@@ -121,9 +133,19 @@ pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("cannot build the HTTP client")?;
+    // Relayed requests: no pooled connections (a stale one to a restarted engine would fail as something other
+    // than a refused connection, and skip the fallback), and an idle limit rather than a total one, so a long
+    // prompt's prefill (up to 600 s without a byte) and a long answer both get through.
+    let relay_client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0)
+        .read_timeout(crate::relay::UPSTREAM_IDLE_TIMEOUT)
+        .build()
+        .context("cannot build the HTTP client")?;
     let router = Arc::new(Router::new(
         Arc::new(HttpProbe::new(cfg.engine_ports, client)),
-        Arc::new(SystemClock),
+        clock,
         config.routing.clone(),
     ));
     router.clone().spawn_monitor();
@@ -135,6 +157,7 @@ pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<
         token,
         service: cfg.clone(),
         router,
+        http: relay_client,
     });
     let app = app(state);
 
@@ -311,7 +334,7 @@ fn app(state: Arc<AppState>) -> axum::Router {
             post(set_config).fallback(method_not_allowed),
         )
         .route("/localia/erase", post(erase).fallback(method_not_allowed))
-        .fallback(not_found)
+        .fallback(proxied)
         // The guard already bounds the body by `max_body`.
         .layer(DefaultBodyLimit::disable())
         .with_state(state)
@@ -427,6 +450,14 @@ async fn method_not_allowed() -> Response<Body> {
         "invalid_request_error",
         "Method not allowed",
     )
+}
+
+/// `/s/<session>/<segment>/…` goes to the relay; anything else is 404.
+async fn proxied(State(s): State<Arc<AppState>>, req: Request<Body>) -> Response<Body> {
+    match ProxyPath::parse(req.uri().path()) {
+        Some(p) => relay::handle(s, req, p).await,
+        None => not_found(req.method().clone(), req.uri().clone()).await,
+    }
 }
 
 async fn not_found(method: Method, uri: Uri) -> Response<Body> {

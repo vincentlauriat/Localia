@@ -4,6 +4,7 @@
 mod common;
 
 use axum::body::Bytes;
+use common::stub::{ports, routed, routing, target, Reply, Stub};
 use common::{is_id, pipeline, raw, spawn};
 use localia_router::dialect::anthropic::{
     self, count_tokens, decode, encode_response, error_body, error_mapping, Encoder,
@@ -632,8 +633,8 @@ fn non_streamed_messages() {
     );
 }
 
-#[test]
-fn upstream_errors_become_anthropic_errors() {
+#[tokio::test]
+async fn upstream_errors_become_anthropic_errors() {
     let (status, kind) = error_mapping(500);
     assert_eq!(status, 502);
     let b = error_body(kind, "boom").to_string();
@@ -641,15 +642,122 @@ fn upstream_errors_become_anthropic_errors() {
     assert!(b.contains(r#""type":"error""#));
     // Not a chat completion at all: an error the relay answers 502 with.
     assert!(decode_chat_response(b"<html>bad gateway</html>").is_err());
+
+    // Over HTTP, through the router's MLX routes.
+    let (mlx, h) = mlx_router().await;
+    mlx.on(|_| Reply::status(500, r#"{"error":"boom"}"#));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 502);
+    assert_eq!(
+        common::anthropic_error(&r),
+        ("api_error".into(), "boom".into())
+    );
+    mlx.on(|_| Reply::status(400, r#"{"error":{"message":"bad request"}}"#));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 400);
+    assert_eq!(
+        common::anthropic_error(&r),
+        ("invalid_request_error".into(), "bad request".into())
+    );
+    mlx.on(|_| Reply::status(500, "<html>no</html>"));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(
+        common::anthropic_error(&r).1,
+        "The local model server answered HTTP 500."
+    );
+    // A whole answer that is no chat completion.
+    mlx.on(|_| Reply::json("<html>bad gateway</html>"));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 502);
+    assert!(common::anthropic_error(&r)
+        .1
+        .starts_with("The local model server did not answer"));
 }
 
-#[test]
-fn health_follows_upstream_and_count_tokens_and_models() {
-    // `/health` and `/v1/models` on the auto path come with the relay (Task 8); `count_tokens` is here.
+const SIMPLE_BODY: &str =
+    r#"{"model":"local","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}"#;
+
+fn mlx_path(rest: &str) -> String {
+    format!("/s/sess-1/mlx{rest}")
+}
+
+/// An MLX stub and a router whose active model is on it.
+async fn mlx_router() -> (Stub, common::Harness) {
+    let mlx = Stub::start(EngineKind::Mlx, &[]).await;
+    let h = routed(
+        ports(Stub::dead_port().await, Stub::dead_port().await, mlx.port),
+        Some(routing(
+            Some(target(EngineKind::Mlx, QWEN, 32768)),
+            vec![],
+            Some(QWEN),
+        )),
+        false,
+        None,
+    )
+    .await;
+    (mlx, h)
+}
+
+#[tokio::test]
+async fn health_follows_upstream_and_count_tokens_and_models() {
     let simple = format!("{SIMPLE}}}");
     assert_eq!(count_tokens(simple.as_bytes()), simple.len() as u64 / 4);
     assert_eq!(count_tokens(b""), 1);
     assert_eq!(count_tokens(b"abc"), 1);
+
+    let (mlx, h) = mlx_router().await;
+    let r = common::send(h.port, "GET", &mlx_path("/health"), &[], b"").await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.json(), json!({"status": "ok"}));
+    mlx.health.store(503, std::sync::atomic::Ordering::SeqCst);
+    let r = common::send(h.port, "GET", &mlx_path("/health"), &[], b"").await;
+    assert_eq!(r.status, 503);
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages/count_tokens"),
+        &[],
+        simple.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.json(), json!({"input_tokens": simple.len() / 4}));
+    let r = common::send(h.port, "GET", &mlx_path("/v1/models"), &[], b"").await;
+    assert_eq!(r.status, 200);
+    let models = r.json();
+    assert_eq!(models["object"], "list");
+    assert_eq!(models["data"].as_array().unwrap().len(), 1);
+    assert_eq!(models["data"][0]["id"], QWEN);
+    assert_eq!(models["data"][0]["owned_by"], "localia");
+    assert!(mlx.seen().is_empty(), "none of these reach the engine");
 }
 
 #[tokio::test]
@@ -683,14 +791,30 @@ async fn bad_requests_are_refused_and_gateway_keeps_serving() {
     flood.extend(std::iter::repeat_n(b'a', 70_000));
     let flood = raw_text(p, &flood).await;
     assert!(flood.starts_with("HTTP/1.1 431"), "{flood:?}");
-    // A body that is not JSON is the dialect's 400.
-    // Over HTTP this is the relay's `/v1/messages` (Task 8); here, the 400 body it will send.
+    // A body that is not JSON is the dialect's 400, and the gateway keeps serving.
     let e = decode(b"{not json").unwrap_err();
     assert_eq!(e.message(), "Request body must be a JSON object.");
-    assert_eq!(
-        error_body("invalid_request_error", e.message())["error"]["type"],
-        "invalid_request_error"
-    );
+    for path in ["/s/sess-1/mlx/v1/messages", "/s/sess-1/auto/v1/messages"] {
+        let r = common::send(p, "POST", path, &[], b"{not json").await;
+        assert_eq!(r.status, 400, "{path}");
+        assert_eq!(
+            common::anthropic_error(&r),
+            (
+                "invalid_request_error".into(),
+                "Request body must be a JSON object.".into()
+            ),
+            "{path}"
+        );
+        let r = common::send(
+            p,
+            "POST",
+            "/s/sess-1/auto/v1/messages/count_tokens",
+            &[],
+            SIMPLE_BODY.as_bytes(),
+        )
+        .await;
+        assert_eq!(r.status, 200);
+    }
     let r = common::send(p, "POST", "/v2/other", &[], b"{}").await;
     assert_eq!(r.status, 404);
     // Still alive after all that.
@@ -828,17 +952,74 @@ fn stop_sequence_is_matched_by_gateway_not_sent_upstream() {
     assert!(text.contains(r#""text":"AMPLE""#));
 }
 
-#[test]
-#[ignore = "needs the relay (Task 8): chat-completions passthrough with the model renamed"]
-fn open_ai_chat_completions_pass_through_with_model_renamed() {
-    // Task 8 pins this: a non-streamed and a streamed answer are forwarded unchanged; the body sent to MLX has
-    // `model: default_model`; a body that is not an object with `messages` is 400; `/v1/models` lists one model.
-    todo!("relay passthrough (Task 8)")
+#[tokio::test]
+async fn open_ai_chat_completions_pass_through_with_model_renamed() {
+    let (mlx, h) = mlx_router().await;
+    let whole = fixture("mlx-0.32.2-nonstream-text.json");
+    let w = whole.clone();
+    mlx.on(move |_| Reply::json(w.clone()));
+    let body =
+        r#"{"model":"gpt-local","temperature":0.2,"messages":[{"role":"user","content":"hi"}]}"#;
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        body.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body, whole, "forwarded unchanged");
+    assert_eq!(r.header("content-type"), Some("application/json"));
+    let sent = &mlx.seen()[0];
+    assert_eq!(sent.path, "/v1/chat/completions");
+    let mut want: Value = serde_json::from_str(body).unwrap();
+    want["model"] = json!("default_model");
+    assert_eq!(serde_json::from_slice::<Value>(&sent.body).unwrap(), want);
+
+    let sse = fixture("mlx-0.32.2-stream-text.sse");
+    let s = sse.clone();
+    mlx.on(move |_| Reply::sse(s.clone()));
+    let body = r#"{"model":"gpt-local","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        body.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body, sse);
+    assert_eq!(r.header("content-type"), Some("text/event-stream"));
+    assert_eq!(r.header("cache-control"), Some("no-cache"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&mlx.seen()[1].body).unwrap()["model"],
+        "default_model"
+    );
+
+    for bad in [r#"{"model":"m"}"#, "[]", "nope"] {
+        let r = common::send(
+            h.port,
+            "POST",
+            &mlx_path("/v1/chat/completions"),
+            &[],
+            bad.as_bytes(),
+        )
+        .await;
+        assert_eq!(r.status, 400, "{bad}");
+        assert_eq!(
+            r.json(),
+            json!({"error": {"message": "Request body must be a JSON object with messages", "type": "invalid_request_error"}})
+        );
+    }
+    assert_eq!(mlx.seen().len(), 2);
+    let r = common::send(h.port, "GET", &mlx_path("/v1/models"), &[], b"").await;
+    assert_eq!(r.json()["data"].as_array().unwrap().len(), 1);
 }
 
-#[test]
-fn dead_generation_becomes_overloaded_and_asks_for_a_restart() {
-    // The 529 `overloaded_error` answer and the restart request come with the relay (Task 8); the detection is here.
+#[tokio::test]
+async fn dead_generation_becomes_overloaded_and_asks_for_a_restart() {
     let died = b"RuntimeError: generation thread died";
     assert!(is_dead_generation(404, died));
     assert!(is_dead_generation(500, died));
@@ -849,14 +1030,105 @@ fn dead_generation_becomes_overloaded_and_asks_for_a_restart() {
     assert!(!is_dead_generation(400, died));
     assert!(!is_dead_generation(404, b"{}"));
     assert!(localia_router::engine::DEAD_GENERATION_MESSAGE.contains("restarting"));
+
+    // Over HTTP: 529 for Claude Code (which retries it), 503 for OpenAI clients, and the restart request is
+    // the route status's `engineFailure` (the app restarts MLX when it sees it).
+    let (mlx, h) = mlx_router().await;
+    mlx.on(|_| Reply::status(500, "RuntimeError: generation thread died"));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 529);
+    assert_eq!(
+        common::anthropic_error(&r),
+        (
+            "overloaded_error".into(),
+            localia_router::engine::DEAD_GENERATION_MESSAGE.into()
+        )
+    );
+    let health = common::send(h.port, "GET", "/localia/health", &[], b"")
+        .await
+        .json();
+    assert_eq!(health["route"]["engineFailure"], "mlx");
+    let chat = r#"{"model":"m","messages":[{"role":"user","content":"hi"}]}"#;
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        chat.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 503);
+    assert_eq!(r.json()["error"]["type"], "server_error");
+    // A model may say these words in a 200: that is an answer.
+    mlx.on(|_| Reply::json(r#"{"choices":[{"message":{"content":"generation thread died"},"finish_reason":"stop"}]}"#));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/messages"),
+        &[],
+        SIMPLE_BODY.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200);
 }
 
-#[test]
-#[ignore = "needs the relay (Task 8): passthrough error bodies"]
-fn pass_through_error_truncated_or_invalid_becomes_valid_json() {
-    // Task 8 pins this: a passthrough error over 64 KB or not JSON is replaced by a JSON error of the router's
-    // own, with the same status; a whole JSON error is forwarded as it is.
-    todo!("relay passthrough errors (Task 8)")
+#[tokio::test]
+async fn pass_through_error_truncated_or_invalid_becomes_valid_json() {
+    let (mlx, h) = mlx_router().await;
+    let chat = r#"{"model":"m","messages":[{"role":"user","content":"hi"}]}"#;
+    let whole = r#"{"error":{"message":"bad","type":"invalid_request_error"}}"#;
+    mlx.on(move |_| Reply::status(400, whole));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        chat.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 400);
+    assert_eq!(
+        r.body,
+        whole.as_bytes(),
+        "a whole JSON error is forwarded as it is"
+    );
+
+    mlx.on(|_| Reply::status(500, "<html>Internal Server Error</html>"));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        chat.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 500);
+    assert_eq!(
+        r.json(),
+        json!({"error": {"message": "The local model server answered HTTP 500.", "type": "api_error"}})
+    );
+
+    // Over 64 KiB: cut, so not forwarded even though it starts like JSON.
+    let big = format!(r#"{{"error":{{"message":"{}"}}}}"#, "x".repeat(70_000));
+    mlx.on(move |_| Reply::status(502, big.clone()));
+    let r = common::send(
+        h.port,
+        "POST",
+        &mlx_path("/v1/chat/completions"),
+        &[],
+        chat.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 502);
+    assert!(r.body.len() < 1000, "replaced, not forwarded");
+    assert_eq!(r.json()["error"]["type"], "api_error");
 }
 
 #[tokio::test]

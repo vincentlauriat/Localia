@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod stub;
+
 use axum::body::Bytes;
 use localia_router::dialect::StreamEncoder;
 use localia_router::relay::Translation;
