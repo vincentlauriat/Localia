@@ -17,6 +17,8 @@ enum SimpleHint: Equatable {
     case closeOtherSession
     case cloudLogin
     case noModelFits
+    /// Localia's router is needed and not running: the alert's Restart button restarts it.
+    case restartRouter
 }
 
 /// A problem as simple mode shows it: a short title, one actionable sentence, and the technical text
@@ -37,6 +39,7 @@ struct SimpleIssue: Equatable {
         case .closeOtherSession: String(localized: "Your AI is busy")
         case .cloudLogin: String(localized: "Claude may ask you to sign in")
         case .noModelFits: String(localized: "No AI model fits this Mac")
+        case .restartRouter: String(localized: "Localia needs a restart")
         }
     }
 
@@ -54,6 +57,7 @@ struct SimpleIssue: Equatable {
         case .closeOtherSession: return String(localized: "Close the other Claude window, then try again.")
         case .cloudLogin: return String(localized: "To work without an account, turn on Local mode.")
         case .noModelFits: return String(localized: "Claude can still use Anthropic's cloud: leave Local mode off.")
+        case .restartRouter: return String(localized: "Click Restart, then try again.")
         }
     }
 }

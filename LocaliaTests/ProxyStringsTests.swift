@@ -45,8 +45,11 @@ final class ProxyStringsTests: XCTestCase {
         XCTAssertEqual(french("Localia's router is not running"), "Le routeur de Localia ne répond pas")
         XCTAssertEqual(french("Direct — no fallback, not counted"), "Direct — sans repli, non compté")
         XCTAssertEqual(french("Via Localia"), "Via Localia")
-        XCTAssertEqual(french("MLX models need it. Restart it, then try again."),
-                       "Les modèles MLX en ont besoin. Redémarrez-le, puis réessayez.")
+        XCTAssertEqual(french("Localia's router is needed for this model. Click Restart, then try again."),
+                       "Le routeur de Localia est nécessaire pour ce modèle. Cliquez sur Redémarrer, puis réessayez.")
+        XCTAssertEqual(french("Localia needs a restart"), "Localia doit redémarrer")
+        XCTAssertEqual(french("Click Restart, then try again."), "Cliquez sur Redémarrer, puis réessayez.")
+        XCTAssertNil(strings["MLX models need it. Restart it, then try again."], "the old copy is gone")
         XCTAssertNotNil(french("Restart"))
     }
 }

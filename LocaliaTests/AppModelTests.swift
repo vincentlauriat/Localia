@@ -663,7 +663,13 @@ final class AppModelTests: XCTestCase {
             await model.launch(folder: try folder(), toolID: toolID)
             let alert = try XCTUnwrap(model.alert, "\(String(describing: toolID))")
             XCTAssertEqual(alert.title, String(localized: "Localia's router is not running"))
+            XCTAssertEqual(alert.message,
+                           String(localized: "Localia's router is needed for this model. Click Restart, then try again."))
             XCTAssertEqual(alert.action?.title, String(localized: "Restart"))
+            // Simple mode: no engine named, and the sentence matches the button.
+            let simple = alert.simplified(heavyApps: [])
+            XCTAssertEqual(simple.message, String(localized: "Click Restart, then try again."))
+            XCTAssertEqual(simple.action?.title, String(localized: "Restart"))
         }
         XCTAssertTrue(terminal.opened.isEmpty)
         XCTAssertTrue(tool.targets.isEmpty)

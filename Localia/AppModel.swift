@@ -831,10 +831,11 @@ final class AppModel: ObservableObject {
             // MLX has no Direct choice: only the router speaks Anthropic and Responses to mlx_lm.server, so
             // with the router down, offer to restart it.
             alert = AppAlert(title: String(localized: "Localia's router is not running"),
-                             message: String(localized: "MLX models need it. Restart it, then try again."),
+                             message: String(localized: "Localia's router is needed for this model. Click Restart, then try again."),
                              action: .init(title: String(localized: "Restart")) { [weak self] in
                                  await self?.restartProxy()
-                             })
+                             },
+                             hint: .restartRouter)
             return
         }
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
