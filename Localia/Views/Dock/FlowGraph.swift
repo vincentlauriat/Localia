@@ -172,7 +172,9 @@ struct FlowGraph: Equatable {
         }
         for tool in tools {
             // The router speaks the Responses API for every engine: only a direct engine without it is unreachable.
-            for e in input.engines where !(tool.needsResponsesAPI && !e.servesResponsesAPI && route(e) != .proxied) {
+            // MLX has no Direct route: while the router is down, no tool reaches it.
+            for e in input.engines where !(tool.needsResponsesAPI && !e.servesResponsesAPI && route(e) != .proxied)
+                && !(e == .mlx && input.fallback) {
                 if route(e) == .proxied {
                     add(tool.id, "proxy", .proxied); add("proxy", nodeID(e), .proxied)
                 } else {

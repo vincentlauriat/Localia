@@ -59,7 +59,7 @@ final class FlowGraphTests: XCTestCase {
         XCTAssertEqual(proxy?.state, .warning)
         XCTAssertEqual(proxy?.detail, String(localized: "Paused"))
         XCTAssertEqual(edge(g, "claude→ollama")?.route, .direct)
-        XCTAssertEqual(edge(g, "claude→mlx")?.route, .direct)
+        XCTAssertNil(edge(g, "claude→mlx"), "MLX has no Direct route: no tool reaches it while the router is down")
         XCTAssertNil(edge(g, "proxy→ollama"))
         XCTAssertNil(edge(g, "claude→proxy"))
     }
@@ -132,7 +132,8 @@ final class FlowGraphTests: XCTestCase {
         XCTAssertFalse(g.edges.contains { $0.from == "codex" && $0.to == "mlx" })
     }
 
-    /// Via Localia, Codex reaches MLX (the router speaks the Responses API for it). Direct, it cannot.
+    /// Via Localia, Codex reaches MLX (the router speaks the Responses API for it). With the router down, no tool
+    /// does (MLX has no Direct route).
     func test_codexToMLX_shownViaLocalia_hiddenDirect() {
         let codex = FlowInput.Tool(id: "codex", name: "Codex", needsResponsesAPI: true)
         let routed = FlowGraph.make(input(engines: [.mlx], tools: [codex]), advanced: true, now: now)
@@ -141,7 +142,7 @@ final class FlowGraphTests: XCTestCase {
 
         let direct = FlowGraph.make(input(engines: [.mlx], tools: [codex], fallback: true), advanced: true, now: now)
         XCTAssertFalse(direct.edges.contains { $0.from == "codex" }, "\(direct.edges.map(\.id))")
-        XCTAssertEqual(edge(direct, "claude→mlx")?.route, .direct)
+        XCTAssertNil(edge(direct, "claude→mlx"))
     }
 
     func test_uninstalledEngine_hasNoEdges() {
