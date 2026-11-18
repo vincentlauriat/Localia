@@ -509,7 +509,7 @@ impl Ctx {
                 truncated: request.len() > CONTENT_CAP || out.truncated,
             });
             if let Err(e) = state.store.insert(&r, content.as_ref()) {
-                eprintln!("LocaliaProxyService: cannot record request: {e}");
+                log::error!(target: crate::LOG_CATEGORY, "cannot record request: {e}");
             }
         };
         // The drop guard can run outside the runtime (at shutdown): then it writes in place.

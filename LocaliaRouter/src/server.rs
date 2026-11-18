@@ -109,6 +109,24 @@ pub async fn listen(cfg: ServiceConfig) -> anyhow::Result<()> {
     serve(cfg, listener).await
 }
 
+/// How often old rows are purged from the usage store.
+pub const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Purges the store now, then every `PURGE_INTERVAL`, with the retention the config holds at that moment.
+async fn purge_loop(state: Arc<AppState>, clock: Arc<dyn Clock>) {
+    loop {
+        let retention = state.config.read().unwrap_or_else(|e| e.into_inner()).retention_days;
+        let state2 = state.clone();
+        let done = tokio::task::spawn_blocking(move || state2.store.purge(chrono::Local::now(), retention)).await;
+        match done {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => log::error!(target: crate::LOG_CATEGORY, "purge failed: {e}"),
+            Err(e) => log::error!(target: crate::LOG_CATEGORY, "purge task failed: {e}"),
+        }
+        clock.sleep(PURGE_INTERVAL).await;
+    }
+}
+
 /// Opens the data directory (token, config, store) and serves `listener` until it fails.
 pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<()> {
     serve_with(cfg, listener, Arc::new(SystemClock)).await
@@ -148,6 +166,7 @@ pub async fn serve_with(
         clock,
         config.routing.clone(),
     ));
+    let clock_for_purge = router.clock();
     router.clone().spawn_monitor();
     let config = RwLock::new(config);
     let state = Arc::new(AppState {
@@ -159,6 +178,7 @@ pub async fn serve_with(
         router,
         http: relay_client,
     });
+    tokio::spawn(purge_loop(state.clone(), clock_for_purge));
     let app = app(state);
 
     let slots = Arc::new(Semaphore::new(cfg.max_connections));
@@ -169,7 +189,7 @@ pub async fn serve_with(
             Ok(c) => c,
             Err(e) => {
                 // Out of descriptors and the like: back off instead of spinning.
-                eprintln!("LocaliaProxyService: accept failed: {e}");
+                log::error!(target: crate::LOG_CATEGORY, "accept failed: {e}");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -399,7 +419,7 @@ async fn set_config(State(s): State<Arc<AppState>>, h: HeaderMap, body: Bytes) -
     {
         Ok(()) => no_content(),
         Err(err) => {
-            eprintln!("LocaliaProxyService: cannot save config: {err}");
+            log::error!(target: crate::LOG_CATEGORY, "cannot save config: {err}");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "api_error",
@@ -434,7 +454,7 @@ async fn erase(State(s): State<Arc<AppState>>, h: HeaderMap, body: Bytes) -> Res
     match done.map_err(|e| e.to_string()).and_then(|r| r) {
         Ok(()) => no_content(),
         Err(err) => {
-            eprintln!("LocaliaProxyService: cannot erase: {err}");
+            log::error!(target: crate::LOG_CATEGORY, "cannot erase: {err}");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "api_error",

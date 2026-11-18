@@ -14,3 +14,6 @@ pub mod token;
 pub mod version;
 
 pub use server::{listen, serve, serve_with, EnginePorts, ServiceConfig};
+
+/// os_log category of every message (the subsystem, `fr.vincentlauriat.localia`, is set by `main`).
+pub const LOG_CATEGORY: &str = "proxy-service";

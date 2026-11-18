@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use subtle::ConstantTimeEq;
 
@@ -9,6 +9,8 @@ pub fn load_or_create(path: &Path) -> io::Result<String> {
     if let Ok(s) = std::fs::read_to_string(path) {
         let t = s.trim();
         if !t.is_empty() {
+            // A file left with wider permissions (older version, manual edit) is tightened at every start.
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
             return Ok(t.to_string());
         }
     }
