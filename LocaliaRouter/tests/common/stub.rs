@@ -84,8 +84,8 @@ pub enum Step {
     Data(Vec<u8>),
     /// Waits for this notification (or for the router to drop the answer).
     Wait(Arc<Notify>),
-    /// Breaks the connection, as an engine that dies mid-answer. The bytes before it are let out first:
-    /// hyper drops what it has not flushed when a body fails.
+    /// Breaks the connection, as an engine that dies mid-answer. hyper drops what it has not flushed when a
+    /// body fails, so put a `Wait` before it (the body is then pending, and flushed) to let earlier bytes out.
     Abort,
 }
 
@@ -274,10 +274,6 @@ impl Stub {
                         }
                     }
                     Step::Abort => {
-                        while tx.capacity() < tx.max_capacity() {
-                            tokio::task::yield_now().await;
-                        }
-                        tokio::time::sleep(Duration::from_millis(50)).await;
                         let _ = tx.send(Err(std::io::Error::other("engine died"))).await;
                         return;
                     }

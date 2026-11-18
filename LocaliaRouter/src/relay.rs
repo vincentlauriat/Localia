@@ -7,7 +7,7 @@ use crate::engine::{
     chat_body, decode_chat_response, is_dead_generation, ChatStreamDecoder, EngineKind,
     DEAD_GENERATION_MESSAGE, MLX_MODEL,
 };
-use crate::ir::{cut_at_stop, ChatRequest};
+use crate::ir::{cut_at_stop, ChatRequest, StreamEvent};
 use crate::metering::{error_message, requesting_usage, status_for, StreamMeter, UsageExtractor};
 use crate::router::{Clock, Decision, Reason, RouteError};
 use crate::server::{error_body, json_response, AppState};
@@ -108,6 +108,8 @@ pub struct Translation<E: StreamEncoder> {
     decoder: ChatStreamDecoder,
     enc: E,
     end: EngineEnd,
+    /// Text, reasoning or a tool call arrived: the engine is decoding (no longer reading the prompt).
+    content: bool,
 }
 
 impl<E: StreamEncoder> Translation<E> {
@@ -117,6 +119,7 @@ impl<E: StreamEncoder> Translation<E> {
             decoder: ChatStreamDecoder::new(stops),
             enc,
             end: EngineEnd::Open,
+            content: false,
         }
     }
 
@@ -136,6 +139,12 @@ impl<E: StreamEncoder> Translation<E> {
                 SseLine::Comment => out.extend(self.enc.engine_keepalive()),
                 SseLine::Data(payload) => {
                     for e in self.decoder.feed(&payload) {
+                        self.content |= matches!(
+                            e,
+                            StreamEvent::TextDelta(_)
+                                | StreamEvent::ThinkingDelta(_)
+                                | StreamEvent::ToolCallStart { .. }
+                        );
                         out.extend(self.enc.event(&e));
                     }
                     if let Some(err) = self.decoder.take_error() {
@@ -206,6 +215,11 @@ impl<E: StreamEncoder> Translation<E> {
 
     pub fn engine_end(&self) -> EngineEnd {
         self.end
+    }
+
+    /// The engine sent content (text, reasoning, a tool call), not only keepalives or empty deltas.
+    pub fn saw_content(&self) -> bool {
+        self.content
     }
 
     /// A whole engine stream, in the given pieces, as one translated answer.
@@ -572,6 +586,11 @@ impl Sink {
         true
     }
 
+    /// A streamed answer carried content (see `StreamMeter::saw_content`).
+    fn saw_content(&self) -> bool {
+        self.meter.as_ref().is_some_and(StreamMeter::saw_content)
+    }
+
     /// Resolves once nothing has been sent for `KEEPALIVE`.
     async fn idle(&self) {
         let due = self.last_write + KEEPALIVE;
@@ -692,13 +711,15 @@ fn report_engine(
     target: &TargetSpec,
     complete: bool,
     output: Option<i64>,
-    first_byte: Option<std::time::Instant>,
+    first_content: Option<Instant>,
     streamed: bool,
 ) {
     let router = &ctx.state.router;
     if complete {
-        if let (true, Some(o), Some(t)) = (streamed, output, first_byte) {
-            router.record_decode_speed(target, o.max(0) as u64, t.elapsed().as_millis() as u64);
+        // Decision 8: output over the time since the first content byte (the prompt's prefill excluded).
+        if let (true, Some(o), Some(t)) = (streamed, output, first_content) {
+            let decode = router.clock().now().saturating_duration_since(t);
+            router.record_decode_speed(target, o.max(0) as u64, decode.as_millis() as u64);
         }
         router.report_stream_success(target.engine);
     } else {
@@ -912,7 +933,7 @@ fn passthrough(
         sink
     };
     tokio::spawn(async move {
-        let mut first_byte = None;
+        let mut first_content = None;
         let mut interrupted: Option<String> = None;
         loop {
             tokio::select! {
@@ -923,8 +944,11 @@ fn passthrough(
                 }
                 c = resp.chunk() => match c {
                     Ok(Some(b)) => {
-                        first_byte.get_or_insert_with(std::time::Instant::now);
-                        if !sink.send(b).await {
+                        let sent = sink.send(b).await;
+                        if first_content.is_none() && sink.saw_content() {
+                            first_content = Some(sink.clock.now());
+                        }
+                        if !sent {
                             break;
                         }
                     }
@@ -983,7 +1007,14 @@ fn passthrough(
             }
             if ok {
                 let complete = interrupted.is_none() && (!streamed || terminal);
-                report_engine(&ctx, &target, complete, out.usage.1, first_byte, streamed);
+                report_engine(
+                    &ctx,
+                    &target,
+                    complete,
+                    out.usage.1,
+                    first_content,
+                    streamed,
+                );
             }
         }
         ctx.save(row, out);
@@ -1261,7 +1292,8 @@ async fn translate(ctx: Ctx, d: Dialect, target: &TargetSpec, row: Option<Row>) 
 /// How the engine's side of a translated stream went.
 struct StreamEnd {
     interrupted: Option<String>,
-    first_byte: Option<std::time::Instant>,
+    /// When the engine's first content arrived, on the router's clock.
+    first_content: Option<Instant>,
 }
 
 /// Engine bytes through the translation to the client, with a keepalive event whenever nothing was sent for
@@ -1273,7 +1305,7 @@ async fn stream_translation(
 ) -> StreamEnd {
     let mut end = StreamEnd {
         interrupted: None,
-        first_byte: None,
+        first_content: None,
     };
     loop {
         tokio::select! {
@@ -1284,8 +1316,10 @@ async fn stream_translation(
             }
             c = resp.chunk() => match c {
                 Ok(Some(b)) => {
-                    end.first_byte.get_or_insert_with(std::time::Instant::now);
                     let out = t.feed(&b);
+                    if end.first_content.is_none() && t.saw_content() {
+                        end.first_content = Some(sink.clock.now());
+                    }
                     if !sink.send_all(out).await || t.is_done() {
                         break;
                     }
@@ -1353,7 +1387,9 @@ fn finish_translated(
     }
     match t.engine_end() {
         EngineEnd::Open => {}
-        EngineEnd::Complete => report_engine(&ctx, target, true, out.usage.1, end.first_byte, true),
+        EngineEnd::Complete => {
+            report_engine(&ctx, target, true, out.usage.1, end.first_content, true)
+        }
         EngineEnd::Cut | EngineEnd::Failed => report_engine(&ctx, target, false, None, None, true),
     }
     if let Some(row) = row {

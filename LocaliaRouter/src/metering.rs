@@ -163,6 +163,7 @@ pub struct StreamMeter {
     parser: SseParser,
     usage: UsageExtractor,
     terminal: bool,
+    content: bool,
 }
 
 impl StreamMeter {
@@ -172,6 +173,7 @@ impl StreamMeter {
             parser: SseParser::new(),
             usage: UsageExtractor::new(d),
             terminal: false,
+            content: false,
         }
     }
 
@@ -188,7 +190,16 @@ impl StreamMeter {
                     .is_some_and(|t| t == "response.completed"),
             };
             self.terminal |= terminal;
+            if !self.content {
+                self.content = carries_content(self.dialect, &data);
+            }
         }
+    }
+
+    /// Content (text, reasoning, a tool call) has arrived, not only the opening events or empty deltas: the
+    /// engine has finished reading the prompt.
+    pub fn saw_content(&self) -> bool {
+        self.content
     }
 
     pub fn usage(&self) -> (Option<i64>, Option<i64>) {
@@ -197,6 +208,37 @@ impl StreamMeter {
 
     pub fn saw_terminal(&self) -> bool {
         self.terminal
+    }
+}
+
+fn carries_content(d: Dialect, data: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(data) else {
+        return false;
+    };
+    let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+    match d {
+        Dialect::Anthropic => kind == "content_block_delta",
+        Dialect::Responses => kind.ends_with(".delta"),
+        Dialect::Chat => {
+            let Some(delta) = v
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|c| c.first())
+                .and_then(|c| c.get("delta"))
+            else {
+                return false;
+            };
+            let text = |k: &str| {
+                delta
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty())
+            };
+            text("content")
+                || text("reasoning")
+                || text("reasoning_content")
+                || delta.get("tool_calls").is_some_and(|t| !t.is_null())
+        }
     }
 }
 

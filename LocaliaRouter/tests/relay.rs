@@ -316,53 +316,70 @@ async fn passthrough_drops_hop_headers_and_asks_identity_encoding() {
     assert_eq!(sent.header("connection"), None);
 }
 
-/// Reads from `s` until `needle` arrived; returns what was read.
-async fn read_until(s: &mut TcpStream, needle: &str) -> String {
-    let mut got = Vec::new();
-    let mut buf = [0u8; 4096];
-    while !String::from_utf8_lossy(&got).contains(needle) {
-        let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
-            .await
-            .unwrap_or_else(|_| {
-                panic!("{needle:?} never came: {:?}", String::from_utf8_lossy(&got))
-            })
-            .unwrap();
-        assert!(
-            n > 0,
-            "closed before {needle:?}: {:?}",
-            String::from_utf8_lossy(&got)
-        );
-        got.extend_from_slice(&buf[..n]);
-    }
-    String::from_utf8_lossy(&got).to_string()
+/// A raw client connection that keeps everything it read, so a test can stop at a point of the stream, act,
+/// and still parse the whole answer at the end.
+struct Conn {
+    s: TcpStream,
+    all: Vec<u8>,
+    /// Where the next `read_count` starts counting.
+    mark: usize,
 }
 
-/// Reads from `s` until `needle` arrived `n` times in what this call read.
-async fn read_count(s: &mut TcpStream, needle: &str, n: usize) -> String {
-    let mut got = Vec::new();
-    let mut buf = [0u8; 4096];
-    while String::from_utf8_lossy(&got).matches(needle).count() < n {
-        let k = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
-            .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "{needle:?} ×{n} never came: {:?}",
-                    String::from_utf8_lossy(&got)
-                )
-            })
-            .unwrap();
-        assert!(k > 0, "closed: {:?}", String::from_utf8_lossy(&got));
-        got.extend_from_slice(&buf[..k]);
+impl Conn {
+    /// Reads until `needle` arrived `n` times since the last call; returns that part.
+    async fn read_count(&mut self, needle: &str, n: usize) -> String {
+        let mut buf = [0u8; 4096];
+        loop {
+            let got = String::from_utf8_lossy(&self.all[self.mark..]).to_string();
+            if got.matches(needle).count() >= n {
+                self.mark = self.all.len();
+                return got;
+            }
+            let k = tokio::time::timeout(Duration::from_secs(10), self.s.read(&mut buf))
+                .await
+                .unwrap_or_else(|_| panic!("{needle:?} ×{n} never came: {got:?}"))
+                .unwrap();
+            assert!(k > 0, "closed before {needle:?} ×{n}: {got:?}");
+            self.all.extend_from_slice(&buf[..k]);
+        }
     }
-    String::from_utf8_lossy(&got).to_string()
+
+    /// One read of whatever is there within 20 ms.
+    async fn poll(&mut self) -> Option<usize> {
+        let mut buf = [0u8; 4096];
+        match tokio::time::timeout(Duration::from_millis(20), self.s.read(&mut buf)).await {
+            Ok(Ok(k)) => {
+                self.all.extend_from_slice(&buf[..k]);
+                Some(k)
+            }
+            _ => None,
+        }
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.all).to_string()
+    }
+
+    /// The whole answer, read to its end.
+    async fn finish(mut self) -> HttpReply {
+        tokio::time::timeout(Duration::from_secs(10), self.s.read_to_end(&mut self.all))
+            .await
+            .expect("no end within 10 s")
+            .unwrap();
+        common::parse(&self.all)
+    }
 }
 
-async fn open_request(h: &Harness, path: &str, body: &str) -> TcpStream {
+async fn open_request(h: &Harness, path: &str, body: &str) -> Conn {
     let mut s = TcpStream::connect(("127.0.0.1", h.port)).await.unwrap();
     s.write_all(&common::request(h.port, "POST", path, &[], body.as_bytes()))
         .await
         .unwrap();
-    s
+    Conn {
+        s,
+        all: Vec::new(),
+        mark: 0,
+    }
 }
 
 #[tokio::test]
@@ -376,7 +393,7 @@ async fn client_disconnect_records_cancelled() {
     });
     let h = router_on(Ollama, &stubs, false).await;
     let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
-    let got = read_until(&mut s, "message_start").await;
+    let got = s.read_count("message_start", 1).await;
     assert!(got.starts_with("HTTP/1.1 200"), "{got}");
     drop(s); // the client leaves mid-stream
 
@@ -667,14 +684,24 @@ async fn midstream_engine_death_never_switches() {
     let blocks: Vec<&str> = text.split_inclusive("\n\n").collect();
     let two = format!("{}{}", blocks[0], blocks[1]);
     let t = two.clone();
-    stubs
-        .0
-        .on(move |_| Reply::sse("").steps(vec![Step::Data(t.clone().into()), Step::Abort]));
+    // The engine dies once the client has its first two events.
+    let die = Arc::new(Notify::new());
+    let d = die.clone();
+    stubs.0.on(move |_| {
+        Reply::sse("").steps(vec![
+            Step::Data(t.clone().into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
     stubs
         .1
         .on(|_| Reply::sse(fixture("anthropic-stream-usage.sse")));
     let h = router_on(Ollama, &stubs, false).await;
-    let r = post(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    let mut s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("content_block_start", 1).await;
+    die.notify_one();
+    let r = s.finish().await;
     assert_eq!(r.status, 200);
     let got = text_of(&r);
     assert!(got.starts_with(&two), "{got}");
@@ -697,11 +724,21 @@ async fn midstream_engine_death_never_switches() {
 
     // The same death on a chat stream is an upstream error.
     let c = "data: {\"choices\":[{\"delta\":{\"content\":\"Hal\"}}]}\n\n";
-    stubs
-        .0
-        .on(move |_| Reply::sse("").steps(vec![Step::Data(c.into()), Step::Abort]));
-    let r = post(&h, &path("auto", "/v1/chat/completions"), OPENAI_STREAM).await;
-    assert!(text_of(&r).contains("\"error\""));
+    let d = die.clone();
+    stubs.0.on(move |_| {
+        Reply::sse("").steps(vec![
+            Step::Data(c.into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
+    let mut s = open_request(&h, &path("auto", "/v1/chat/completions"), OPENAI_STREAM).await;
+    s.read_count("Hal", 1).await;
+    die.notify_one();
+    let r = s.finish().await;
+    let got = text_of(&r);
+    assert!(got.starts_with(c), "{got}");
+    assert!(got[c.len()..].starts_with("data: {\"error\""), "{got}");
     let r = &wait_rows(&h, 2).await[1];
     assert_eq!(r.status, "upstream_error");
 }
@@ -877,13 +914,13 @@ async fn translated_stream_sends_keepalive_while_engine_is_silent() {
     .await;
     let mut s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
     // message_start and its ping, then the engine's keepalive line as a ping.
-    let got = read_count(&mut s, "event: ping", 2).await;
+    let got = s.read_count("event: ping", 2).await;
     assert!(got.contains("event: message_start"), "{got}");
     // Then the engine is silent: a ping once KEEPALIVE has passed with nothing sent.
     clock.advance(localia_router::relay::KEEPALIVE);
-    read_count(&mut s, "event: ping", 1).await;
+    s.read_count("event: ping", 1).await;
     resume.notify_one();
-    let got = read_until(&mut s, "message_stop").await;
+    let got = s.read_count("message_stop", 1).await;
     assert!(got.contains("Hello"), "{got}");
 }
 
@@ -909,32 +946,26 @@ async fn loading_primary_keeps_the_stream_alive_then_serves() {
     let body = r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
     let mut s = open_request(&h, &path("auto", "/v1/messages"), body).await;
     // The decision waits on the loading engine; past KEEPALIVE the stream opens with keepalive events.
-    let mut got = String::new();
     for _ in 0..200 {
         clock.advance(Duration::from_millis(500));
-        let mut buf = [0u8; 4096];
-        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_millis(20), s.read(&mut buf)).await {
-            got.push_str(&String::from_utf8_lossy(&buf[..n]));
-            if got.matches("event: ping").count() >= 2 {
-                break;
-            }
+        s.poll().await;
+        if s.text().matches("event: ping").count() >= 2 {
+            break;
         }
     }
+    let got = s.text();
     assert!(got.starts_with("HTTP/1.1 200"), "{got}");
     assert!(got.contains("event: message_start"), "{got}");
     assert!(stubs.1.seen().is_empty(), "no request while loading");
     stubs.1.health.store(200, Ordering::SeqCst);
-    let mut done = String::new();
     for _ in 0..200 {
         clock.advance(Duration::from_millis(500));
-        let mut buf = [0u8; 4096];
-        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_millis(20), s.read(&mut buf)).await {
-            done.push_str(&String::from_utf8_lossy(&buf[..n]));
-            if done.contains("message_stop") || n == 0 {
-                break;
-            }
+        let k = s.poll().await;
+        if s.text().contains("message_stop") || k == Some(0) {
+            break;
         }
     }
+    let done = s.text();
     assert!(done.contains("Hello"), "{done}");
     assert!(done.contains("message_stop"), "{done}");
     let sent = &stubs.1.seen()[0];
@@ -947,6 +978,57 @@ async fn loading_primary_keeps_the_stream_alive_then_serves() {
     assert_eq!(r.status, "ok");
     assert_eq!(r.reason.as_deref(), Some("primary"));
     assert_eq!(r.engine, "llamaCpp");
+}
+
+/// Decision 8: decode speed is output over the time from the first content byte, not from the first engine
+/// byte (`mlx_lm.server` sends keepalive comments all through a long prompt's prefill).
+#[tokio::test]
+async fn decode_speed_counts_from_first_content_not_prefill() {
+    let stubs = engines().await;
+    let clock = ManualClock::new();
+    let (prefill, decoding) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let (p, d) = (prefill.clone(), decoding.clone());
+    let first = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n";
+    let rest = concat!(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":100}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    stubs.2.on(move |_| {
+        Reply::sse("").steps(vec![
+            Step::Data(b": keepalive 1/2\n\n".to_vec()),
+            Step::Wait(p.clone()),
+            Step::Data(first.into()),
+            Step::Wait(d.clone()),
+            Step::Data(rest.into()),
+        ])
+    });
+    let h = routed(
+        ports(stubs.0.port, stubs.1.port, stubs.2.port),
+        Some(routing(
+            Some(target(Mlx, QWEN_MLX, 65536)),
+            vec![],
+            Some(QWEN_MLX),
+        )),
+        false,
+        Some(clock.clone() as Arc<dyn Clock>),
+    )
+    .await;
+    let mut s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("event: ping", 2).await;
+    // 60 s of prefill, then 10 s of decoding for 100 tokens: 10 tok/s, above the 6 tok/s threshold.
+    clock.advance(Duration::from_secs(60));
+    prefill.notify_one();
+    s.read_count("Hello", 1).await;
+    clock.advance(Duration::from_secs(10));
+    decoding.notify_one();
+    s.read_count("message_stop", 1).await;
+    drop(s);
+    wait_rows(&h, 1).await;
+    let health = send(h.port, "GET", "/localia/health", &[], b"")
+        .await
+        .json();
+    assert_eq!(health["route"]["speed"], "ok", "{health}");
 }
 
 // MARK: - Golden matrix

@@ -355,3 +355,31 @@ fn keepalive_before_start_opens_the_stream() {
     let out = String::from_utf8(t.keepalive().concat()).unwrap();
     assert_eq!(out, "event: ping\ndata: {\"type\":\"ping\"}\n\n");
 }
+
+#[test]
+fn content_is_seen_after_keepalives_and_empty_deltas() {
+    let mut t = Translation::new(anthropic::Encoder::new("m"), &[]);
+    t.start();
+    t.feed(b": keepalive 1/2\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n");
+    assert!(!t.saw_content());
+    t.feed(b"data: {\"choices\":[{\"delta\":{\"reasoning\":\"hm\"}}]}\n\n");
+    assert!(t.saw_content());
+
+    let mut m = StreamMeter::new(Dialect::Chat);
+    m.feed(b": keepalive\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n");
+    assert!(!m.saw_content());
+    m.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n");
+    assert!(m.saw_content());
+
+    let mut m = StreamMeter::new(Dialect::Anthropic);
+    m.feed(b"event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\n");
+    assert!(!m.saw_content());
+    m.feed(b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"Hi\"}}\n\n");
+    assert!(m.saw_content());
+
+    let mut m = StreamMeter::new(Dialect::Responses);
+    m.feed(b"data: {\"type\":\"response.created\"}\n\n");
+    assert!(!m.saw_content());
+    m.feed(b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n");
+    assert!(m.saw_content());
+}
