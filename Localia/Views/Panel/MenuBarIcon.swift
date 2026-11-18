@@ -29,15 +29,21 @@ struct MenuBarIcon: View {
     }
 
     /// Built once: `body` runs on every change of the model.
-    private static let degradedImage = trouble(badge: .systemOrange, label: String(localized: "Localia, local AI in trouble"))
-    private static let downImage = trouble(badge: .systemRed, label: String(localized: "Localia, local AI not answering"))
+    private static let degradedImage = trouble(badge: .systemOrange, glyph: .exclamation,
+                                               label: String(localized: "Localia, local AI in trouble"))
+    private static let downImage = trouble(badge: .systemRed, glyph: .cross,
+                                           label: String(localized: "Localia, local AI needs attention"))
 
-    /// The filled mark with a coloured badge at the bottom right: a disc with an exclamation mark cut out, set
+    /// The two levels differ by shape as well as colour (never colour alone): "!" while it still answers, "×"
+    /// when it needs the user.
+    private enum Glyph { case exclamation, cross }
+
+    /// The filled mark with a coloured badge at the bottom right: a disc with its glyph cut out, set
     /// apart from the mark by a transparent ring. Not a template, so the badge keeps its colour; the mark itself
     /// is drawn in `labelColor`, resolved by the drawing handler for the menu bar's appearance each time it draws,
     /// so it matches the other menu-bar icons in light and dark. Its own image, so the shared named one keeps its
     /// own label. Drawn in the image's own points, at whatever scale the menu bar asks.
-    private static func trouble(badge: NSColor, label: String) -> NSImage {
+    private static func trouble(badge: NSColor, glyph: Glyph, label: String) -> NSImage {
         let filled = NSImage(named: "MenuBarFilled") ?? NSImage()
         let size = filled.size
         let image = NSImage(size: size, flipped: false) { rect in
@@ -45,7 +51,8 @@ struct MenuBarIcon: View {
             filled.draw(in: rect)
             // Tint the mark: keep its shape, replace its colour with the menu bar's text colour.
             context.compositingOperation = .sourceAtop
-            NSColor.labelColor.setFill()
+            // Opaque, like the template icons beside it (`labelColor` itself is slightly translucent).
+            NSColor.labelColor.withAlphaComponent(1).setFill()
             rect.fill(using: .sourceAtop)
             context.compositingOperation = .sourceOver
             let d = min(rect.width, rect.height) * 0.46
@@ -59,13 +66,29 @@ struct MenuBarIcon: View {
             context.compositingOperation = .sourceOver
             badge.setFill()
             NSBezierPath(ovalIn: disc).fill()
-            // The "!": a bar and a dot, cut out of the disc.
+            // The glyph, cut out of the disc.
             NSColor.black.setFill()
             context.compositingOperation = .destinationOut
             let w = d * 0.16
-            let bar = NSRect(x: disc.midX - w / 2, y: disc.minY + d * 0.40, width: w, height: d * 0.40)
-            NSBezierPath(roundedRect: bar, xRadius: w / 2, yRadius: w / 2).fill()
-            NSBezierPath(ovalIn: NSRect(x: disc.midX - w / 2, y: disc.minY + d * 0.17, width: w, height: w)).fill()
+            switch glyph {
+            case .exclamation:
+                // A bar and a dot.
+                let bar = NSRect(x: disc.midX - w / 2, y: disc.minY + d * 0.40, width: w, height: d * 0.40)
+                NSBezierPath(roundedRect: bar, xRadius: w / 2, yRadius: w / 2).fill()
+                NSBezierPath(ovalIn: NSRect(x: disc.midX - w / 2, y: disc.minY + d * 0.17, width: w, height: w)).fill()
+            case .cross:
+                // Two round-capped strokes through the centre.
+                let arm = d * 0.20
+                let cross = NSBezierPath()
+                cross.lineWidth = w
+                cross.lineCapStyle = .round
+                cross.move(to: NSPoint(x: disc.midX - arm, y: disc.midY - arm))
+                cross.line(to: NSPoint(x: disc.midX + arm, y: disc.midY + arm))
+                cross.move(to: NSPoint(x: disc.midX - arm, y: disc.midY + arm))
+                cross.line(to: NSPoint(x: disc.midX + arm, y: disc.midY - arm))
+                NSColor.black.setStroke()
+                cross.stroke()
+            }
             context.compositingOperation = .sourceOver
             return true
         }

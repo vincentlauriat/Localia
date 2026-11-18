@@ -8773,18 +8773,18 @@
         }
       }
     },
-    "Localia, local AI not answering": {
+    "Localia, local AI needs attention": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Localia, local AI not answering"
+            "value": "Localia, local AI needs attention"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Localia, l'IA locale ne répond plus"
+            "value": "Localia, l'IA locale a besoin de toi"
           }
         }
       }

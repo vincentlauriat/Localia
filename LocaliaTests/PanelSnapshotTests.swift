@@ -196,7 +196,7 @@ final class PanelSnapshotTests: XCTestCase {
         let filled = MenuBarIcon.image(state: .local)
         let cases: [(MenuBarState, NSColor, String, String)] = [
             (.degraded, .systemOrange, String(localized: "Localia, local AI in trouble"), "degraded"),
-            (.down, .systemRed, String(localized: "Localia, local AI not answering"), "down"),
+            (.down, .systemRed, String(localized: "Localia, local AI needs attention"), "down"),
         ]
         func bitmap(_ img: NSImage, _ appearance: NSAppearance.Name) throws -> NSBitmapImageRep {
             let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8,
@@ -239,8 +239,10 @@ final class PanelSnapshotTests: XCTestCase {
             let markPixel = try XCTUnwrap((0..<a.count).first { a[$0] > 250 && $0 % 64 < 24 })
             let onLight = try XCTUnwrap(light.colorAt(x: markPixel % 64, y: markPixel / 64)?.usingColorSpace(.sRGB))
             let onDark = try XCTUnwrap(dark.colorAt(x: markPixel % 64, y: markPixel / 64)?.usingColorSpace(.sRGB))
-            XCTAssertLessThan(onLight.brightnessComponent, 0.3, "dark mark on a light menu bar (\(name))")
-            XCTAssertGreaterThan(onDark.brightnessComponent, 0.7, "light mark on a dark menu bar (\(name))")
+            XCTAssertLessThan(onLight.brightnessComponent, 0.1, "dark mark on a light menu bar (\(name))")
+            XCTAssertGreaterThan(onDark.brightnessComponent, 0.95, "light mark on a dark menu bar (\(name))")
+            // Opaque, like the template icons beside it.
+            XCTAssertGreaterThan(onDark.alphaComponent, 0.98, "an opaque mark (\(name))")
             for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 let url = outputDir.appendingPathComponent("menubar-\(name)-\(suffix).png")
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
@@ -256,6 +258,11 @@ final class PanelSnapshotTests: XCTestCase {
         }
         XCTAssertEqual(filled.accessibilityDescription, String(localized: "Localia, local mode on"),
                        "drawing the trouble icons never relabels the shared filled image")
+        // Never colour alone: the two badges have different cut-outs ("!" and "×").
+        let shapeA = alpha(try bitmap(MenuBarIcon.image(state: .degraded), .aqua))
+        let shapeB = alpha(try bitmap(MenuBarIcon.image(state: .down), .aqua))
+        XCTAssertGreaterThan((0..<shapeA.count).filter { abs(Int(shapeA[$0]) - Int(shapeB[$0])) > 128 }.count, 20,
+                             "the degraded and down badges differ in shape")
     }
 
     /// Hosts the view in an off-screen window with the given appearance (so `NSColor(name:)` colours resolve
