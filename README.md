@@ -55,17 +55,20 @@ Deleting the app does not remove the block from your shell files. Before you del
 
 ## Build from source
 
+Prerequisites: Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Rust 1.98 with the Apple Silicon target (`rustup toolchain install 1.98 && rustup target add aarch64-apple-darwin`). The local router (`LocaliaRouter/`, Rust) is built by `Scripts/build-router.sh` and embedded in the app as `Contents/MacOS/LocaliaProxyService`; `xcodegen` and every Xcode build run it.
+
 ```sh
 xcodegen
 xcodebuild -project Localia.xcodeproj -scheme Localia -configuration Debug build
-cd Packages/LocaliaCore && swift test
+(cd Packages/LocaliaCore && swift test)
+(cd LocaliaRouter && cargo test --locked)
 ```
 
 The build runs `Scripts/fetch-llmfit.sh`, which downloads the pinned llmfit release and fails the build if its SHA-256 does not match.
 
 ## Releasing
 
-`./Scripts/release.sh [version]` builds, signs (`llmfit` and `LocaliaProxyService` first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
+`./Scripts/release.sh [version]` builds the Rust router, checks it (arm64 only, minimum macOS 14.0), signs (`llmfit` and the router, embedded as `LocaliaProxyService` with the hardened runtime, first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
 
 Notarization prefers an App Store Connect API key, because a key file survives when the keychain profile vanishes (it did twice). Create a key with the Developer role in App Store Connect (Users and Access > Integrations > App Store Connect API), save the `.p8` file, and write `~/.config/notarytool/api-key.env` with three lines: `NOTARY_KEY_ID=...`, `NOTARY_ISSUER_ID=...` and `NOTARY_KEY_PATH=...` (the path to the `.p8`). Without that file, the script falls back to the shared keychain profile `AppliMacVincentGithub`; recreate it with `xcrun notarytool store-credentials AppliMacVincentGithub --apple-id <your-apple-id> --team-id KFLACS69T9` (the command prompts for an app-specific password). The script checks the credentials before building and names the ones it uses.
 

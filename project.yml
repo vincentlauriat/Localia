@@ -1,7 +1,8 @@
 name: Localia
 options:
-  # llmfit must exist before generation: the copy phase is planned from files present at build start.
-  preGenCommand: Scripts/fetch-llmfit.sh
+  # llmfit and the router binary must exist before generation: the copy phases are planned from
+  # files present at build start.
+  preGenCommand: Scripts/fetch-llmfit.sh && Scripts/build-router.sh
   bundleIdPrefix: fr.vincentlauriat
   developmentLanguage: en
   deploymentTarget:
@@ -37,6 +38,13 @@ targets:
             subpath: Contents/Helpers
             phaseOrder: postCompile
         attributes: [CodeSignOnCopy]
+      # The Rust router (Scripts/build-router.sh), embedded where the Swift LocaliaProxyService was:
+      # same name and path, so the launch agent plist and a Sparkle update keep working.
+      - path: LocaliaRouter/dist/LocaliaProxyService
+        buildPhase:
+          copyFiles:
+            destination: executables
+        attributes: [CodeSignOnCopy]
     preBuildScripts:
       - name: Fetch llmfit (pinned, SHA-256 verified)
         script: |
@@ -45,14 +53,17 @@ targets:
           - $(SRCROOT)/Scripts/fetch-llmfit.sh
         outputFiles:
           - $(SRCROOT)/Localia/Resources/llmfit
+      - name: Build the Localia router (cargo)
+        script: |
+          "$SRCROOT/Scripts/build-router.sh"
+        # Runs on every build: Xcode does not track files inside a directory input, and cargo's
+        # incremental build keeps an unchanged run cheap.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/LocaliaRouter/dist/LocaliaProxyService
     dependencies:
       - package: LocaliaCore
       - package: Sparkle
-      - target: LocaliaProxyService
-        embed: true
-        codeSign: true
-        copy:
-          destination: executables
     info:
       path: Localia/Info.plist
       properties:
@@ -90,27 +101,6 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         # Logo teal (#045A54, #4FD1C5 in dark mode), kept in sync with Theme.accent.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
-  LocaliaProxyService:
-    type: tool
-    platform: macOS
-    sources:
-      - path: LocaliaProxyService
-        excludes:
-          - fr.vincentlauriat.localia.proxy.plist
-    dependencies:
-      - package: LocaliaCore
-    settings:
-      base:
-        PRODUCT_NAME: LocaliaProxyService
-        PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia.proxy
-        MARKETING_VERSION: "1.3.0"
-        CURRENT_PROJECT_VERSION: "8"
-        SWIFT_VERSION: "6.0"
-        ENABLE_HARDENED_RUNTIME: YES
-        GENERATE_INFOPLIST_FILE: NO
-        SKIP_INSTALL: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
   LocaliaTests:
