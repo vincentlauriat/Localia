@@ -7,6 +7,7 @@
 //! `localhost:<port>`, gets 403 before any handler runs.
 
 use crate::config::ProxyConfig;
+use crate::router::{HttpProbe, Router, SystemClock};
 use crate::store::Store;
 use crate::token;
 use anyhow::Context;
@@ -71,6 +72,7 @@ pub struct AppState {
     pub config_path: PathBuf,
     pub token: String,
     pub service: ServiceConfig,
+    pub router: Arc<Router>,
 }
 
 /// Anthropic-shaped error body: `{"type":"error","error":{"type":…,"message":…}}`.
@@ -113,13 +115,26 @@ pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<
     let store =
         Store::open(&cfg.data_dir.join("usage.sqlite")).context("cannot open the usage store")?;
     let config_path = cfg.data_dir.join("config.json");
-    let config = RwLock::new(ProxyConfig::load(&config_path));
+    let config = ProxyConfig::load(&config_path);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("cannot build the HTTP client")?;
+    let router = Arc::new(Router::new(
+        Arc::new(HttpProbe::new(cfg.engine_ports, client)),
+        Arc::new(SystemClock),
+        config.routing.clone(),
+    ));
+    router.clone().spawn_monitor();
+    let config = RwLock::new(config);
     let state = Arc::new(AppState {
         store,
         config,
         config_path,
         token,
         service: cfg.clone(),
+        router,
     });
     let app = app(state);
 
@@ -303,9 +318,9 @@ fn app(state: Arc<AppState>) -> axum::Router {
 }
 
 async fn health(State(s): State<Arc<AppState>>) -> Response<Body> {
-    // `route` becomes the router's status in Task 7.
+    // Cached state only: health never waits on an engine probe.
     let body =
-        serde_json::json!({"ok": true, "version": s.service.version, "route": {"state": "idle"}});
+        serde_json::json!({"ok": true, "version": s.service.version, "route": s.router.status()});
     json_response(
         StatusCode::OK,
         serde_json::to_vec(&body).unwrap_or_default(),
@@ -349,6 +364,8 @@ async fn set_config(State(s): State<Arc<AppState>>, h: HeaderMap, body: Bytes) -
         let mut current = state.config.write().unwrap_or_else(|e| e.into_inner());
         let merged = current.clone().merged(incoming);
         merged.save(&state.config_path)?;
+        // The merged routing: an old app's body without `routing` keeps the saved one.
+        state.router.set_config(merged.routing.clone());
         *current = merged;
         std::io::Result::Ok(())
     })

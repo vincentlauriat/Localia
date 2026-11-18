@@ -4,6 +4,7 @@ pub mod dialect;
 pub mod engine;
 pub mod ir;
 pub mod paths;
+pub mod router;
 pub mod server;
 pub mod sse;
 pub mod store;
