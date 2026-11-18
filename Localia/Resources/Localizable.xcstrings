@@ -8772,6 +8772,22 @@
           }
         }
       }
+    },
+    "Localia, local AI not answering": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, local AI not answering"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, l'IA locale ne répond plus"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

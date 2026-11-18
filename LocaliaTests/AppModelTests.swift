@@ -86,19 +86,22 @@ final class AppModelTests: XCTestCase {
         let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
         XCTAssertEqual(model.menuBarState, .off, "a router in trouble does not matter while local mode is off")
         await model.setLocalMode(true)
-        await waitUntil { model.menuBarState == .trouble }
+        await waitUntil { model.menuBarState == .down }
         await model.setLocalMode(false)
         XCTAssertEqual(model.menuBarState, .off)
     }
 
+    /// Fallback and a dead stream still answer: degraded (orange). No engine left: down (red).
     func test_menuBarState_troubleOnFallbackAndDown() async {
         let proxy = FakeProxyService(state: .running(version: "dev"))
         let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
         await model.setLocalMode(true)
         XCTAssertEqual(model.menuBarState, .local, "no route yet (a 1.3 service, no answer): plain local")
         for (status, expected) in [(route("local"), MenuBarState.local), (route("idle"), .local),
-                                   (route("fallback"), .trouble), (route("down"), .trouble),
-                                   (route("local", failure: .mlx), .trouble), (route("local"), .local)] {
+                                   (route("fallback"), .degraded), (route("down"), .down),
+                                   (route("local", failure: .mlx), .degraded),
+                                   (route("fallback", failure: .mlx), .degraded),
+                                   (route("down", failure: .mlx), .down), (route("local"), .local)] {
             proxy.route = status
             await waitUntil { model.route == status }
             XCTAssertEqual(model.menuBarState, expected, "\(status)")
@@ -116,7 +119,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.isLocalModeOn)
         XCTAssertEqual(proxy.routeRefreshes, 0)
         XCTAssertEqual(model.menuBarState, .local, "not polled yet: no alarm")
-        await waitUntil { model.menuBarState == .trouble }
+        await waitUntil { model.menuBarState == .down }
         XCTAssertNil(model.route)
         proxy.routeAnswers = true
         await waitUntil { model.menuBarState == .local }
@@ -131,7 +134,7 @@ final class AppModelTests: XCTestCase {
         await model.ensureProxy()
         XCTAssertEqual(model.menuBarState, .off)
         await model.setLocalMode(true)
-        XCTAssertEqual(model.menuBarState, .trouble)
+        XCTAssertEqual(model.menuBarState, .down)
     }
 
     /// The first check found the router down, then launchd brought it back: the route poll checks again, so
@@ -145,7 +148,7 @@ final class AppModelTests: XCTestCase {
             $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
         }
         await model.startRouting()
-        XCTAssertEqual(model.menuBarState, .trouble)
+        XCTAssertEqual(model.menuBarState, .down)
         XCTAssertEqual(shim.bases.last, engine.baseURL, "Direct while the router is down")
         proxy.stateAfterCheck = .running(version: "dev")
         proxy.routeAnswers = true
@@ -172,7 +175,7 @@ final class AppModelTests: XCTestCase {
         await waitUntil { model.proxyState == .unavailable(reason: "gone") }
         await waitUntil { shim.bases.last == engine.baseURL }
         XCTAssertTrue(model.proxyFallbackActive)
-        XCTAssertEqual(model.menuBarState, .trouble)
+        XCTAssertEqual(model.menuBarState, .down)
     }
 
     /// A check that does not change the outcome is not repeated on every poll.

@@ -63,10 +63,10 @@ struct InstalledRow: Identifiable, Equatable {
     let isDefault: Bool
 }
 
-/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble (the router does not
-/// answer or is known not to run, falls back to another engine, has none left, or an answer stream died on its
-/// engine).
-enum MenuBarState: Equatable { case off, local, trouble }
+/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble. Trouble comes in two
+/// levels: `degraded` still answers (the router fell back to another engine, or an answer stream died on its
+/// engine); `down` does not (the router does not answer or is known not to run, or it has no engine left).
+enum MenuBarState: Equatable { case off, local, degraded, down }
 
 /// The single place that composes the core types. Views only read its state and call its methods.
 @MainActor
@@ -487,10 +487,11 @@ final class AppModel: ObservableObject {
 
     var menuBarState: MenuBarState {
         guard isLocalModeOn else { return .off }
-        if case .unavailable = proxyState { return .trouble }
-        if routerSilent { return .trouble }
+        if case .unavailable = proxyState { return .down }
+        if routerSilent { return .down }
         guard let route else { return .local }
-        return route.state == "fallback" || route.state == "down" || route.engineFailure != nil ? .trouble : .local
+        if route.state == "down" { return .down }
+        return route.state == "fallback" || route.engineFailure != nil ? .degraded : .local
     }
 
     /// One loop while local mode is on: asks the router right away, then every `routePollInterval`. Turning
