@@ -10,11 +10,13 @@ const PORT: u16 = 11438;
 
 /// Test hooks, used by `tests/binary.rs` only: the app never sets them.
 /// `LOCALIA_ROUTER_PORT` replaces the port, `LOCALIA_DATA_DIR` the data directory.
-fn port() -> u16 {
-    std::env::var("LOCALIA_ROUTER_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(PORT)
+fn port() -> Result<u16, String> {
+    match std::env::var("LOCALIA_ROUTER_PORT") {
+        Err(_) => Ok(PORT),
+        Ok(p) => p
+            .parse()
+            .map_err(|_| format!("invalid LOCALIA_ROUTER_PORT: {p:?}")),
+    }
 }
 
 fn data_dir() -> PathBuf {
@@ -30,7 +32,13 @@ async fn main() {
         .level_filter(log::LevelFilter::Info)
         .init();
 
-    let port = port();
+    let port = match port() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!(target: LOG_CATEGORY, "{e}");
+            std::process::exit(1);
+        }
+    };
     let cfg = ServiceConfig {
         port,
         data_dir: data_dir(),

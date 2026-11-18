@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -141,6 +142,63 @@ fn binary_exits_1_when_the_data_dir_is_unusable() {
             Instant::now() < deadline,
             "the service kept running without a data directory"
         );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// launchd (`BundleProgram`) starts the service with a relative argv[0] and cwd `/`: the version must still be
+/// the enclosing app's CFBundleVersion.
+#[test]
+fn binary_reads_the_app_version_when_started_like_launchd() {
+    let dir = tempfile::tempdir().unwrap();
+    let macos = dir.path().join("X.app/Contents/MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    std::fs::write(
+        dir.path().join("X.app/Contents/Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleVersion</key><string>77</string></dict></plist>"#,
+    )
+    .unwrap();
+    let exe = macos.join("LocaliaProxyService");
+    std::fs::copy(env!("CARGO_BIN_EXE_LocaliaProxyService"), &exe).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let child = Command::new(&exe)
+        .arg0("Contents/MacOS/LocaliaProxyService")
+        .current_dir("/")
+        .env("LOCALIA_ROUTER_PORT", port.to_string())
+        .env("LOCALIA_DATA_DIR", data.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _svc = Service(child);
+    let reply = wait_health(port);
+    let body: serde_json::Value =
+        serde_json::from_str(reply.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["version"], "77", "{reply}");
+}
+
+#[test]
+fn binary_exits_1_on_an_invalid_port_override() {
+    let data = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+        .env("LOCALIA_ROUTER_PORT", "not-a-port")
+        .env("LOCALIA_DATA_DIR", data.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert_eq!(status.code(), Some(1));
+            return;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the service kept running with an invalid port");
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
