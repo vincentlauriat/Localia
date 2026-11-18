@@ -66,6 +66,8 @@ xcodebuild -project Localia.xcodeproj -scheme Localia -configuration Debug build
 
 The build runs `Scripts/fetch-llmfit.sh`, which downloads the pinned llmfit release and fails the build if its SHA-256 does not match.
 
+A Debug build signs the embedded router ad hoc, with the identifier `LocaliaProxyService-<hash>`; only `release.sh` signs it as `LocaliaProxyService` with the Developer ID. macOS therefore sees a Debug copy's login item as a different program from the released one: allow it again in System Settings > General > Login Items if it asks.
+
 ## Releasing
 
 `./Scripts/release.sh [version]` builds the Rust router, checks it (universal arm64 and x86_64, minimum macOS 14.0 for both slices), signs (`llmfit` and the router, embedded as `LocaliaProxyService` with the hardened runtime, first, then the app), builds the DMG with `dmgbuild`, notarizes it (`notarytool submit --wait` must return `Accepted`), staples it and verifies it with `spctl`. The result is `release/Localia-<version>.dmg`. The script never tags, pushes or publishes.
