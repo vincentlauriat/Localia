@@ -78,7 +78,7 @@ fi
 }
 [ "$NOTARIZE" = "0" ] || echo "> Notarizing with $NOTARY_DESC"
 
-# 1. Build the Rust router (arm64, minimum macOS 14.0, --locked), then regenerate the Xcode project.
+# 1. Build the Rust router (universal arm64 + x86_64, minimum macOS 14.0, --locked), then regenerate the Xcode project.
 #    The copy phase embeds LocaliaRouter/dist/LocaliaProxyService as Contents/MacOS/LocaliaProxyService.
 #    The pre-build phase runs Scripts/fetch-llmfit.sh, which fails the build when the pinned llmfit
 #    checksum does not match.
@@ -105,14 +105,16 @@ trap 'rm -rf "$STAGING_DIR"' EXIT
 STAGING="$STAGING_DIR/$APP_NAME.app"
 ditto --norsrc --noextattr --noacl "$APP" "$STAGING"
 
-# The embedded router: arm64 only, runs on macOS 14, and the app carries this build's number
-# (the router reports the enclosing app's CFBundleVersion on /localia/health).
+# The embedded router: universal (arm64 and x86_64), each slice runs on macOS 14, and the app carries this
+# build's number (the router reports the enclosing app's CFBundleVersion on /localia/health).
 ROUTER="$STAGING/Contents/MacOS/LocaliaProxyService"
-ROUTER_ARCHS="$(lipo -archs "$ROUTER")"
-[ "$ROUTER_ARCHS" = "arm64" ] || { echo "x Router architectures are '$ROUTER_ARCHS', expected exactly arm64." >&2; exit 1; }
-ROUTER_MINOS="$(vtool -show-build "$ROUTER" | awk '$1 == "minos" {print $2; exit}')"
-[ -n "$ROUTER_MINOS" ] && [ "$(printf '%s\n14.0\n' "$ROUTER_MINOS" | sort -V | tail -1)" = "14.0" ] || {
-  echo "x Router minimum macOS is '$ROUTER_MINOS', expected 14.0 or lower." >&2; exit 1; }
+ROUTER_ARCHS="$(lipo -archs "$ROUTER" | tr ' ' '\n' | sort | xargs)"
+[ "$ROUTER_ARCHS" = "arm64 x86_64" ] || { echo "x Router architectures are '$ROUTER_ARCHS', expected arm64 and x86_64." >&2; exit 1; }
+for arch in arm64 x86_64; do
+  ROUTER_MINOS="$(vtool -arch "$arch" -show-build "$ROUTER" | awk '$1 == "minos" {print $2; exit}')"
+  [ -n "$ROUTER_MINOS" ] && [ "$(printf '%s\n14.0\n' "$ROUTER_MINOS" | sort -V | tail -1)" = "14.0" ] || {
+    echo "x Router $arch minimum macOS is '$ROUTER_MINOS', expected 14.0 or lower." >&2; exit 1; }
+done
 STAGED_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$STAGING/Contents/Info.plist")"
 [ "$STAGED_BUILD" = "$BUILD_NUMBER" ] || { echo "x Staged CFBundleVersion '$STAGED_BUILD' differs from BUILD_NUMBER '$BUILD_NUMBER'." >&2; exit 1; }
 
