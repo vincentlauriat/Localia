@@ -139,4 +139,17 @@ final class ClaudeCodeToolTests: XCTestCase {
         try "not json".write(to: json, atomically: true, encoding: .utf8)
         XCTAssertFalse(ClaudeCodeTool.hasCloudLogin(claudeJSON: json, environment: [:]))
     }
+
+    /// Claude Code appends `/v1/messages` to its base: the router serves it under `…/auto`. Every model
+    /// variable (main, the three tiers, subagents) names the neutral model.
+    func test_claudeOverlay_routed_setsAllModelVarsToLocalia() {
+        let overlay = ClaudeCodeTool.localOverlay(baseURL: ProxyURL.routed(session: "S-1"), model: ProxyURL.neutralModel,
+                                                  contextTokens: 65536, profile: .full, configDir: nil)
+        XCTAssertEqual(overlay.environment["ANTHROPIC_BASE_URL"], "http://127.0.0.1:11438/s/S-1/auto")
+        for key in ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
+            XCTAssertEqual(overlay.environment[key], "localia", key)
+        }
+        XCTAssertEqual(overlay.environment["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "65536")
+    }
 }

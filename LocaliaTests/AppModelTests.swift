@@ -310,14 +310,54 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "m1")])
     }
 
-    func test_codex_refusedOnMLX_openCodeAllowed() async throws {
-        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
-        let terminal = FakeTerminal()
-        let model = makeModel(engine: engine, terminal: terminal,
-                              localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
-                                           OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])]) {
+    private func mlxModel(proxy: any ProxyServiceControlling, engine: FakeEngine, terminal: FakeTerminal,
+                          tool: FakeTool = FakeTool()) -> AppModel {
+        makeModel(engine: engine, tool: tool, terminal: terminal,
+                  localTools: [CodexTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")]),
+                               OpenCodeTool(searchPaths: [URL(fileURLWithPath: "/usr/bin/true")])],
+                  proxy: proxy) {
             $0.activeEngine = .mlx
         }
+    }
+
+    /// Through the router, Codex runs on MLX: the router speaks the Responses API for it. The tool gets the
+    /// neutral model on the `auto` URL; the engine side (load, last model, session) keeps the real model.
+    func test_launchCodexOnMLX_routed_isAllowed() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = mlxModel(proxy: FakeProxyService(state: .running(version: "dev")), engine: engine, terminal: terminal)
+        await model.refreshAll()
+        await model.refreshLocalTools()
+        let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
+        XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder(), toolID: "codex")
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(terminal.opened.count, 1)
+        let toml = try String(contentsOf: Paths.tool("codex", base: base).appendingPathComponent("config.toml"), encoding: .utf8)
+        XCTAssertTrue(toml.contains(#"model = "localia""#), toml)
+        XCTAssertTrue(toml.range(of: #"base_url = "http://127\.0\.0\.1:11438/s/[0-9A-F-]{36}/auto/v1""#,
+                                 options: .regularExpression) != nil, toml)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, ["mlx-community/M-4bit"])
+        XCTAssertEqual(model.settings.lastModel, "mlx-community/M-4bit")
+        let inUse = await model.modelsInUse()
+        XCTAssertEqual(inUse, [ModelKey(engine: .mlx, model: "mlx-community/M-4bit")])
+        // The router reads the window the tool was launched with from the session's attribution.
+        let attribs = try FileManager.default.contentsOfDirectory(at: Paths.sessions(base: base), includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "attrib" }
+        XCTAssertEqual(attribs.count, 1)
+        let attrib = try String(contentsOf: try XCTUnwrap(attribs.first), encoding: .utf8)
+        XCTAssertTrue(attrib.hasPrefix("tool=Codex\n"), attrib)
+        XCTAssertTrue(attrib.hasSuffix("\ncontext=32768\n"), attrib)
+    }
+
+    /// Without the router, MLX has no Responses API: Codex is refused before anything is loaded (unreachable
+    /// once settings are migrated and the router runs, but the guard stays).
+    func test_launchCodexOnMLX_direct_isBlocked() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal()
+        let model = mlxModel(proxy: InertProxyService(), engine: engine, terminal: terminal)
         await model.refreshAll()
         await model.refreshLocalTools()
         let rows = Dictionary(uniqueKeysWithValues: model.localTools.map { ($0.id, $0) })
@@ -330,13 +370,35 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(terminal.opened.isEmpty)
         let loads = await engine.loads
         XCTAssertEqual(loads, [], "nothing is loaded for a launch that cannot work")
-        model.alert = nil
-        await model.launch(folder: try folder(), toolID: "opencode")
-        XCTAssertNil(model.alert)
-        XCTAssertEqual(terminal.opened.count, 1)
         // On another engine Codex is offered again.
         await model.setActiveEngine(.ollama)
         XCTAssertNil(model.unavailableReason(try XCTUnwrap(rows["codex"])))
+    }
+
+    /// MLX is reached only through the router: with the router down a launch stops before loading anything
+    /// and offers to restart it.
+    func test_launchMLX_routerDown_showsRestartAlert() async throws {
+        let engine = FakeEngine(id: .mlx, installed: ["mlx-community/M-4bit"])
+        let terminal = FakeTerminal(), tool = FakeTool()
+        let proxy = FakeProxyService(state: .unavailable(reason: "off"))
+        let model = mlxModel(proxy: proxy, engine: engine, terminal: terminal, tool: tool)
+        await model.refreshAll()
+        await model.refreshLocalTools()
+        await model.setLocalMode(true)
+        for toolID in [nil, "opencode"] as [String?] {
+            model.alert = nil
+            await model.launch(folder: try folder(), toolID: toolID)
+            let alert = try XCTUnwrap(model.alert, "\(String(describing: toolID))")
+            XCTAssertEqual(alert.title, String(localized: "Localia's router is not running"))
+            XCTAssertEqual(alert.action?.title, String(localized: "Restart"))
+        }
+        XCTAssertTrue(terminal.opened.isEmpty)
+        XCTAssertTrue(tool.targets.isEmpty)
+        let loads = await engine.loads
+        XCTAssertEqual(loads, [])
+        let restartsBefore = proxy.restarts
+        await model.alert?.action?.run()
+        XCTAssertEqual(proxy.restarts, restartsBefore + 1)
     }
 
     func test_localTool_refusedOutsideLocalMode() async throws {

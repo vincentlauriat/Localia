@@ -32,4 +32,21 @@ final class ProxyStringsTests: XCTestCase {
             XCTAssertNotNil(french[Self.masked(key)], "no fr translation for: \(key)")
         }
     }
+
+    /// The router launch strings (the restart alert, the Direct label) have their exact French copy.
+    func test_everyNewStringHasFrench() throws {
+        let data = try Data(contentsOf: Self.root.appendingPathComponent("Localia/Resources/Localizable.xcstrings"))
+        let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(catalog["strings"] as? [String: [String: Any]])
+        func french(_ key: String) -> String? {
+            let loc = strings[key]?["localizations"] as? [String: Any]
+            return ((loc?["fr"] as? [String: Any])?["stringUnit"] as? [String: Any])?["value"] as? String
+        }
+        XCTAssertEqual(french("Localia's router is not running"), "Le routeur de Localia ne répond pas")
+        XCTAssertEqual(french("Direct — no fallback, not counted"), "Direct — sans repli, non compté")
+        XCTAssertEqual(french("Via Localia"), "Via Localia")
+        XCTAssertEqual(french("MLX models need it. Restart it, then try again."),
+                       "Les modèles MLX en ont besoin. Redémarrez-le, puis réessayez.")
+        XCTAssertNotNil(french("Restart"))
+    }
 }

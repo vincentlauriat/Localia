@@ -206,8 +206,8 @@ struct ProxyRoutesSection: View {
                 Picker(AppModel.engineName(id), selection: Binding(
                     get: { settings.engineRoutes[id] ?? .proxy },
                     set: { route in Task { await model.setRoute(route, for: id) } })) {
-                    Text(String(localized: "Direct")).tag(EngineRoute.direct)
                     Text(String(localized: "Via Localia")).tag(EngineRoute.proxy)
+                    Text(String(localized: "Direct — no fallback, not counted")).tag(EngineRoute.direct)
                 }
             }
             LabeledContent(AppModel.engineName(.mlx), value: String(localized: "Always via Localia"))

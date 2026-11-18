@@ -205,6 +205,10 @@ final class AppModel: ObservableObject {
     func start() async {
         // Before anything writes the shim state: 1.4 settings drop MLX Direct (the router serves MLX).
         settings.migrateForRouter()
+        // Open shells pick up this build's routing (the router's `auto` URL) on their next `claude`.
+        do { try await controller.refreshShimState() } catch {
+            log.error("cannot refresh the shell shim state: \(String(describing: error), privacy: .public)")
+        }
         // Shells opened from now on get this build's shim function (an update may have changed it).
         do { try controller.refreshShimFiles() } catch {
             log.error("cannot refresh the shell shim: \(String(describing: error), privacy: .public)")
@@ -652,9 +656,11 @@ final class AppModel: ObservableObject {
         localTools = rows
     }
 
-    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can.
+    /// Why `tool` cannot run on the active engine (the panel shows its row disabled), nil when it can. The
+    /// router speaks the Responses API for every engine: only a direct engine without it is a reason.
     func unavailableReason(_ tool: LocalToolRow) -> String? {
-        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI else { return nil }
+        guard tool.needsResponsesAPI, !settings.activeEngine.servesResponsesAPI,
+              !routing.resolver.proxyHealthy else { return nil }
         return String(localized: "Needs the Responses API, which \(Self.engineName(settings.activeEngine)) does not offer")
     }
 
@@ -662,6 +668,13 @@ final class AppModel: ObservableObject {
         let real = url.resolvingSymlinksInPath()
         let date = (try? FileManager.default.attributesOfItem(atPath: real.path)[.modificationDate]) as? Date
         return "\(real.path)|\(date?.timeIntervalSince1970 ?? 0)"
+    }
+
+    /// What the tool is given: through the router, its `auto` URL and the neutral model with the real
+    /// window; direct, the target itself.
+    private func toolTarget(_ target: LaunchTarget, _ routedBase: URL?) -> LaunchTarget {
+        guard let routedBase, case let .local(engine, _, _, window) = target else { return target }
+        return .local(engine: engine, baseURL: routedBase, model: ProxyURL.neutralModel, contextTokens: window)
     }
 
     /// `toolID` nil launches Claude Code; otherwise one of `deps.localTools`, which run in local mode only.
@@ -691,12 +704,6 @@ final class AppModel: ObservableObject {
                              message: String(localized: "\(localTool.displayName) runs only with a local model. Turn on local mode, then try again."))
             return
         }
-        if let localTool, localTool.needsResponsesAPI, case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
-            let engine = Self.engineName(engineID)
-            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
-                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
-            return
-        }
         let sessionID = UUID()
         if case .local = target {
             if case .unknown = proxy.state {
@@ -708,7 +715,30 @@ final class AppModel: ObservableObject {
                 await ensureProxy()
             }
         }
-        target = controller.routed(target, session: sessionID.uuidString)
+        // Decided once, so the tool's URL cannot change while the model loads. Through the router the tool
+        // gets its `auto` URL and the neutral model; `target` keeps the real model for the engine side.
+        var routedBase: URL?
+        if case let .local(_, url, _, _) = controller.routed(target, session: sessionID.uuidString),
+           ProxyURL.isRouted(url) {
+            routedBase = url
+        }
+        if let localTool, localTool.needsResponsesAPI, routedBase == nil,
+           case let .local(engineID, _, _, _) = target, !engineID.servesResponsesAPI {
+            let engine = Self.engineName(engineID)
+            alert = AppAlert(title: String(localized: "\(localTool.displayName) cannot use \(engine)"),
+                             message: String(localized: "\(localTool.displayName) needs the Responses API, which \(engine) does not offer. Switch to Ollama or llama.cpp to use it."))
+            return
+        }
+        if routedBase == nil, case .local(.mlx, _, _, _) = target {
+            // MLX has no Direct choice: with the router down, offer to restart it rather than launch on the
+            // in-app gateway, which gives no fallback, no metering and no Responses API.
+            alert = AppAlert(title: String(localized: "Localia's router is not running"),
+                             message: String(localized: "MLX models need it. Restart it, then try again."),
+                             action: .init(title: String(localized: "Restart")) { [weak self] in
+                                 await self?.restartProxy()
+                             })
+            return
+        }
         // Held until the session is tracked (or the launch gives up), so nothing replaces the model meanwhile.
         var reserved: ModelKey?
         defer { if let reserved { release(reserved) } }
@@ -763,7 +793,7 @@ final class AppModel: ObservableObject {
             }
             if let localTool {
                 do {
-                    configDir = try localTool.prepareConfig(target: target, folder: folder,
+                    configDir = try localTool.prepareConfig(target: toolTarget(target, routedBase), folder: folder,
                                                             dir: Paths.tool(localTool.id, base: deps.appSupportBase))
                 } catch {
                     busyMessage = nil
@@ -773,15 +803,18 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        let command = tool.command(target: target, profile: settings.launchProfile, configDir: configDir)
+        let command = tool.command(target: toolTarget(target, routedBase), profile: settings.launchProfile,
+                                   configDir: configDir)
         do {
             let url: URL
             do {
                 // The proxy tells sessions apart by this record; a failure must not block the launch.
                 if session != nil {
                     do {
+                        var window = LocaliaConstants.localContextTokens
+                        if case let .local(_, _, _, w) = target { window = w }
                         try SessionAttribution.write(session: sessionID, tool: tool.displayName, folder: folder,
-                                                     dir: Paths.sessions(base: deps.appSupportBase))
+                                                     contextTokens: window, dir: Paths.sessions(base: deps.appSupportBase))
                     } catch {
                         log.error("Could not record the session attribution: \(error.localizedDescription)")
                     }

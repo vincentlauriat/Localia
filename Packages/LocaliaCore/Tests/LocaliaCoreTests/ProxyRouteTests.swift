@@ -44,14 +44,14 @@ final class ProxyRouteTests: XCTestCase {
         let r = RouteResolver(routes: [.mlx: .direct], proxyHealthy: true)
         let base = URL(string: "http://127.0.0.1:11436")!
         XCTAssertEqual(r.baseURL(engine: .mlx, engineBase: base, session: "s"),
-                       ProxyURL.base(session: "s", engine: .mlx))
+                       ProxyURL.routed(session: "s"))
     }
 
     func test_resolver_defaultIsProxy() {
         let r = RouteResolver(routes: [.llamaCpp: .direct], proxyHealthy: true)
         let base = URL(string: "http://127.0.0.1:11434")!
         XCTAssertEqual(r.baseURL(engine: .ollama, engineBase: base, session: "s"),
-                       ProxyURL.base(session: "s", engine: .ollama))
+                       ProxyURL.routed(session: "s"))
         XCTAssertEqual(r.baseURL(engine: .llamaCpp, engineBase: base, session: "s"), base)
     }
 
@@ -123,5 +123,27 @@ final class ProxyRouteTests: XCTestCase {
         XCTAssertEqual(LocaliaConstants.proxyPort, 11438)
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         XCTAssertEqual(Paths.proxy(base: base).lastPathComponent, "proxy")
+    }
+
+    /// Tools reach the router's `auto` segment with the neutral model name; the router picks the engine.
+    func test_resolver_routedURLIsAuto() {
+        XCTAssertEqual(ProxyURL.neutralModel, "localia")
+        XCTAssertEqual(ProxyURL.routed(session: "S-1").absoluteString, "http://127.0.0.1:11438/s/S-1/auto")
+        XCTAssertEqual(ProxyURL.routed(port: 5000, session: "x").absoluteString, "http://127.0.0.1:5000/s/x/auto")
+        let r = RouteResolver(routes: [.ollama: .proxy, .llamaCpp: .direct], proxyHealthy: true)
+        let base = URL(string: "http://127.0.0.1:11434")!
+        for engine in [EngineID.ollama, .mlx] {
+            XCTAssertEqual(r.baseURL(engine: engine, engineBase: base, session: "S-1").absoluteString,
+                           "http://127.0.0.1:11438/s/S-1/auto", engine.rawValue)
+        }
+        XCTAssertEqual(r.baseURL(engine: .llamaCpp, engineBase: base, session: "S-1"), base)
+    }
+
+    func test_isRouted_onlyTheAutoSegmentOfTheRouter() {
+        XCTAssertTrue(ProxyURL.isRouted(ProxyURL.routed(session: "S-1")))
+        XCTAssertTrue(ProxyURL.isRouted(ProxyURL.routed(session: ProxyURL.sessionPlaceholder)))
+        XCTAssertFalse(ProxyURL.isRouted(ProxyURL.base(session: "S-1", engine: .ollama)))
+        XCTAssertFalse(ProxyURL.isRouted(URL(string: "http://127.0.0.1:11434")!))
+        XCTAssertFalse(ProxyURL.isRouted(URL(string: "http://127.0.0.1:11434/s/S-1/auto")!))
     }
 }

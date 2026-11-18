@@ -8628,6 +8628,54 @@
           }
         }
       }
+    },
+    "Localia's router is not running": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia's router is not running"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le routeur de Localia ne répond pas"
+          }
+        }
+      }
+    },
+    "MLX models need it. Restart it, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MLX models need it. Restart it, then try again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les modèles MLX en ont besoin. Redémarrez-le, puis réessayez."
+          }
+        }
+      }
+    },
+    "Direct — no fallback, not counted": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct — no fallback, not counted"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct — sans repli, non compté"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

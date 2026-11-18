@@ -1067,4 +1067,61 @@ final class ShellShimTests: XCTestCase {
                            ProxyPath(session: ProxyPath.unattributedSession, engine: .ollama, rest: "/v1/messages"), shell)
         }
     }
+
+    /// Routed through the router: the engine probe is the `auto` health, every model variable is the
+    /// neutral name, and the start link still names the real model (the app starts that one).
+    func test_shimState_routedProbeIsAutoHealth_modelLocalia() throws {
+        try shim().writeState(on: true, baseURL: ProxyURL.routed(session: ProxyURL.sessionPlaceholder),
+                              model: "qwen3-coder:30b", contextTokens: 65536, policy: .autoStart,
+                              profile: .full, engine: .ollama, proxyProbe: proxyHealth)
+        let text = try XCTUnwrap(stateText)
+        XCTAssertTrue(text.contains("""
+
+        base=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto
+        model=localia
+        policy=autoStart
+        profile=full
+        probe=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto/health
+        proxyprobe=http://127.0.0.1:11438/localia/health
+        start=localia://start?model=qwen3-coder%3A30b
+
+        """), text)
+        for key in ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
+            XCTAssertTrue(text.contains("\nenv=\(key)=localia\n"), key)
+        }
+        XCTAssertTrue(text.contains("\nenv=ANTHROPIC_BASE_URL=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto\n"), text)
+        XCTAssertTrue(text.contains("\nenv=CLAUDE_CODE_MAX_CONTEXT_TOKENS=65536\n"), text)
+        XCTAssertFalse(text.contains("qwen3-coder:30b"), text)
+    }
+
+    /// Direct: byte for byte the 1.3 state, whatever engine.
+    func test_shimState_directUnchanged() throws {
+        try shim().writeState(on: true, baseURL: URL(string: "http://127.0.0.1:11435")!, model: "m",
+                              contextTokens: 32768, policy: .fail, profile: .full, engine: .llamaCpp, proxyProbe: nil)
+        XCTAssertEqual(stateText, """
+        # Localia local-mode state. Data only: the shim reads it line by line and never sources it.
+        version=1
+        on=1
+        engine=llamaCpp
+        base=http://127.0.0.1:11435
+        model=m
+        policy=fail
+        profile=full
+        probe=http://127.0.0.1:11435/health
+        start=localia://start?model=m
+        wait=\(ShellShim.startWaitSeconds(.llamaCpp))
+        env=ANTHROPIC_API_KEY=\(ClaudeCodeTool.apiKey)
+        env=ANTHROPIC_BASE_URL=http://127.0.0.1:11435
+        env=ANTHROPIC_DEFAULT_HAIKU_MODEL=m
+        env=ANTHROPIC_DEFAULT_OPUS_MODEL=m
+        env=ANTHROPIC_DEFAULT_SONNET_MODEL=m
+        env=ANTHROPIC_MODEL=m
+        env=CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+        env=CLAUDE_CODE_MAX_CONTEXT_TOKENS=32768
+        env=CLAUDE_CODE_SUBAGENT_MODEL=m
+        unset=ANTHROPIC_AUTH_TOKEN
+
+        """)
+    }
 }

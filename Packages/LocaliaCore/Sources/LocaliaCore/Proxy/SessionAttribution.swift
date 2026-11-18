@@ -8,12 +8,13 @@ public struct Attribution: Equatable, Sendable {
 }
 
 /// Maps a proxied session id to the tool and folder behind it.
-/// Sessions launched from the app get `<dir>/<id>.attrib` (`tool=`, `folder=` lines); sessions started by
-/// the shell shim are described by their `<id>.session` file, which always wraps Claude Code.
+/// Sessions launched from the app get `<dir>/<id>.attrib` (`tool=`, `folder=`, `context=` lines); sessions
+/// started by the shell shim are described by their `<id>.session` file, which always wraps Claude Code.
+/// `context` (the window the tool was launched with) is for the router; Swift reads only the tool and folder.
 public enum SessionAttribution {
-    public static func write(session: UUID, tool: String, folder: URL, dir: URL) throws {
+    public static func write(session: UUID, tool: String, folder: URL, contextTokens: Int, dir: URL) throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let text = "tool=\(oneLine(tool))\nfolder=\(oneLine(folder.path))\n"
+        let text = "tool=\(oneLine(tool))\nfolder=\(oneLine(folder.path))\ncontext=\(contextTokens)\n"
         try text.write(to: dir.appendingPathComponent("\(session.uuidString).attrib"), atomically: true, encoding: .utf8)
     }
 

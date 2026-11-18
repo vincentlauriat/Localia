@@ -201,22 +201,26 @@ public struct ShellShim: ShellShimming {
 
     // MARK: - State
 
-    /// `proxyProbe` is the Localia proxy's health URL, given only when `baseURL` goes through the proxy
+    /// `proxyProbe` is the Localia router's health URL, given only when `baseURL` goes through the router
     /// (it then holds `ProxyURL.sessionPlaceholder`, which the shim replaces per run). Nil adds nothing,
-    /// so a direct state is exactly what it was before the proxy existed.
+    /// so a direct state is exactly what it was before the router existed.
+    /// Through the router's `auto` URL, `claude` gets the neutral model name and the engine probe is the
+    /// router's `auto/health`; `start=` keeps the real `model`, the one the app starts.
     public func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                            profile: LaunchProfile, engine: EngineID, proxyProbe: URL? = nil) throws {
-        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: model, contextTokens: contextTokens,
+        let routed = proxyProbe != nil && ProxyURL.isRouted(baseURL)
+        let toolModel = routed ? ProxyURL.neutralModel : model
+        let overlay = ClaudeCodeTool.localOverlay(baseURL: baseURL, model: toolModel, contextTokens: contextTokens,
                                                   profile: profile,
                                                   configDir: profile == .light ? configDir : nil)
-        let probe = baseURL.appendingPathComponent(Self.healthPath(engine)).absoluteString
+        let probe = baseURL.appendingPathComponent(routed ? "health" : Self.healthPath(engine)).absoluteString
         var lines = [
             "# Localia local-mode state. Data only: the shim reads it line by line and never sources it.",
             "version=1",
             "on=\(on ? 1 : 0)",
             "engine=\(engine.rawValue)",
             "base=\(baseURL.absoluteString)",
-            "model=\(model)",
+            "model=\(toolModel)",
             "policy=\(policy.rawValue)",
             "profile=\(profile.rawValue)",
             "probe=\(probe)",

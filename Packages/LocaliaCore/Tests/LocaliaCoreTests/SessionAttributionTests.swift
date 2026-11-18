@@ -14,7 +14,7 @@ final class SessionAttributionTests: XCTestCase {
     func test_attribRoundTrip() throws {
         let id = UUID()
         let folder = URL(fileURLWithPath: "/Users/me/proj")
-        try SessionAttribution.write(session: id, tool: "Codex", folder: folder, dir: dir)
+        try SessionAttribution.write(session: id, tool: "Codex", folder: folder, contextTokens: 65536, dir: dir)
         XCTAssertEqual(SessionAttribution.read(session: id.uuidString, dir: dir),
                        Attribution(tool: "Codex", folder: "/Users/me/proj"))
     }
@@ -57,5 +57,17 @@ final class SessionAttributionTests: XCTestCase {
         _ = SessionTracker(statusDir: dir, now: now)
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+    }
+
+    /// The router reads `context=<n>` from the attribution (the window the tool was launched with).
+    func test_attrib_writesContext() throws {
+        let id = UUID()
+        try SessionAttribution.write(session: id, tool: "Codex", folder: URL(fileURLWithPath: "/Users/me/proj"),
+                                     contextTokens: 40960, dir: dir)
+        let text = try String(contentsOf: dir.appendingPathComponent("\(id.uuidString).attrib"), encoding: .utf8)
+        XCTAssertEqual(text, "tool=Codex\nfolder=/Users/me/proj\ncontext=40960\n")
+        // Swift reads only the tool and the folder: the extra key is ignored.
+        XCTAssertEqual(SessionAttribution.read(session: id.uuidString, dir: dir),
+                       Attribution(tool: "Codex", folder: "/Users/me/proj"))
     }
 }
