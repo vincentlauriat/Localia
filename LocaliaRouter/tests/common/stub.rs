@@ -95,6 +95,8 @@ pub struct Reply {
     pub status: u16,
     pub headers: Vec<(&'static str, String)>,
     pub steps: Vec<Step>,
+    /// Holds the answer's head until notified (an engine loading its model writes nothing meanwhile).
+    pub head_wait: Option<Arc<Notify>>,
 }
 
 impl Reply {
@@ -103,6 +105,7 @@ impl Reply {
             status,
             headers: vec![("content-type", content_type.to_string())],
             steps: vec![Step::Data(body.into())],
+            head_wait: None,
         }
     }
 
@@ -116,6 +119,11 @@ impl Reply {
 
     pub fn status(status: u16, body: impl Into<Vec<u8>>) -> Reply {
         Reply::new(status, "application/json", body)
+    }
+
+    pub fn hold_head(mut self, n: Arc<Notify>) -> Reply {
+        self.head_wait = Some(n);
+        self
     }
 
     pub fn steps(mut self, steps: Vec<Step>) -> Reply {
@@ -146,6 +154,8 @@ pub struct Stub {
     pub chunk: Arc<AtomicUsize>,
     /// Set when the router dropped an answer the stub was still sending.
     pub dropped: Arc<AtomicBool>,
+    /// Probe requests answered.
+    pub probes: Arc<AtomicUsize>,
     handler: Arc<Mutex<Arc<Handler>>>,
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
@@ -161,6 +171,7 @@ impl Stub {
             models: Arc::new(Mutex::new(models.iter().map(|s| s.to_string()).collect())),
             chunk: Arc::new(AtomicUsize::new(1 << 20)),
             dropped: Arc::default(),
+            probes: Arc::default(),
             handler: Arc::new(Mutex::new(Arc::new(|_: &Seen| {
                 Reply::status(500, r#"{"error":"no handler"}"#)
             }))),
@@ -221,10 +232,17 @@ impl Stub {
         self.seen.lock().unwrap().push(seen.clone());
         let handler = self.handler.lock().unwrap().clone();
         let reply = handler(&seen);
+        if let Some(n) = reply.head_wait.clone() {
+            // The router dropping the request drops this future: the guard notes it.
+            let mut guard = DropFlag(Some(self.dropped.clone()));
+            n.notified().await;
+            guard.0 = None;
+        }
         self.stream(reply)
     }
 
     fn probe_answer(&self, seen: &Seen) -> Response<Body> {
+        self.probes.fetch_add(1, Ordering::SeqCst);
         let models = self.models.lock().unwrap().clone();
         let (status, body) = match seen.path.as_str() {
             "/api/version" => (200, r#"{"version":"0.12.0"}"#.to_string()),
@@ -286,6 +304,17 @@ impl Stub {
             r.headers_mut().append(n, v.parse().unwrap());
         }
         r
+    }
+}
+
+/// Sets its flag when dropped while still armed.
+struct DropFlag(Option<Arc<AtomicBool>>);
+
+impl Drop for DropFlag {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f.store(true, Ordering::SeqCst);
+        }
     }
 }
 

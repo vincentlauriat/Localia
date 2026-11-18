@@ -1031,6 +1031,253 @@ async fn decode_speed_counts_from_first_content_not_prefill() {
     assert_eq!(health["route"]["speed"], "ok", "{health}");
 }
 
+// MARK: - Cancels before the head, and the committed stream's waits
+
+/// Exactly one row, `cancelled` with the shared client-closed text.
+async fn one_cancelled_row(h: &Harness) -> common::stub::Row {
+    let r = wait_rows(h, 1).await[0].clone();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(rows(h).len(), 1, "recorded once: {:?}", rows(h));
+    assert_eq!(r.status, "cancelled", "{r:?}");
+    assert_eq!(r.error.as_deref(), Some("Client closed the connection"));
+    r
+}
+
+#[tokio::test]
+async fn client_close_while_decide_waits_records_cancelled() {
+    let stubs = engines().await;
+    let clock = ManualClock::new();
+    stubs.1.health.store(503, Ordering::SeqCst);
+    let h = routed(
+        ports(stubs.0.port, stubs.1.port, stubs.2.port),
+        Some(routing(
+            Some(target(LlamaCpp, QWEN_LLAMA, 65536)),
+            vec![],
+            None,
+        )),
+        false,
+        Some(clock.clone() as Arc<dyn Clock>),
+    )
+    .await;
+    // Not streamed: the request just waits on the loading engine.
+    let body = r#"{"model":"localia","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}"#;
+    let s = open_request(&h, &path("auto", "/v1/messages"), body).await;
+    let probes = stubs.1.probes.clone();
+    until("the router probes the loading engine", || {
+        probes.load(Ordering::SeqCst) >= 1
+    })
+    .await;
+    drop(s);
+    let r = one_cancelled_row(&h).await;
+    assert_eq!(r.engine, "llamaCpp", "the active engine");
+    assert_eq!(r.model.as_deref(), Some(QWEN_LLAMA));
+    assert_eq!(r.routed_to, None, "no decision yet");
+    assert_eq!(r.reason, None);
+    assert_eq!(r.http_status, 0);
+    assert!(stubs.1.seen().is_empty());
+
+    // Streamed, past KEEPALIVE: the stream is open, and the close is seen by its own watch.
+    let h = routed(
+        ports(stubs.0.port, stubs.1.port, stubs.2.port),
+        Some(routing(
+            Some(target(LlamaCpp, QWEN_LLAMA, 65536)),
+            vec![],
+            None,
+        )),
+        false,
+        Some(clock.clone() as Arc<dyn Clock>),
+    )
+    .await;
+    let body = r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+    let mut s = open_request(&h, &path("auto", "/v1/messages"), body).await;
+    for _ in 0..200 {
+        clock.advance(Duration::from_millis(500));
+        s.poll().await;
+        if s.text().contains("message_start") {
+            break;
+        }
+    }
+    assert!(s.text().contains("message_start"), "{}", s.text());
+    drop(s);
+    let r = one_cancelled_row(&h).await;
+    assert_eq!(r.http_status, 200, "the client had the stream's head");
+    assert_eq!(r.engine, "llamaCpp");
+    assert_eq!(r.routed_to, None);
+}
+
+#[tokio::test]
+async fn client_close_before_the_engines_head_records_cancelled() {
+    let stubs = engines().await;
+    let hold = Arc::new(Notify::new());
+    let held = hold.clone();
+    stubs
+        .0
+        .on(move |_| Reply::sse(fixture("anthropic-stream-usage.sse")).hold_head(held.clone()));
+    let h = router_on(Ollama, &stubs, false).await;
+    let s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    let seen = stubs.0.seen.clone();
+    until("the engine has the request", || {
+        !seen.lock().unwrap().is_empty()
+    })
+    .await;
+    drop(s);
+    let r = one_cancelled_row(&h).await;
+    assert_eq!(r.engine, "ollama");
+    assert_eq!(r.model.as_deref(), Some(QWEN_OLLAMA));
+    assert_eq!(r.routed_to.as_deref(), Some("ollama"));
+    assert_eq!(r.reason.as_deref(), Some("primary"));
+    let dropped = stubs.0.dropped.clone();
+    until("the upstream request is dropped", || {
+        dropped.load(Ordering::SeqCst)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn client_close_on_a_pinned_path_before_the_head_records_cancelled() {
+    let stubs = engines().await;
+    let hold = Arc::new(Notify::new());
+    let held = hold.clone();
+    stubs
+        .0
+        .on(move |_| Reply::sse(fixture("anthropic-stream-usage.sse")).hold_head(held.clone()));
+    let h = router_on(Ollama, &stubs, false).await;
+    let s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
+    let seen = stubs.0.seen.clone();
+    until("the engine has the request", || {
+        !seen.lock().unwrap().is_empty()
+    })
+    .await;
+    drop(s);
+    let r = one_cancelled_row(&h).await;
+    assert_eq!(r.engine, "ollama");
+    assert_eq!(r.model.as_deref(), Some("qwen3:8b"), "as sent");
+    assert_eq!(r.reason.as_deref(), Some("pinned"));
+    let dropped = stubs.0.dropped.clone();
+    until("the upstream request is dropped", || {
+        dropped.load(Ordering::SeqCst)
+    })
+    .await;
+}
+
+/// A committed stream (the primary was loading) keeps sending keepalive events while the engine, now up,
+/// holds its head (loading the model); a client close then is recorded once and drops the engine's request.
+async fn committed_wait_for_head(rest: &str, body: &str, keepalive_event: &str) {
+    let stubs = engines().await;
+    let clock = ManualClock::new();
+    let hold = Arc::new(Notify::new());
+    let held = hold.clone();
+    stubs
+        .1
+        .on(move |_| Reply::sse(fixture("engine-chat-stream.sse")).hold_head(held.clone()));
+    stubs.1.health.store(503, Ordering::SeqCst);
+    let h = routed(
+        ports(stubs.0.port, stubs.1.port, stubs.2.port),
+        Some(routing(
+            Some(target(LlamaCpp, QWEN_LLAMA, 65536)),
+            vec![],
+            None,
+        )),
+        false,
+        Some(clock.clone() as Arc<dyn Clock>),
+    )
+    .await;
+    let mut s = open_request(&h, &path("auto", rest), body).await;
+    for _ in 0..200 {
+        clock.advance(Duration::from_millis(500));
+        s.poll().await;
+        if s.text().contains("\r\n\r\n") && s.text().len() > 200 {
+            break;
+        }
+    }
+    assert!(s.text().starts_with("HTTP/1.1 200"), "{}", s.text());
+    stubs.1.health.store(200, Ordering::SeqCst);
+    let seen = stubs.1.seen.clone();
+    for _ in 0..200 {
+        clock.advance(Duration::from_millis(500));
+        s.poll().await;
+        if !seen.lock().unwrap().is_empty() {
+            break;
+        }
+    }
+    assert_eq!(stubs.1.seen().len(), 1, "the engine has the request");
+    // Only what comes after this point counts.
+    s.mark = s.all.len();
+    clock.advance(localia_router::relay::KEEPALIVE);
+    s.read_count(keepalive_event, 1).await;
+    drop(s);
+    let r = one_cancelled_row(&h).await;
+    assert_eq!(r.http_status, 200);
+    assert_eq!(r.engine, "llamaCpp");
+    assert_eq!(r.reason.as_deref(), Some("primary"));
+    let dropped = stubs.1.dropped.clone();
+    until("the engine's request is dropped", || {
+        dropped.load(Ordering::SeqCst)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn committed_stream_keeps_alive_while_the_engine_holds_its_head_anthropic() {
+    committed_wait_for_head(
+        "/v1/messages",
+        r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+        "event: ping",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn committed_stream_keeps_alive_while_the_engine_holds_its_head_responses() {
+    committed_wait_for_head(
+        "/v1/responses",
+        r#"{"model":"localia","stream":true,"input":"hi"}"#,
+        "event: response.in_progress",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn error_event_after_a_partial_line_starts_on_its_own_line() {
+    let stubs = engines().await;
+    let die = Arc::new(Notify::new());
+    let d = die.clone();
+    let partial = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_bl";
+    stubs.0.on(move |_| {
+        Reply::sse("").steps(vec![
+            Step::Data(partial.into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
+    let h = router_on(Ollama, &stubs, false).await;
+    let mut s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("content_bl", 1).await;
+    die.notify_one();
+    let r = s.finish().await;
+    let got = text_of(&r);
+    assert!(got.starts_with(partial), "{got}");
+    assert!(
+        got[partial.len()..].starts_with("\n\nevent: error\n"),
+        "{got}"
+    );
+    // A clean event boundary needs nothing more.
+    let whole = "event: message_start\ndata: {\"type\":\"message_start\"}\n\n";
+    let d = die.clone();
+    stubs.0.on(move |_| {
+        Reply::sse("").steps(vec![
+            Step::Data(whole.into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
+    let mut s = open_request(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("message_start", 1).await;
+    die.notify_one();
+    let got = text_of(&s.finish().await);
+    assert!(got[whole.len()..].starts_with("event: error\n"), "{got}");
+}
+
 // MARK: - Golden matrix
 
 /// Generated ids become `<prefix>1`, `<prefix>2`… per prefix, in order of first appearance, and

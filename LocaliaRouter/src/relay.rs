@@ -20,7 +20,8 @@ use hyper::body::{Body as HttpBody, Frame};
 use serde_json::{json, Map, Value};
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -339,9 +340,61 @@ struct Ctx {
     /// Epoch seconds and monotonic start, for the recorded `start` and `duration_ms`.
     started_at: f64,
     started: std::time::Instant,
+    /// The row this request is recorded under if it ends with no row written (the client left before the
+    /// answer's head: hyper then drops the handler, and this context with it). `None` for paths that are not
+    /// recorded.
+    pending_row: Mutex<Option<Row>>,
+    /// A row was written; the drop guard then does nothing, so no exchange is recorded twice.
+    recorded: AtomicBool,
+}
+
+/// The drop guard: a model call whose context goes away unrecorded was cancelled by the client (1.4 recorded
+/// these as `cancelled`), under the decided target when known, else the active engine with no route.
+impl Drop for Ctx {
+    fn drop(&mut self) {
+        if self.recorded.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(row) = self
+            .pending_row
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let out = Outcome {
+            http: 0,
+            status: Status::Cancelled,
+            error: Some(CLIENT_CLOSED.to_string()),
+            usage: (None, None),
+            response: Vec::new(),
+            truncated: false,
+        };
+        self.save(row, out);
+    }
 }
 
 impl Ctx {
+    /// The row a cancel before the head is recorded under (see `Drop`).
+    fn expect(&self, row: Option<Row>) {
+        *self.pending_row.lock().unwrap_or_else(|e| e.into_inner()) = row;
+    }
+
+    /// The pending row, taken: the caller records the request itself, or decided it is not recorded.
+    fn take_pending(&self) -> Option<Row> {
+        self.pending_row
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// The row of a request before any decision: the active engine and model, no route.
+    fn undecided_row(&self, d: Dialect) -> Option<Row> {
+        let a = self.active()?;
+        self.row(Some(d), a.engine, Some(a.model), None)
+    }
+
     fn port(&self, k: EngineKind) -> u16 {
         let p = self.state.service.engine_ports;
         match k {
@@ -421,13 +474,16 @@ impl Ctx {
 
     /// Writes the row once the client has its whole answer; a store error is only logged.
     fn save(&self, row: Row, out: Outcome) {
+        if self.recorded.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let state = self.state.clone();
         let session = self.path.session.clone();
         let request = self.body.clone();
         let log_content = self.log_content();
         let started_at = self.started_at;
         let duration_ms = self.started.elapsed().as_millis() as i64;
-        tokio::task::spawn_blocking(move || {
+        let write = move || {
             let attrib = attribution::read(&session, &state.service.sessions_dir);
             let r = RequestRow {
                 id: new_id(),
@@ -455,7 +511,14 @@ impl Ctx {
             if let Err(e) = state.store.insert(&r, content.as_ref()) {
                 eprintln!("LocaliaProxyService: cannot record request: {e}");
             }
-        });
+        };
+        // The drop guard can run outside the runtime (at shutdown): then it writes in place.
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => {
+                rt.spawn_blocking(write);
+            }
+            Err(_) => write(),
+        }
     }
 }
 
@@ -468,6 +531,7 @@ fn new_id() -> Uuid {
 }
 
 /// What a request is recorded under.
+#[derive(Clone)]
 struct Row {
     dialect: Dialect,
     engine: EngineKind,
@@ -513,6 +577,8 @@ struct Sink {
     meter: Option<StreamMeter>,
     whole: Option<Vec<u8>>,
     capture: Option<Vec<u8>>,
+    /// The last bytes sent, to start an event of the router's own on a fresh line.
+    tail: Vec<u8>,
     log_content: bool,
     truncated: bool,
     gone: bool,
@@ -529,6 +595,7 @@ impl Sink {
             meter: None,
             whole: None,
             capture: None,
+            tail: Vec::new(),
             log_content: ctx.log_content(),
             truncated: false,
             gone: false,
@@ -569,6 +636,9 @@ impl Sink {
             let room = WHOLE_CAP.saturating_sub(w.len());
             w.extend_from_slice(&b[..b.len().min(room)]);
         }
+        self.tail.extend_from_slice(&b[b.len().saturating_sub(4)..]);
+        let keep = self.tail.len().saturating_sub(4);
+        self.tail.drain(..keep);
         if self.tx.send(b).await.is_err() {
             self.gone = true;
             return false;
@@ -589,6 +659,19 @@ impl Sink {
     /// A streamed answer carried content (see `StreamMeter::saw_content`).
     fn saw_content(&self) -> bool {
         self.meter.as_ref().is_some_and(StreamMeter::saw_content)
+    }
+
+    /// What ends the event the engine was sending when it died, so the next event starts on its own line: nothing
+    /// at an event boundary, one newline after a whole line, two in the middle of one.
+    fn line_start(&self) -> &'static str {
+        let t = self.tail.as_slice();
+        if t.is_empty() || t.ends_with(b"\n\n") || t.ends_with(b"\r\n\r\n") {
+            ""
+        } else if t.ends_with(b"\n") {
+            "\n"
+        } else {
+            "\n\n"
+        }
     }
 
     /// Resolves once nothing has been sent for `KEEPALIVE`.
@@ -746,6 +829,8 @@ pub async fn handle(state: Arc<AppState>, req: Request<Body>, path: ProxyPath) -
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0),
         started: std::time::Instant::now(),
+        pending_row: Mutex::new(None),
+        recorded: AtomicBool::new(false),
     };
     match ctx.path.segment {
         Segment::Auto => auto(ctx).await,
@@ -813,6 +898,7 @@ async fn pinned(ctx: Ctx, k: EngineKind) -> Response<Body> {
     let d = Dialect::of(&ctx.path.rest);
     let model = ctx.sent_model();
     let row = ctx.row(d, k, model.clone(), Some(Reason::Pinned));
+    ctx.expect(row.clone());
     let body = match d {
         Some(Dialect::Chat) => requesting_usage(&ctx.body)
             .map(Bytes::from)
@@ -964,6 +1050,8 @@ fn passthrough(
         drop(resp);
         if let (Some(reason), true, true, Some(d)) = (&interrupted, ok, streamed, d) {
             // The client's stream must not read as finished: it ends with the dialect's error event.
+            let lead = sink.line_start();
+            sink.send(Bytes::from_static(lead.as_bytes())).await;
             sink.send(stream_error_event(
                 d,
                 &format!("The local model server stopped: {reason}"),
@@ -1089,6 +1177,7 @@ async fn pinned_mlx(ctx: Ctx) -> Response<Body> {
         ctx.sent_model(),
         Some(Reason::Pinned),
     );
+    ctx.expect(row.clone());
     let served = match d {
         Dialect::Chat => mlx_chat(ctx, &target, row).await,
         _ => translate(ctx, d, &target, row).await,
@@ -1419,6 +1508,7 @@ async fn auto(ctx: Ctx) -> Response<Body> {
         );
         return answer(ctx, 400, body, None);
     }
+    ctx.expect(ctx.undecided_row(d));
     let context = attribution::read(&ctx.path.session, &ctx.state.service.sessions_dir).context;
     let router = ctx.state.router.clone();
     let mut pending = tokio::spawn(async move { router.decide(context).await });
@@ -1428,7 +1518,7 @@ async fn auto(ctx: Ctx) -> Response<Body> {
         let clock = ctx.clock();
         tokio::select! {
             r = &mut pending => r,
-            _ = clock.sleep(KEEPALIVE) => return committed(ctx, d, pending, context),
+            _ = clock.sleep(KEEPALIVE) => return committed(ctx, d, pending, context, Vec::new()),
         }
     } else {
         (&mut pending).await
@@ -1438,6 +1528,8 @@ async fn auto(ctx: Ctx) -> Response<Body> {
 }
 
 fn no_model(ctx: Ctx, d: Dialect) -> Response<Body> {
+    // Not recorded: no engine was asked.
+    ctx.take_pending();
     answer(
         ctx,
         503,
@@ -1481,6 +1573,7 @@ async fn routed(
         }
         tried.push(key);
         let row = ctx.row(Some(d), t.engine, Some(t.model.clone()), Some(dec.reason));
+        ctx.expect(row.clone());
         let served = match (t.engine, d) {
             (EngineKind::Mlx, Dialect::Chat) => mlx_chat(ctx, &t, row).await,
             (EngineKind::Mlx, _) => translate(ctx, d, &t, row).await,
@@ -1491,7 +1584,20 @@ async fn routed(
             Served::Refused(back, _, _) => {
                 ctx = *back;
                 ctx.state.router.mark_down(t.engine);
-                decision = ctx.state.router.decide(context).await;
+                ctx.expect(ctx.undecided_row(d));
+                // The new decision can wait on a loading engine too: the same early-head rule as `auto`.
+                let router = ctx.state.router.clone();
+                let mut pending = tokio::spawn(async move { router.decide(context).await });
+                let r = if ctx.wants_stream() && d != Dialect::Chat {
+                    let clock = ctx.clock();
+                    tokio::select! {
+                        r = &mut pending => r,
+                        _ = clock.sleep(KEEPALIVE) => return committed(ctx, d, pending, context, tried),
+                    }
+                } else {
+                    (&mut pending).await
+                };
+                decision = r.unwrap_or(Err(RouteError::NoActiveModel));
             }
         }
     }
@@ -1506,6 +1612,7 @@ async fn routed_passthrough(ctx: Ctx, d: Dialect, t: &TargetSpec, row: Option<Ro
             "invalid_request_error",
             "Request body must be a JSON object.",
         );
+        ctx.take_pending();
         return Served::Answer(answer(ctx, 400, body, None));
     };
     obj.insert("model".into(), json!(t.model));
@@ -1524,16 +1631,22 @@ async fn routed_passthrough(ctx: Ctx, d: Dialect, t: &TargetSpec, row: Option<Ro
 
 /// The decision is still pending (a loading primary): the stream opens now with keepalive events, and the
 /// answer is translated from whichever engine is chosen, so no engine's own framing has to be passed through.
+/// Ollama and llama.cpp are then reached through their chat completions, not their native endpoints: past
+/// `KEEPALIVE`, the client's bytes are the router's translation, not a passthrough. Every wait after the
+/// head (the decision, the engine's head, a new decision after a refusal) keeps the stream alive and
+/// watches for the client leaving.
 fn committed(
     ctx: Ctx,
     d: Dialect,
     pending: JoinHandle<Result<Decision, RouteError>>,
     context: Option<u32>,
+    mut tried: Vec<(EngineKind, String)>,
 ) -> Response<Body> {
     let req = match decode(d, &ctx.body) {
         Ok(r) => r,
         Err(e) => {
             pending.abort();
+            ctx.take_pending();
             let body = error_json(Some(d), "invalid_request_error", e.message());
             return answer(ctx, 400, body, None);
         }
@@ -1544,24 +1657,15 @@ fn committed(
     tokio::spawn(async move {
         sink.send_all(t.start()).await;
         let mut pending = pending;
-        let mut decision = loop {
-            tokio::select! {
-                biased;
-                _ = sink.closed() => {
-                    pending.abort();
-                    return;
-                }
-                r = &mut pending => break r.unwrap_or(Err(RouteError::NoActiveModel)),
-                _ = sink.idle() => {
-                    let out = t.keepalive();
-                    sink.send_all(out).await;
-                }
-            }
+        let Some(first) = alive(&mut sink, &mut t, &mut pending).await else {
+            pending.abort();
+            return committed_cancel(ctx, sink);
         };
-        let mut tried: Vec<(EngineKind, String)> = Vec::new();
+        let mut decision = first.unwrap_or(Err(RouteError::NoActiveModel));
         loop {
             let dec = match decision {
                 Err(RouteError::NoActiveModel) => {
+                    ctx.take_pending();
                     let out = t.fail(NO_MODEL_MESSAGE);
                     sink.send_all(out).await;
                     return;
@@ -1604,19 +1708,32 @@ fn committed(
                 Some(target.model.clone()),
                 Some(dec.reason),
             );
+            ctx.expect(row.clone());
             let chat = chat_body(&req, target.engine, &target.model);
-            let sent = post_json(
-                &ctx,
-                target.engine,
-                "/v1/chat/completions",
-                serde_json::to_vec(&chat).unwrap_or_default(),
+            let sent = alive(
+                &mut sink,
+                &mut t,
+                post_json(
+                    &ctx,
+                    target.engine,
+                    "/v1/chat/completions",
+                    serde_json::to_vec(&chat).unwrap_or_default(),
+                ),
             )
             .await;
+            let Some(sent) = sent else {
+                return committed_cancel(ctx, sink);
+            };
             let mut resp = match sent {
                 Ok(r) => r,
                 Err(Unreached::Refused(_)) => {
                     ctx.state.router.mark_down(target.engine);
-                    decision = ctx.state.router.decide(context).await;
+                    ctx.expect(ctx.undecided_row(d));
+                    let next = alive(&mut sink, &mut t, ctx.state.router.decide(context)).await;
+                    let Some(next) = next else {
+                        return committed_cancel(ctx, sink);
+                    };
+                    decision = next;
                     continue;
                 }
                 Err(Unreached::Failed(m)) => {
@@ -1636,6 +1753,41 @@ fn committed(
         }
     });
     head(200, &gateway_head(true), body)
+}
+
+/// Waits for `fut` while sending the dialect's keepalive whenever nothing was sent for `KEEPALIVE`; `None`
+/// when the client left first (dropping `fut`, and with it any engine request in flight).
+async fn alive<T>(
+    sink: &mut Sink,
+    t: &mut Translation<Box<dyn StreamEncoder>>,
+    fut: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            biased;
+            _ = sink.closed() => {
+                sink.gone = true;
+                return None;
+            }
+            r = &mut fut => return Some(r),
+            _ = sink.idle() => {
+                let out = t.keepalive();
+                if !sink.send_all(out).await {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+/// The client left a committed stream before the engine's answer: `cancelled`, with the 200 it had.
+fn committed_cancel(ctx: Ctx, sink: Sink) {
+    let row = ctx.take_pending();
+    let (out, _, _) = sink.outcome(200);
+    if let Some(row) = row {
+        ctx.save(row, out);
+    }
 }
 
 /// A committed stream that cannot be served: the dialect's error event, recorded with `http` as the status
