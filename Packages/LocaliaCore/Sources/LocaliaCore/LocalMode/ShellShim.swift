@@ -318,7 +318,7 @@ public struct ShellShim: ShellShimming {
         # crashed, quit or deleted app can never leave `claude` pointing at a dead local server.
         # `command claude` always runs the real binary (the cloud version).
         function claude {
-        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_recmodel _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_out _l_v _l_what
+        \(zsh ? "  emulate -L sh\n" : "")  local _l_state _l_line _l_on _l_probe _l_policy _l_start _l_base _l_ready _l_end _l_wait _l_engine _l_model _l_recmodel _l_rec _l_id _l_rc _l_pprobe _l_pdown _l_pmax _l_out _l_v _l_what
           _l_state=\(state)
           _l_on=0; _l_probe=; _l_pprobe=; _l_pdown=0; _l_policy=fail; _l_start=; _l_base=; _l_ready=0; _l_wait=\(t); _l_engine=; _l_model=; _l_recmodel=; _l_rec=
           if [ -r "$_l_state" ]; then
@@ -352,11 +352,13 @@ public struct ShellShim: ShellShimming {
         \(Self.substituteSession("_l_base", indent: "  "))
           case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
           case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
-          # The Localia proxy first (when the state goes through it), then the engine behind it.
+          # The Localia proxy first (when the state goes through it), then the engine behind it. Through the
+          # router the engine probe is its ready check, which may probe the engine twice: give it 3 s.
+          if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi
           if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
             _l_pdown=1
           fi
-          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m 3 "$_l_probe" >/dev/null 2>&1; then
+          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m "$_l_pmax" "$_l_probe" >/dev/null 2>&1; then
             _l_ready=1
           else
             case $_l_policy in
@@ -397,9 +399,10 @@ public struct ShellShim: ShellShimming {
                   case $_l_probe in http://*|https://*) ;; *) _l_probe= ;; esac
                   case $_l_pprobe in http://*|https://*) ;; *) _l_pprobe= ;; esac
                   _l_pdown=0
+                  if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi
                   if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
                     _l_pdown=1
-                  elif [ -n "$_l_probe" ] && command curl -fsS -m 3 "$_l_probe" >/dev/null 2>&1; then
+                  elif [ -n "$_l_probe" ] && command curl -fsS -m "$_l_pmax" "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi

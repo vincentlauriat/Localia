@@ -596,14 +596,17 @@ final class ShellShimTests: XCTestCase {
         for n in 1...3 { XCTAssertNil(read("pwned\(n)"), "pwned\(n)") }
     }
 
-    /// The router's `auto/health` may probe an engine twice (1 s each) on a cold cache: the engine probe gives it
-    /// 3 s, so a slow `/api/tags` never reads as an engine down. The router's own probe stays at 1 s.
+    /// The router's `auto/health` may probe an engine twice (1 s each) on a cold cache: through the router the
+    /// engine probe gives it 3 s, so a slow `/api/tags` never reads as an engine down. Direct, and for the
+    /// router's own probe, it stays at 1 s.
     func test_engineProbeAllowsTheRoutersReadyCheck() {
         for zsh in [true, false] {
             let text = shim().shimScript(zsh: zsh)
-            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m 3 "$_l_probe""#).count - 1, 2)
-            XCTAssertFalse(text.contains(#"curl -fsS -m 1 "$_l_probe""#))
+            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m "$_l_pmax" "$_l_probe""#).count - 1, 2)
+            XCTAssertEqual(text.components(separatedBy: #"if [ -n "$_l_pprobe" ]; then _l_pmax=3; else _l_pmax=1; fi"#)
+                .count - 1, 2, "set before each engine probe, from the state as read then")
             XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m 1 "$_l_pprobe""#).count - 1, 2)
+            XCTAssertTrue(text.contains(" _l_pmax"), "declared local")
         }
     }
 
