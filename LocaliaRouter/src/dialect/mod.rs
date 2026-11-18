@@ -43,4 +43,9 @@ pub trait StreamEncoder: Send {
     fn keepalive(&mut self) -> Vec<Bytes> {
         Vec::new()
     }
+    /// What an engine keepalive comment (`: keepalive`, sent while it reads a long prompt) becomes. Nothing by
+    /// default: the relay's silence timer keeps such clients alive.
+    fn engine_keepalive(&mut self) -> Vec<Bytes> {
+        Vec::new()
+    }
 }

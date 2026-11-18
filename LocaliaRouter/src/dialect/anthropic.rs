@@ -678,4 +678,21 @@ impl StreamEncoder for Encoder {
             json!({"error": {"type": "api_error", "message": message}}),
         )]
     }
+
+    /// A `ping` (the opening events if the stream has not started); nothing once it ended.
+    fn keepalive(&mut self) -> Vec<Bytes> {
+        if self.finished {
+            return Vec::new();
+        }
+        let out = self.start();
+        if !out.is_empty() {
+            return out;
+        }
+        vec![Self::sse("ping", json!({}))]
+    }
+
+    /// The Swift gateway turned each engine keepalive line into a `ping`, which also notices a client that left.
+    fn engine_keepalive(&mut self) -> Vec<Bytes> {
+        self.keepalive()
+    }
 }

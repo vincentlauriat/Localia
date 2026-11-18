@@ -2,8 +2,7 @@
 
 use axum::body::Bytes;
 use localia_router::dialect::StreamEncoder;
-use localia_router::engine::ChatStreamDecoder;
-use localia_router::sse::SseParser;
+use localia_router::relay::Translation;
 use localia_router::{serve, EnginePorts, ServiceConfig};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -173,45 +172,13 @@ pub fn anthropic_error(r: &Reply) -> (String, String) {
     )
 }
 
-// MARK: - Translation driver
+// MARK: - Translation
 
-/// An engine's SSE bytes through the parser (split every `chunk` bytes, as a socket would), the decoder and
-/// a dialect's encoder, ending the way the relay must: a stop sequence ends the answer at once, an upstream
-/// error fails it, and a stream cut before `[DONE]` or a finish reason fails instead of reading as finished.
-/// The one copy shared by the dialect tests; Task 8 turns it into the library relay.
-pub fn pipeline(
-    sse: &[u8],
-    chunk: usize,
-    stops: &[&str],
-    mut enc: impl StreamEncoder,
-) -> Vec<Bytes> {
+/// An engine's SSE bytes, split every `chunk` bytes as a socket would, through the library's translation
+/// (`relay::Translation`), the same code the relay runs.
+pub fn pipeline(sse: &[u8], chunk: usize, stops: &[&str], enc: impl StreamEncoder) -> Vec<Bytes> {
     let stops: Vec<String> = stops.iter().map(|s| s.to_string()).collect();
-    let mut parser = SseParser::new();
-    let mut dec = ChatStreamDecoder::new(&stops);
-    let mut out = enc.start();
-    for piece in sse.chunks(chunk) {
-        for payload in parser.feed(piece) {
-            for e in dec.feed(&payload) {
-                out.extend(enc.event(&e));
-            }
-            if let Some(err) = dec.take_error() {
-                out.extend(enc.fail(&err));
-                return out;
-            }
-            if dec.matched_stop().is_some() {
-                out.extend(enc.finish());
-                return out;
-            }
-        }
-    }
-    if !dec.saw_end() {
-        out.extend(
-            enc.fail("The local model server closed the stream before the answer was complete."),
-        );
-        return out;
-    }
-    out.extend(enc.finish());
-    out
+    Translation::new(enc, &stops).run(sse.chunks(chunk))
 }
 
 /// `prefix` followed by 32 lowercase hex characters.

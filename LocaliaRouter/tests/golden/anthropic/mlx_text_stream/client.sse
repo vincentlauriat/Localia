@@ -4,6 +4,9 @@ data: {"message":{"content":[],"id":"msg_X","model":"localia","role":"assistant"
 event: ping
 data: {"type":"ping"}
 
+event: ping
+data: {"type":"ping"}
+
 event: content_block_start
 data: {"content_block":{"text":"","type":"text"},"index":0,"type":"content_block_start"}
 

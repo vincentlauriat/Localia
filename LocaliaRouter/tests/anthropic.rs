@@ -234,10 +234,13 @@ fn stream_recorded_tool_call_becomes_tool_use_block() {
         &[],
         Encoder::new(QWEN).with_input_tokens(50),
     ));
+    // The recording's two `: keepalive` lines each become a `ping` (the Swift gateway's rule).
     assert_eq!(
         names(&ev),
         [
             "message_start",
+            "ping",
+            "ping",
             "ping",
             "content_block_start",
             "content_block_delta",
@@ -253,6 +256,9 @@ fn stream_recorded_tool_call_becomes_tool_use_block() {
             "message_stop"
         ]
     );
+    // Without the keepalive pings, the indices below are those of the stream itself.
+    let mut ev = ev;
+    ev.drain(2..4);
     let msg = &ev[0].1["message"];
     assert!(is_id(msg["id"].as_str().unwrap(), "msg_"), "{msg}");
     assert_eq!(msg["model"], QWEN);

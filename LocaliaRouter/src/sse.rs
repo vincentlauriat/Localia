@@ -19,6 +19,17 @@ impl SseParser {
 
     /// The payloads of the lines `bytes` completes.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.feed_lines(bytes)
+            .into_iter()
+            .filter_map(|l| match l {
+                SseLine::Data(p) => Some(p),
+                SseLine::Comment => None,
+            })
+            .collect()
+    }
+
+    /// The `data:` payloads and comment lines (an engine's `: keepalive`) of the lines `bytes` completes.
+    pub fn feed_lines(&mut self, bytes: &[u8]) -> Vec<SseLine> {
         self.buffer.extend_from_slice(bytes);
         let mut out = Vec::new();
         let mut start = 0;
@@ -29,8 +40,10 @@ impl SseParser {
                 self.discarding = false;
                 continue;
             }
-            if let Some(p) = payload(line) {
-                out.push(p);
+            if line.first() == Some(&b':') {
+                out.push(SseLine::Comment);
+            } else if let Some(p) = payload(line) {
+                out.push(SseLine::Data(p));
             }
         }
         self.buffer.drain(..start);
@@ -40,6 +53,13 @@ impl SseParser {
         }
         out
     }
+}
+
+/// A line of an SSE stream that matters to the router.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SseLine {
+    Data(String),
+    Comment,
 }
 
 fn payload(line: &[u8]) -> Option<String> {
