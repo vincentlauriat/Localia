@@ -596,6 +596,17 @@ final class ShellShimTests: XCTestCase {
         for n in 1...3 { XCTAssertNil(read("pwned\(n)"), "pwned\(n)") }
     }
 
+    /// The router's `auto/health` may probe an engine twice (1 s each) on a cold cache: the engine probe gives it
+    /// 3 s, so a slow `/api/tags` never reads as an engine down. The router's own probe stays at 1 s.
+    func test_engineProbeAllowsTheRoutersReadyCheck() {
+        for zsh in [true, false] {
+            let text = shim().shimScript(zsh: zsh)
+            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m 3 "$_l_probe""#).count - 1, 2)
+            XCTAssertFalse(text.contains(#"curl -fsS -m 1 "$_l_probe""#))
+            XCTAssertEqual(text.components(separatedBy: #"curl -fsS -m 1 "$_l_pprobe""#).count - 1, 2)
+        }
+    }
+
     func test_shimToolsAreAliasProof() throws {
         try installAndState(on: true, policy: .autoStart)
         for name in ["claude.zsh", "claude.bash"] {

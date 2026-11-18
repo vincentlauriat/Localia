@@ -356,7 +356,7 @@ public struct ShellShim: ShellShimming {
           if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
             _l_pdown=1
           fi
-          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+          if [ "$_l_pdown" = 0 ] && [ -n "$_l_probe" ] && command curl -fsS -m 3 "$_l_probe" >/dev/null 2>&1; then
             _l_ready=1
           else
             case $_l_policy in
@@ -399,7 +399,7 @@ public struct ShellShim: ShellShimming {
                   _l_pdown=0
                   if [ -n "$_l_pprobe" ] && ! command curl -fsS -m 1 "$_l_pprobe" >/dev/null 2>&1; then
                     _l_pdown=1
-                  elif [ -n "$_l_probe" ] && command curl -fsS -m 1 "$_l_probe" >/dev/null 2>&1; then
+                  elif [ -n "$_l_probe" ] && command curl -fsS -m 3 "$_l_probe" >/dev/null 2>&1; then
                     _l_ready=1
                     break
                   fi
