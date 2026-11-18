@@ -25,6 +25,13 @@ fn data_dir() -> PathBuf {
         .unwrap_or_else(localia_router::paths::data_dir)
 }
 
+/// Fatal startup error: os_log, and stderr (for a terminal and for the tests); exit 1 so launchd restarts us.
+fn fatal(message: &str) -> ! {
+    log::error!(target: LOG_CATEGORY, "{message}");
+    eprintln!("LocaliaProxyService: {message}");
+    std::process::exit(1);
+}
+
 #[tokio::main]
 async fn main() {
     // Unified logging (Console.app, `log stream`), the same subsystem and category as the Swift service.
@@ -35,8 +42,7 @@ async fn main() {
     let port = match port() {
         Ok(p) => p,
         Err(e) => {
-            log::error!(target: LOG_CATEGORY, "{e}");
-            std::process::exit(1);
+            fatal(&e);
         }
     };
     let cfg = ServiceConfig {
@@ -53,7 +59,6 @@ async fn main() {
     // Opens the data directory, the token and the store, binds loopback only, purges at start then hourly.
     // Any failure (data, port taken) is fatal: log it and exit 1 so launchd restarts the service.
     if let Err(e) = listen(cfg).await {
-        log::error!(target: LOG_CATEGORY, "{e:#}");
-        std::process::exit(1);
+        fatal(&format!("{e:#}"));
     }
 }

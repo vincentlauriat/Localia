@@ -186,13 +186,24 @@ fn binary_exits_1_on_an_invalid_port_override() {
         .env("LOCALIA_ROUTER_PORT", "not-a-port")
         .env("LOCALIA_DATA_DIR", data.path())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             assert_eq!(status.code(), Some(1));
+            let mut err = String::new();
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut err)
+                .unwrap();
+            assert!(
+                err.contains("LOCALIA_ROUTER_PORT") && err.contains("not-a-port"),
+                "{err}"
+            );
             return;
         }
         if Instant::now() > deadline {
