@@ -68,6 +68,17 @@ final class RouterContractTests: XCTestCase {
         XCTAssertNil(rows[0].reason)
         let daily = try store.dailyTotals(since: Date(timeIntervalSince1970: 0))
         XCTAssertEqual(daily.first?.timedDurationMs, 0)
+
+        // The router restarts and migrates while the app keeps this reader open: the reader sees v2 at once.
+        let writer = try UsageStore(url: url, readOnly: false)
+        try writer.insert(RequestRecord(id: UUID(), start: Date(timeIntervalSince1970: 1_800_000_100), durationMs: 1000,
+                                        session: "s", tool: nil, folder: nil, engine: .ollama, model: "m",
+                                        api: .anthropic, status: "ok", httpStatus: 200,
+                                        usage: TokenUsage(input: 1, output: 50), error: nil,
+                                        routedTo: "ollama", reason: "primary"), content: nil)
+        let after = try store.requests(since: Date(timeIntervalSince1970: 0), limit: 10)
+        XCTAssertEqual(after.first?.routedTo, "ollama")
+        XCTAssertEqual(try store.dailyTotals(since: Date(timeIntervalSince1970: 0)).first?.timedDurationMs, 1000)
     }
 
     func test_writerMigratesV1ToV2() throws {

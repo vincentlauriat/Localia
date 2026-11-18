@@ -201,7 +201,7 @@ public final class UsageStore: @unchecked Sendable {
 
     public func requests(since: Date, limit: Int) throws -> [RequestRecord] {
         try queue.sync {
-            let hasRoute = schemaVersion >= 2
+            let hasRoute = try currentSchemaVersion() >= 2
             let routeColumns = hasRoute ? ", routed_to, reason" : ""
             return try query("""
                 SELECT id, start, duration_ms, session, tool, folder, engine, model, api, status, http_status,
@@ -234,8 +234,8 @@ public final class UsageStore: @unchecked Sendable {
 
     public func dailyTotals(since: Date) throws -> [DailyTotal] {
         try queue.sync {
-            let timedColumns = schemaVersion >= 2 ? ", timed_output_tokens, timed_duration_ms" : ""
-            let hasTimed = schemaVersion >= 2
+            let hasTimed = try currentSchemaVersion() >= 2
+            let timedColumns = hasTimed ? ", timed_output_tokens, timed_duration_ms" : ""
             return try query("""
                 SELECT day, engine, model, tool, folder, requests, input_tokens, output_tokens, duration_ms\(timedColumns)
                 FROM daily WHERE day >= ? ORDER BY day, engine, model, tool, folder
@@ -287,6 +287,13 @@ public final class UsageStore: @unchecked Sendable {
 
     private func columns(of table: String) throws -> [String] {
         try query("PRAGMA table_info(\(table))", []) { Self.text($0, 1) }
+    }
+
+    /// The schema version, read again while it is below 2: the router may migrate the database after this
+    /// reader opened it (the first launch after an update). Called on `queue`.
+    private func currentSchemaVersion() throws -> Int {
+        if schemaVersion < 2 { schemaVersion = try userVersion() }
+        return schemaVersion
     }
 
     private func userVersion() throws -> Int {
