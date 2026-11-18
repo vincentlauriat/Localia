@@ -30,6 +30,7 @@ final class AppModelTests: XCTestCase {
                            proxy: any ProxyServiceControlling = InertProxyService(),
                            routePollInterval: Duration = .seconds(10),
                            engineRestartInterval: Duration = .seconds(60),
+                           proxyRecheckInterval: Duration = .seconds(30),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -59,7 +60,8 @@ final class AppModelTests: XCTestCase {
             mlxRepos: mlxRepos,
             proxy: proxy,
             routePollInterval: routePollInterval,
-            engineRestartInterval: engineRestartInterval)
+            engineRestartInterval: engineRestartInterval,
+            proxyRecheckInterval: proxyRecheckInterval)
         return AppModel(deps: deps, confirmMemory: { _ in true })
     }
 
@@ -130,6 +132,61 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.menuBarState, .off)
         await model.setLocalMode(true)
         XCTAssertEqual(model.menuBarState, .trouble)
+    }
+
+    /// The first check found the router down, then launchd brought it back: the route poll checks again, so
+    /// the icon, the fallback and the shim state go back to routed without a launch or an app restart.
+    func test_routePoll_recoversARouterThatComesBack() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .unavailable(reason: "slow start"))
+        proxy.routeAnswers = false
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+        }
+        await model.startRouting()
+        XCTAssertEqual(model.menuBarState, .trouble)
+        XCTAssertEqual(shim.bases.last, engine.baseURL, "Direct while the router is down")
+        proxy.stateAfterCheck = .running(version: "dev")
+        proxy.routeAnswers = true
+        await waitUntil { model.menuBarState == .local }
+        XCTAssertEqual(model.proxyState, .running(version: "dev"))
+        XCTAssertFalse(model.proxyFallbackActive)
+        await waitUntil { shim.bases.last.map { ProxyURL.isRouted($0) } == true }
+        await waitUntil { !proxy.pushed.isEmpty }
+    }
+
+    /// The router died for good while it counted as running: the poll checks again and the shim goes Direct.
+    func test_routePoll_goesDirectWhenARunningRouterDies() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .unknown)
+        proxy.stateAfterCheck = .running(version: "dev")
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+        }
+        await model.startRouting()
+        XCTAssertEqual(shim.bases.last.map { ProxyURL.isRouted($0) }, true)
+        proxy.stateAfterCheck = .unavailable(reason: "gone")
+        proxy.routeAnswers = false
+        await waitUntil { model.proxyState == .unavailable(reason: "gone") }
+        await waitUntil { shim.bases.last == engine.baseURL }
+        XCTAssertTrue(model.proxyFallbackActive)
+        XCTAssertEqual(model.menuBarState, .trouble)
+    }
+
+    /// A check that does not change the outcome is not repeated on every poll.
+    func test_routePoll_recheckIsThrottled() async throws {
+        let proxy = FakeProxyService(state: .unavailable(reason: "x"))
+        proxy.routeAnswers = true   // answers, yet every check still finds it unavailable
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true
+        }
+        await model.ensureProxy()
+        let before = proxy.checks
+        await waitUntil { proxy.checks > before }
+        await waitUntil { proxy.routeRefreshes >= 10 }
+        XCTAssertEqual(proxy.checks, before + 1, "at most one check per recheck interval")
     }
 
     func test_routePoll_stopsWhenLocalModeOff() async throws {
@@ -1621,11 +1678,11 @@ final class FakeProxyService: ProxyServiceControlling {
     private(set) var checks = 0, restarts = 0, probes = 0
     /// What the router says it does now; `refreshRoute()` counts its calls.
     var route: ProxyServiceManager.RouteStatus?
-    /// Whether the router answers the route poll.
-    var routeAnswers = true
+    /// Whether the router answers the route poll; nil follows `state`.
+    var routeAnswers: Bool?
     private(set) var routeRefreshes = 0
     init(state: ProxyState) { self.state = state }
-    func refreshRoute() async -> Bool { routeRefreshes += 1; return routeAnswers }
+    func refreshRoute() async -> Bool { routeRefreshes += 1; return routeAnswers ?? isHealthy }
     func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func answers() async -> Bool { probes += 1; return answering ?? isHealthy }

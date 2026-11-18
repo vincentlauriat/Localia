@@ -181,6 +181,9 @@ final class AppModel: ObservableObject {
     /// The route poll may restart MLX for the failure it shows; re-armed once a poll shows none.
     private var mlxRestartArmed = true
     private var lastMLXRestart: ContinuousClock.Instant?
+    /// The route poll's own service check (`recheckProxyIfStale`): running now, and when it last ran.
+    private var proxyRecheckRunning = false
+    private var lastProxyRecheck: ContinuousClock.Instant?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
     /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
@@ -500,6 +503,7 @@ final class AppModel: ObservableObject {
                 let answered = await proxy.refreshRoute()
                 guard !Task.isCancelled, self != nil else { return }
                 self?.applyRoute(proxy.route, answered: answered)
+                await self?.recheckProxyIfStale(answered: answered)
                 await self?.restartMLXIfFailing(proxy.route)
                 try? await Task.sleep(for: interval)
             }
@@ -509,6 +513,19 @@ final class AppModel: ObservableObject {
     private func applyRoute(_ newRoute: ProxyServiceManager.RouteStatus?, answered: Bool) {
         if route != newRoute { route = newRoute }
         if routerSilent == answered { routerSilent = !answered }
+    }
+
+    /// The poll and the last service check disagree: the router came back after a check found it down (a slow
+    /// first start, launchd's respawn delay), or it died while it counted as running. Check again, so the icon,
+    /// the fallback and the shim state follow without waiting for a launch. Not before the first check (it is
+    /// still running), and at most once per `proxyRecheckInterval`.
+    private func recheckProxyIfStale(answered: Bool) async {
+        guard proxyState != .unknown, answered != proxy.isHealthy, !proxyRecheckRunning,
+              lastProxyRecheck.map({ ContinuousClock.now - $0 >= deps.proxyRecheckInterval }) ?? true else { return }
+        proxyRecheckRunning = true
+        lastProxyRecheck = .now
+        defer { proxyRecheckRunning = false }
+        await ensureProxy()
     }
 
     /// The router reports MLX failing (its generation died, or its server is down): with "Start it

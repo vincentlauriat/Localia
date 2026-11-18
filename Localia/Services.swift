@@ -103,6 +103,9 @@ struct AppDependencies {
     var routePollInterval: Duration = .seconds(10)
     /// The route poll restarts a failing MLX at most this often.
     var engineRestartInterval: Duration = .seconds(60)
+    /// When the route poll and the last service check disagree, the poll checks the service again at most this
+    /// often.
+    var proxyRecheckInterval: Duration = .seconds(30)
 
     @MainActor
     static func live() -> AppDependencies {
