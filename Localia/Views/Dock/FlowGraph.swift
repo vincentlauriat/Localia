@@ -36,7 +36,7 @@ struct FlowInput: Equatable {
     struct Tool: Equatable {
         let id: String
         let name: String
-        /// Speaks only the OpenAI Responses API (Codex), which MLX does not serve.
+        /// Speaks only the OpenAI Responses API (Codex), which MLX serves only through the router.
         let needsResponsesAPI: Bool
     }
 
@@ -171,7 +171,8 @@ struct FlowGraph: Equatable {
             edges.append(FlowEdge(id: id, from: from, to: to, route: r, active: false, recent: false))
         }
         for tool in tools {
-            for e in input.engines where !(tool.needsResponsesAPI && !e.servesResponsesAPI) {
+            // The router speaks the Responses API for every engine: only a direct engine without it is unreachable.
+            for e in input.engines where !(tool.needsResponsesAPI && !e.servesResponsesAPI && route(e) != .proxied) {
                 if route(e) == .proxied {
                     add(tool.id, "proxy", .proxied); add("proxy", nodeID(e), .proxied)
                 } else {

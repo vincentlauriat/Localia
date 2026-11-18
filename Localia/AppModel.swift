@@ -205,10 +205,6 @@ final class AppModel: ObservableObject {
     func start() async {
         // Before anything writes the shim state: 1.4 settings drop MLX Direct (the router serves MLX).
         settings.migrateForRouter()
-        // Open shells pick up this build's routing (the router's `auto` URL) on their next `claude`.
-        do { try await controller.refreshShimState() } catch {
-            log.error("cannot refresh the shell shim state: \(String(describing: error), privacy: .public)")
-        }
         // Shells opened from now on get this build's shim function (an update may have changed it).
         do { try controller.refreshShimFiles() } catch {
             log.error("cannot refresh the shell shim: \(String(describing: error), privacy: .public)")
@@ -222,7 +218,7 @@ final class AppModel: ObservableObject {
             }
         }
         startPathMonitor()
-        Task { await ensureProxy() }
+        Task { await startRouting() }
         Task { await refreshRecommendations() }
         // Login shells and `--version` can be slow: never on the path of the engine status.
         Task { await refreshLocalTools(refresh: true) }
@@ -501,10 +497,22 @@ final class AppModel: ObservableObject {
         Task { await refreshShim() }
     }
 
+    /// At app start: the first router check, then the shim state, so open shells pick up this build's
+    /// routing (the router's `auto` URL) on their next `claude`. Written only once the check has told
+    /// routed from Direct: before it, the router counts as down and the state would say Direct.
+    func startRouting() async {
+        guard !(await ensureProxy()) else { return }
+        do { try await controller.refreshShimState() } catch {
+            log.error("cannot refresh the shell shim state: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     /// Checks (registers, restarts) the proxy service, pushes the settings to it when it runs, and switches
     /// proxied engines to direct, visibly, when it cannot run. The shim state follows the routing.
     /// `force` (Settings "Restart") re-registers the service even when it answers.
-    func ensureProxy(force: Bool = false) async {
+    /// Returns whether it re-wrote the shim state (the routing changed).
+    @discardableResult
+    func ensureProxy(force: Bool = false) async -> Bool {
         let wasHealthy = routing.resolver.proxyHealthy
         let wasFallback = proxyFallbackActive
         if force { await proxy.restart() } else { await proxy.ensureRunning() }
@@ -519,7 +527,9 @@ final class AppModel: ObservableObject {
         case .unknown:
             break
         }
-        if routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) { await refreshShim() }
+        guard routing.resolver.proxyHealthy != wasHealthy || (proxyFallbackActive && !wasFallback) else { return false }
+        await refreshShim()
+        return true
     }
 
     /// Settings "Restart": re-registers the service (unless it is off in Login Items) and pushes the settings.

@@ -1079,6 +1079,7 @@ final class ShellShimTests: XCTestCase {
 
         base=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto
         model=localia
+        recordmodel=qwen3-coder:30b
         policy=autoStart
         profile=full
         probe=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto/health
@@ -1092,7 +1093,40 @@ final class ShellShimTests: XCTestCase {
         }
         XCTAssertTrue(text.contains("\nenv=ANTHROPIC_BASE_URL=http://127.0.0.1:11438/s/@LOCALIA_SESSION@/auto\n"), text)
         XCTAssertTrue(text.contains("\nenv=CLAUDE_CODE_MAX_CONTEXT_TOKENS=65536\n"), text)
-        XCTAssertFalse(text.contains("qwen3-coder:30b"), text)
+        // The real name appears only where the app needs it: the start link and the session record.
+        XCTAssertEqual(text.components(separatedBy: "qwen3-coder").count - 1, 2, text)
+    }
+
+    /// A routed run tells `claude` the neutral model but records the real one, so the app keeps that model
+    /// loaded while the run lasts.
+    func test_shim_routedRun_recordsTheRealModel_andTrackerProtectsIt() async throws {
+        try exe("claude", """
+        for f in "$HOME"/Library/Application\\ Support/Localia/sessions/*.session; do cat "$f" > "$HOME/seen.session"; done
+        printf '%s\\n' "$ANTHROPIC_MODEL" > "$HOME/model.txt"
+        exit 7
+        """)
+        try proxyAwareCurl()
+        touch("healthy"); touch("proxy_up")
+        try shim().install()
+        try shim().writeState(on: true, baseURL: ProxyURL.routed(session: ProxyURL.sessionPlaceholder),
+                              model: "qwen3-coder:30b", contextTokens: 65536, policy: .fail,
+                              profile: .full, engine: .ollama, proxyProbe: proxyHealth)
+        for shell in ["zsh", "bash"] {
+            try? FileManager.default.removeItem(at: home.appendingPathComponent("seen.session"))
+            XCTAssertEqual(try run(shell).status, 7, shell)
+            XCTAssertEqual(read("model.txt"), "localia\n", shell)
+            let seen = try XCTUnwrap(read("seen.session"), "\(shell): no record while claude ran")
+            XCTAssertTrue(seen.contains("engine=ollama\nmodel=qwen3-coder:30b\n"), seen)
+
+            // The same record, with a live pid, in a tracker's directory: the real model is in use.
+            let dir = home.appendingPathComponent("tracker-\(shell)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let live = seen.split(separator: "\n").map { $0.hasPrefix("pid=") ? "pid=\(getpid())" : String($0) }
+                .joined(separator: "\n") + "\n"
+            try live.write(to: dir.appendingPathComponent("\(UUID().uuidString).session"), atomically: true, encoding: .utf8)
+            let inUse = await SessionTracker(statusDir: dir).modelsStillInUse()
+            XCTAssertEqual(inUse, [ModelKey(engine: .ollama, model: "qwen3-coder:30b")], shell)
+        }
     }
 
     /// Direct: byte for byte the 1.3 state, whatever engine.

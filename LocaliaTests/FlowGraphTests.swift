@@ -121,9 +121,20 @@ final class FlowGraphTests: XCTestCase {
         XCTAssertFalse(ids.contains("opencode"))
         XCTAssertFalse(ids.contains("pi"))
         XCTAssertFalse(ids.contains("terminal"), "the every-claude scope is off")
-        // Codex speaks only the Responses API, which MLX does not serve.
         XCTAssertEqual(edge(g, "codex→proxy")?.route, .proxied)
         XCTAssertFalse(g.edges.contains { $0.from == "codex" && $0.to == "mlx" })
+    }
+
+    /// Via Localia, Codex reaches MLX (the router speaks the Responses API for it). Direct, it cannot.
+    func test_codexToMLX_shownViaLocalia_hiddenDirect() {
+        let codex = FlowInput.Tool(id: "codex", name: "Codex", needsResponsesAPI: true)
+        let routed = FlowGraph.make(input(engines: [.mlx], tools: [codex]), advanced: true, now: now)
+        XCTAssertEqual(edge(routed, "codex→proxy")?.route, .proxied)
+        XCTAssertEqual(edge(routed, "proxy→mlx")?.route, .proxied)
+
+        let direct = FlowGraph.make(input(engines: [.mlx], tools: [codex], fallback: true), advanced: true, now: now)
+        XCTAssertFalse(direct.edges.contains { $0.from == "codex" }, "\(direct.edges.map(\.id))")
+        XCTAssertEqual(edge(direct, "claude→mlx")?.route, .direct)
     }
 
     func test_uninstalledEngine_hasNoEdges() {

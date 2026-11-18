@@ -188,6 +188,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(baseURL.port, LocaliaConstants.proxyPort)
     }
 
+    /// At start the shim state is written once the first router check is done, never Direct before it:
+    /// a running router gives the `auto` URL, a down one the engine's own address.
+    func test_startRouting_writesTheShimStateAfterTheRouterCheck() async {
+        for running in [true, false] {
+            let shim = FakeShim()
+            let proxy = FakeProxyService(state: .unknown)
+            proxy.stateAfterCheck = running ? .running(version: "dev") : .unavailable(reason: "off")
+            let engine = FakeEngine(installed: ["m1"])
+            let model = makeModel(engine: engine, shim: shim, proxy: proxy) {
+                $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+            }
+            XCTAssertEqual(shim.bases, [], "nothing is written before start")
+            await model.startRouting()
+            XCTAssertEqual(proxy.checks, 1)
+            XCTAssertEqual(shim.bases.count, 1, "one write, after the check: \(shim.bases)")
+            XCTAssertEqual(shim.bases.first.map { ProxyURL.isRouted($0) }, running, "\(shim.bases)")
+            if !running { XCTAssertEqual(shim.bases.first, engine.baseURL) }
+        }
+        // The check changes nothing (the state stays unknown): written anyway, so a new build's shim follows.
+        let shim = FakeShim()
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), shim: shim, proxy: FakeProxyService(state: .unknown)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude
+        }
+        await model.startRouting()
+        XCTAssertEqual(shim.bases.count, 1)
+    }
+
     func test_changingRoute_refreshesTheShimState() async {
         let shim = FakeShim()
         let model = makeModel(engine: FakeEngine(installed: []), shim: shim)
@@ -1312,9 +1339,12 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     private let lock = NSLock()
     private var _uninstalls = 0
     private var _states: [Bool] = []
+    private var _bases: [URL] = []
     var uninstalls: Int { lock.lock(); defer { lock.unlock() }; return _uninstalls }
     /// `on` of each state write.
     var states: [Bool] { lock.lock(); defer { lock.unlock() }; return _states }
+    /// `baseURL` of each state write.
+    var bases: [URL] { lock.lock(); defer { lock.unlock() }; return _bases }
     init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
@@ -1322,7 +1352,7 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
-        lock.withLock { _states.append(on) }
+        lock.withLock { _states.append(on); _bases.append(baseURL) }
     }
 }
 
