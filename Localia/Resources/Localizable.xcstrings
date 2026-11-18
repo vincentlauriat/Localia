@@ -8772,6 +8772,22 @@
           }
         }
       }
+    },
+    "Localia, local AI needs attention": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, local AI needs attention"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia, l'IA locale a besoin de toi"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
