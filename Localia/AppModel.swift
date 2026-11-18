@@ -63,8 +63,9 @@ struct InstalledRow: Identifiable, Equatable {
     let isDefault: Bool
 }
 
-/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble (the router falls
-/// back to another engine, has none left, or an answer stream died on its engine).
+/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble (the router does not
+/// answer or is known not to run, falls back to another engine, has none left, or an answer stream died on its
+/// engine).
 enum MenuBarState: Equatable { case off, local, trouble }
 
 /// The single place that composes the core types. Views only read its state and call its methods.
@@ -110,6 +111,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var proxyRestarting = false
     /// Where the router sends requests, polled while local mode is on; nil when off or when it did not say.
     @Published private(set) var route: ProxyServiceManager.RouteStatus?
+    /// The last route poll got no answer from the router. False before the first poll, so a launch never
+    /// raises a false alarm.
+    @Published private(set) var routerSilent = false
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
@@ -475,25 +479,32 @@ final class AppModel: ObservableObject {
 
     var menuBarState: MenuBarState {
         guard isLocalModeOn else { return .off }
+        if case .unavailable = proxyState { return .trouble }
+        if routerSilent { return .trouble }
         guard let route else { return .local }
         return route.state == "fallback" || route.state == "down" || route.engineFailure != nil ? .trouble : .local
     }
 
     /// One loop while local mode is on: asks the router right away, then every `routePollInterval`. Turning
-    /// local mode off cancels it and forgets the route.
+    /// local mode off cancels it and forgets the route. The loop never holds the model across its sleep.
     private func pollRoute(_ on: Bool) {
         routePollTask?.cancel()
         routePollTask = nil
-        guard on else { route = nil; return }
+        guard on else { route = nil; routerSilent = false; return }
         let proxy = proxy, interval = deps.routePollInterval
         routePollTask = Task { [weak self] in
             while !Task.isCancelled {
-                await proxy.refreshRoute()
-                guard !Task.isCancelled, let self else { return }
-                if self.route != proxy.route { self.route = proxy.route }
+                let answered = await proxy.refreshRoute()
+                guard !Task.isCancelled, self != nil else { return }
+                self?.applyRoute(proxy.route, answered: answered)
                 try? await Task.sleep(for: interval)
             }
         }
+    }
+
+    private func applyRoute(_ newRoute: ProxyServiceManager.RouteStatus?, answered: Bool) {
+        if route != newRoute { route = newRoute }
+        if routerSilent == answered { routerSilent = !answered }
     }
 
     func setLocalMode(_ on: Bool) async {

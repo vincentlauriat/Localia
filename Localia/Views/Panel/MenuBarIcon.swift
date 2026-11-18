@@ -14,7 +14,7 @@ struct MenuBarIcon: View {
         switch state {
         case .off: named("MenuBarOutline", label: String(localized: "Localia, local mode off"))
         case .local: named("MenuBarFilled", label: String(localized: "Localia, local mode on"))
-        case .trouble: trouble()
+        case .trouble: troubleImage
         }
     }
 
@@ -26,9 +26,12 @@ struct MenuBarIcon: View {
         return image
     }
 
+    /// Built once: `body` runs on every change of the model.
+    private static let troubleImage = trouble()
+
     /// The filled mark with a badge at the bottom right: a disc with an exclamation mark cut out, set apart from
-    /// the mark by a transparent ring. A new image each time, so the shared named one keeps its own label. Drawn
-    /// in the image's own points, at whatever scale the menu bar asks.
+    /// the mark by a transparent ring. Its own image, so the shared named one keeps its own label. Drawn in the
+    /// image's own points, at whatever scale the menu bar asks.
     private static func trouble() -> NSImage {
         let filled = NSImage(named: "MenuBarFilled") ?? NSImage()
         let size = filled.size

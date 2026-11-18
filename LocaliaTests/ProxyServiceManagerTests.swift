@@ -313,7 +313,8 @@ final class ProxyServiceManagerTests: XCTestCase {
                                     tokenURL: dir.appendingPathComponent("token"),
                                     pollInterval: .milliseconds(5), deadline: .milliseconds(200))
         body.text = #"{"ok":true,"version":"6"}"#
-        await m.refreshRoute()
+        let answered13 = await m.refreshRoute()
+        XCTAssertTrue(answered13, "a 1.3 service answers, without a route")
         XCTAssertNil(m.route)
 
         body.text = #"{"ok":true,"version":"6","route":{"state":"fallback","engine":"llamaCpp","model":"q","#
@@ -334,7 +335,8 @@ final class ProxyServiceManagerTests: XCTestCase {
         XCTAssertTrue(answers, "a malformed route must not hide a healthy service")
 
         body.text = "not json"
-        await m.refreshRoute()
+        let answeredGarbage = await m.refreshRoute()
+        XCTAssertFalse(answeredGarbage, "no usable health answer reads as silent")
         XCTAssertNil(m.route)
         XCTAssertEqual(m.state, .unknown)
     }

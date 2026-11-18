@@ -101,6 +101,35 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    /// A router that does not answer is trouble once a poll has failed, never before the first poll (no false
+    /// alarm at launch), and the icon goes back to local when it answers again.
+    func test_menuBarState_troubleWhenRouterDoesNotAnswer() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.routeAnswers = false
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5)) {
+            $0.localModeOn = true
+        }
+        XCTAssertTrue(model.isLocalModeOn)
+        XCTAssertEqual(proxy.routeRefreshes, 0)
+        XCTAssertEqual(model.menuBarState, .local, "not polled yet: no alarm")
+        await waitUntil { model.menuBarState == .trouble }
+        XCTAssertNil(model.route)
+        proxy.routeAnswers = true
+        await waitUntil { model.menuBarState == .local }
+        await model.setLocalMode(false)
+        XCTAssertEqual(model.menuBarState, .off)
+    }
+
+    /// The service manager already knows the router is not running: trouble without waiting for a poll.
+    func test_menuBarState_troubleWhenServiceUnavailable() async {
+        let proxy = FakeProxyService(state: .unavailable(reason: "x"))
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy)
+        await model.ensureProxy()
+        XCTAssertEqual(model.menuBarState, .off)
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.menuBarState, .trouble)
+    }
+
     func test_routePoll_stopsWhenLocalModeOff() async throws {
         let proxy = FakeProxyService(state: .running(version: "dev"))
         proxy.route = route("fallback")
@@ -1485,9 +1514,11 @@ final class FakeProxyService: ProxyServiceControlling {
     private(set) var checks = 0, restarts = 0, probes = 0
     /// What the router says it does now; `refreshRoute()` counts its calls.
     var route: ProxyServiceManager.RouteStatus?
+    /// Whether the router answers the route poll.
+    var routeAnswers = true
     private(set) var routeRefreshes = 0
     init(state: ProxyState) { self.state = state }
-    func refreshRoute() async { routeRefreshes += 1 }
+    func refreshRoute() async -> Bool { routeRefreshes += 1; return routeAnswers }
     func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func answers() async -> Bool { probes += 1; return answering ?? isHealthy }

@@ -45,8 +45,9 @@ protocol ProxyServiceControlling: AnyObject {
     func uninstall() async
     /// Where the router sends requests now, from the last `refreshRoute()`.
     var route: ProxyServiceManager.RouteStatus? { get }
-    /// Asks the router for its route (one health call); `state` is left as it is.
-    func refreshRoute() async
+    /// Asks the router for its route (one health call); `state` is left as it is. Returns whether it answered
+    /// (a 1.3 service answers without a route).
+    @discardableResult func refreshRoute() async -> Bool
 }
 
 /// No proxy wired (the default of `AppDependencies`, used by tests): never healthy, does nothing, so every
@@ -62,7 +63,7 @@ final class InertProxyService: ProxyServiceControlling, Sendable {
     func erase(log: Bool, stats: Bool) async throws {}
     func uninstall() async {}
     var route: ProxyServiceManager.RouteStatus? { nil }
-    func refreshRoute() async {}
+    func refreshRoute() async -> Bool { false }
 }
 
 enum ProxyServiceError: LocalizedError, Equatable {
@@ -204,7 +205,12 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
     func answers() async -> Bool { await healthVersion() != nil }
 
     /// One health call (1 s at most) for the route; `state` is left as the last check set it.
-    func refreshRoute() async { route = await health()?.route }
+    @discardableResult
+    func refreshRoute() async -> Bool {
+        let h = await health()
+        route = h?.route
+        return h != nil
+    }
 
     private func run(force: Bool) async {
         checkID &+= 1

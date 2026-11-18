@@ -199,8 +199,9 @@ final class DockSnapshotTests: XCTestCase {
         ]
         if routed {
             // The router's reasons: the usual engine, a fallback while the first one was stopped, a pinned engine.
-            rows[0].routedTo = "ollama"; rows[0].reason = "primary"
-            rows[1].routedTo = "llamacpp"; rows[1].reason = "engine-down"
+            // `routedTo` is always the row's own engine (the router writes the engine it used).
+            rows[0].routedTo = "mlx"; rows[0].reason = "primary"
+            rows[1].routedTo = "ollama"; rows[1].reason = "engine-down"
             rows[3].routedTo = "mlx"; rows[3].reason = "pinned"
         }
         reader.records = rows
