@@ -207,6 +207,37 @@ async fn content_stored_only_when_enabled() {
     assert_eq!(second.reason.as_deref(), Some("primary"));
 }
 
+/// The content log is read once per request: switching it on while an answer streams neither stores a
+/// half-empty content row for it nor drops one it already captured.
+#[tokio::test]
+async fn content_log_toggled_mid_request_follows_its_start() {
+    let stubs = engines().await;
+    let first = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n";
+    let last = "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let hold = Arc::new(Notify::new());
+    let held = hold.clone();
+    stubs.0.on(move |_| {
+        Reply::sse(first).steps(vec![Step::Data(first.into()), Step::Wait(held.clone()), Step::Data(last.into())])
+    });
+    let h = router_on(Ollama, &stubs, false).await;
+    let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("message_start", 1).await;
+    let r = send(
+        h.port,
+        "POST",
+        "/localia/config",
+        &[("x-localia-token", TOKEN)],
+        br#"{"logContent":true,"retentionDays":7}"#,
+    )
+    .await;
+    assert_eq!(r.status, 204);
+    hold.notify_one();
+    s.read_count("message_stop", 1).await;
+    let row = &wait_rows(&h, 1).await[0];
+    assert_eq!(row.status, "ok");
+    assert!(content(&h, &row.id).is_none(), "the log was off when the request started");
+}
+
 #[tokio::test]
 async fn engine_down_without_equivalent_is_503_named_and_recorded() {
     let dead = Stub::dead_port().await;

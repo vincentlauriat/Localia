@@ -346,6 +346,9 @@ struct Ctx {
     pending_row: Mutex<Option<Row>>,
     /// A row was written; the drop guard then does nothing, so no exchange is recorded twice.
     recorded: AtomicBool,
+    /// The content log setting when the request arrived: the capture and the saved row follow this one value,
+    /// so a toggle mid-request never stores an empty response or drops a captured one.
+    log_content: bool,
 }
 
 /// The drop guard: a model call whose context goes away unrecorded was cancelled by the client (1.4 recorded
@@ -434,11 +437,7 @@ impl Ctx {
     }
 
     fn log_content(&self) -> bool {
-        self.state
-            .config
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .log_content
+        self.log_content
     }
 
     fn active(&self) -> Option<TargetSpec> {
@@ -817,8 +816,8 @@ pub async fn handle(state: Arc<AppState>, req: Request<Body>, path: ProxyPath) -
     let body = axum::body::to_bytes(body, usize::MAX)
         .await
         .unwrap_or_default();
+    let log_content = state.config.read().unwrap_or_else(|e| e.into_inner()).log_content;
     let ctx = Ctx {
-        state,
         method: parts.method,
         headers: parts.headers,
         query: parts.uri.query().map(str::to_owned),
@@ -831,6 +830,8 @@ pub async fn handle(state: Arc<AppState>, req: Request<Body>, path: ProxyPath) -
         started: std::time::Instant::now(),
         pending_row: Mutex::new(None),
         recorded: AtomicBool::new(false),
+        log_content,
+        state,
     };
     match ctx.path.segment {
         Segment::Auto => auto(ctx).await,
