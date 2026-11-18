@@ -493,7 +493,7 @@ final class AppModel: ObservableObject {
     private func pollRoute(_ on: Bool) {
         routePollTask?.cancel()
         routePollTask = nil
-        guard on else { route = nil; routerSilent = false; return }
+        guard on else { route = nil; routerSilent = false; mlxRestartArmed = true; return }
         let proxy = proxy, interval = deps.routePollInterval
         routePollTask = Task { [weak self] in
             while !Task.isCancelled {

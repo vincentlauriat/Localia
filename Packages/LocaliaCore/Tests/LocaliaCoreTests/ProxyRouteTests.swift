@@ -42,7 +42,7 @@ final class ProxyRouteTests: XCTestCase {
 
     func test_resolver_mlxAlwaysProxiedWhenHealthy() {
         let r = RouteResolver(routes: [.mlx: .direct], proxyHealthy: true)
-        let base = URL(string: "http://127.0.0.1:11436")!
+        let base = URL(string: "http://127.0.0.1:\(LocaliaConstants.mlxServerPort)")!
         XCTAssertEqual(r.baseURL(engine: .mlx, engineBase: base, session: "s"),
                        ProxyURL.routed(session: "s"))
     }

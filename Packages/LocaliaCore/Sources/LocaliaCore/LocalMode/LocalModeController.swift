@@ -179,8 +179,11 @@ public final class LocalModeController: ObservableObject {
         var engine = r?.engine, baseURL = r?.baseURL
         if engine == nil, let active = await source.activeEngine() { engine = active.id; baseURL = active.baseURL }
         let engineBase = baseURL ?? URL(string: "http://127.0.0.1:\(LocaliaConstants.ollamaPort)")!
-        let stateBase = routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
+        var stateBase = routes().baseURL(engine: engine ?? .ollama, engineBase: engineBase,
                                          session: ProxyURL.sessionPlaceholder)
+        // MLX is reachable only through the router (mlx_lm.server speaks no Anthropic): with the router down,
+        // the shim still targets it, so its probe fails and the engine-down policy applies.
+        if engine == .mlx, !ProxyURL.isRouted(stateBase) { stateBase = ProxyURL.routed(session: ProxyURL.sessionPlaceholder) }
         let proxied = ProxyURL.isRouted(stateBase)
         try shim.writeState(on: on,
                             baseURL: stateBase,
