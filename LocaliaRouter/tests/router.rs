@@ -307,6 +307,35 @@ async fn loading_primary_is_waited_for_then_used() {
     assert_eq!(clock.elapsed(), Duration::from_millis(1500));
 }
 
+/// The app pushes the MLX model it is loading while a request waits for it: the decision after the wait uses
+/// the config as it is then, not the one cloned when the request arrived.
+#[tokio::test]
+async fn loading_wait_sees_a_config_pushed_meanwhile() {
+    let probe = FakeProbe::new();
+    probe.script(Mlx, &[EngineHealth::Loading, EngineHealth::Loading]);
+    probe.set(Mlx, EngineHealth::Up);
+    let clock = ManualClock::new();
+    let qwen = "mlx-community/Qwen3-8B-4bit";
+    let mut cfg = RoutingConfig {
+        active: Some(target(Mlx, qwen, 65536)),
+        equivalents: vec![],
+        mlx_model: Some("mlx-community/Other-4bit".into()),
+    };
+    let r = router(&probe, &clock, Some(cfg.clone()));
+    let rr = r.clone();
+    let pending = tokio::spawn(async move { rr.decide(None).await });
+    until(|| probe.calls() >= 1).await;
+    cfg.mlx_model = Some(qwen.into());
+    r.set_config(Some(cfg));
+    let d = drive(&clock, Duration::from_millis(500), async move {
+        pending.await.unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(d.reason, Reason::Primary);
+    assert_eq!(d.target.engine, Mlx);
+}
+
 #[tokio::test]
 async fn loading_past_grace_falls_back() {
     let probe = FakeProbe::new();

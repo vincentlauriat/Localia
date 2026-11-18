@@ -235,13 +235,22 @@ impl Router {
         wait: bool,
     ) -> Result<Decision, RouteError> {
         let mut health = self.probe_health(active.engine).await;
+        let mut refreshed = None;
         if wait && health == EngineHealth::Loading {
             let deadline = self.clock.now() + LOAD_GRACE;
             while health == EngineHealth::Loading && self.clock.now() < deadline {
                 self.clock.sleep(LOAD_POLL).await;
                 health = self.probe_health(active.engine).await;
             }
+            // The app may have pushed a config meanwhile (the MLX model it was loading): decide on it while
+            // it keeps the same active target.
+            refreshed = self
+                .lock()
+                .cfg
+                .clone()
+                .filter(|c| c.active.as_ref().is_some_and(|a| same_target(a, active)));
         }
+        let cfg = refreshed.as_ref().unwrap_or(cfg);
         if health == EngineHealth::Up && self.eligible(cfg, active).await {
             return Ok(Decision {
                 target: active.clone(),
