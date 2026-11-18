@@ -70,6 +70,9 @@ struct LogPage: View {
         }
     }
 
+    /// The route the router took, when it was not the usual one (a fallback, a pinned engine); else nil.
+    static func routeText(_ r: RequestRecord) -> String? { RouteLabel.text(routedTo: r.routedTo, reason: r.reason) }
+
     static func tokens(_ n: Int?) -> String { n.map { Fmt.number(Double($0), fractionDigits: 0) } ?? "—" }
 
     static func speed(_ r: RequestRecord) -> String {
@@ -131,8 +134,9 @@ struct LogPage: View {
     }
 
     /// Status and duration keep fixed widths so they never truncate ("Interrompue", "3 min 12 s"); tool and model
-    /// take the room left (they grow with the window), with their full text as help. Every column fits at the
-    /// window's minimum with the detail pane open. The speed is in the detail pane.
+    /// take the room left (they grow with the window), with their full text as help. Every column up to the
+    /// duration fits at the window's minimum with the detail pane open. The route (empty for the usual one) comes
+    /// last: at that width it is cut, and the detail pane repeats it. The speed is in the detail pane.
     private func table(_ rows: [RequestRecord]) -> some View {
         Table(rows, selection: $selection) {
             TableColumn(String(localized: "Time")) { Self.time($0.start, compact: true) }.width(68)
@@ -145,6 +149,9 @@ struct LogPage: View {
             TableColumn(String(localized: "In")) { Text(verbatim: Self.tokens($0.usage.input)) }.width(42)
             TableColumn(String(localized: "Out")) { Text(verbatim: Self.tokens($0.usage.output)) }.width(42)
             TableColumn(String(localized: "Duration")) { Text(verbatim: UsagePage.duration(ms: $0.durationMs)) }.width(72)
+            TableColumn(String(localized: "Route")) { r in
+                Text(verbatim: Self.routeText(r) ?? "").help(Self.routeText(r) ?? "")
+            }.width(min: 60, ideal: 140, max: 200)
         }
         .font(.callout)
         .frame(maxWidth: .infinity, minHeight: 240)
@@ -164,8 +171,8 @@ struct LogPage: View {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Self.time(r.start).font(.headline)
-                    Text(verbatim: [r.tool, r.model.map(modelName), AppModel.engineName(r.engine)].compactMap { $0 }
-                        .joined(separator: " · "))
+                    Text(verbatim: [r.tool, r.model.map(modelName), AppModel.engineName(r.engine), Self.routeText(r)]
+                        .compactMap { $0 }.joined(separator: " · "))
                         .foregroundStyle(.secondary)
                     if let served = r.model, modelName(served) != served {
                         Text(verbatim: served).foregroundStyle(.secondary).textSelection(.enabled)

@@ -172,7 +172,7 @@ final class PanelSnapshotTests: XCTestCase {
     /// The menu-bar icons come from the asset catalog (not an empty fallback), as templates with a label.
     func testMenuBarIconsComeFromTheAssetCatalog() throws {
         for on in [false, true] {
-            let image = MenuBarIcon.image(on: on)
+            let image = MenuBarIcon.image(state: on ? .local : .off)
             XCTAssertGreaterThan(image.size.width, 0)
             XCTAssertTrue(image.isTemplate)
             XCTAssertEqual(image.accessibilityDescription,
@@ -185,6 +185,45 @@ final class PanelSnapshotTests: XCTestCase {
                     .foregroundStyle(.primary)
                 render(view, appearance: appearance, to: url)
             }
+        }
+    }
+
+    /// Trouble: the filled mark with an exclamation badge at the bottom right, still a template (the menu bar
+    /// colours it, light or dark), with its own label; the plain filled icon keeps its own label.
+    func test_menuBarIcon_trouble() throws {
+        let image = MenuBarIcon.image(state: .trouble)
+        let filled = MenuBarIcon.image(state: .local)
+        XCTAssertEqual(image.size, filled.size)
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertEqual(image.accessibilityDescription, String(localized: "Localia, local AI in trouble"))
+        XCTAssertEqual(filled.accessibilityDescription, String(localized: "Localia, local mode on"),
+                       "drawing the trouble icon never relabels the shared filled image")
+        // The badge changes the bottom-right corner and nothing else of the mark.
+        func alpha(_ img: NSImage) throws -> [UInt8] {
+            let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8,
+                                                     samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            img.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
+            NSGraphicsContext.restoreGraphicsState()
+            return (0..<64).flatMap { y in (0..<64).map { x in UInt8(rep.colorAt(x: x, y: y)!.alphaComponent * 255) } }
+        }
+        let a = try alpha(image), b = try alpha(filled)
+        let changed = (0..<a.count).filter { abs(Int(a[$0]) - Int(b[$0])) > 32 }
+        XCTAssertGreaterThan(changed.count, 50, "a visible badge")
+        XCTAssertTrue(changed.allSatisfy { $0 % 64 >= 24 && $0 / 64 >= 24 }, "only in the bottom-right corner")
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let url = outputDir.appendingPathComponent("menubar-trouble-\(suffix).png")
+            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            let view = HStack(spacing: 16) {
+                Image(nsImage: filled).resizable().frame(width: 72, height: 72)
+                Image(nsImage: image).resizable().frame(width: 72, height: 72)
+                // Menu-bar size, as it shows.
+                Image(nsImage: image)
+            }
+            .padding(12).foregroundStyle(.primary)
+            render(view, appearance: appearance, to: url, width: 260)
         }
     }
 

@@ -63,6 +63,10 @@ struct InstalledRow: Identifiable, Equatable {
     let isDefault: Bool
 }
 
+/// What the menu-bar icon shows: local mode off, on, or on while the local AI is in trouble (the router falls
+/// back to another engine, has none left, or an answer stream died on its engine).
+enum MenuBarState: Equatable { case off, local, trouble }
+
 /// The single place that composes the core types. Views only read its state and call its methods.
 @MainActor
 final class AppModel: ObservableObject {
@@ -104,6 +108,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var proxyState: ProxyState = .unknown
     /// A check started from the Settings "Restart" button is running.
     @Published private(set) var proxyRestarting = false
+    /// Where the router sends requests, polled while local mode is on; nil when off or when it did not say.
+    @Published private(set) var route: ProxyServiceManager.RouteStatus?
     /// Selected sidebar entry of the Models window, a `ModelsSection` raw value (0 For this Mac, 1 Installed,
     /// 2 Downloads, 3 Compatible, 4 New on Hugging Face).
     @Published var modelsTab = 0
@@ -166,6 +172,8 @@ final class AppModel: ObservableObject {
     private var cancelledDownloads: Set<String> = []
     private var pollTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
+    /// Polls the router's route while local mode is on.
+    private var routePollTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var bag: Set<AnyCancellable> = []
     /// Engines whose model list could not be read at the last refresh (e.g. Ollama not running).
@@ -196,6 +204,8 @@ final class AppModel: ObservableObject {
         bridge.model = self
         settings.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
         controller.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
+        // Every way local mode changes (the switch, going offline, a reset) starts or stops the route poll.
+        controller.$isOn.removeDuplicates().sink { [weak self] on in self?.pollRoute(on) }.store(in: &bag)
         Task { await registry.setActive(deps.settings.activeEngine) }
     }
 
@@ -234,7 +244,7 @@ final class AppModel: ObservableObject {
     /// Unloads what Localia loaded and stops the servers it started (never the user's own). A model or an
     /// engine that a Localia session still uses is left running, so quitting never cuts a live session.
     func shutdown() async {
-        pollTask?.cancel(); statusTask?.cancel(); pathMonitor?.cancel()
+        pollTask?.cancel(); statusTask?.cancel(); routePollTask?.cancel(); pathMonitor?.cancel()
         for t in downloadTasks.values { t.cancel() }
         let inUse = Set(await busyKeys())
         for key in loadedByLocalia.union(loadedForShim) where !inUse.contains(key) {
@@ -462,6 +472,29 @@ final class AppModel: ObservableObject {
     // MARK: - Local mode
 
     var isLocalModeOn: Bool { controller.isOn }
+
+    var menuBarState: MenuBarState {
+        guard isLocalModeOn else { return .off }
+        guard let route else { return .local }
+        return route.state == "fallback" || route.state == "down" || route.engineFailure != nil ? .trouble : .local
+    }
+
+    /// One loop while local mode is on: asks the router right away, then every `routePollInterval`. Turning
+    /// local mode off cancels it and forgets the route.
+    private func pollRoute(_ on: Bool) {
+        routePollTask?.cancel()
+        routePollTask = nil
+        guard on else { route = nil; return }
+        let proxy = proxy, interval = deps.routePollInterval
+        routePollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await proxy.refreshRoute()
+                guard !Task.isCancelled, let self else { return }
+                if self.route != proxy.route { self.route = proxy.route }
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
 
     func setLocalMode(_ on: Bool) async {
         switchingLocalMode = true

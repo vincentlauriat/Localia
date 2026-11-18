@@ -43,6 +43,10 @@ protocol ProxyServiceControlling: AnyObject {
     func erase(log: Bool, stats: Bool) async throws
     /// Unregisters the LaunchAgent, so deleting the app leaves no agent behind.
     func uninstall() async
+    /// Where the router sends requests now, from the last `refreshRoute()`.
+    var route: ProxyServiceManager.RouteStatus? { get }
+    /// Asks the router for its route (one health call); `state` is left as it is.
+    func refreshRoute() async
 }
 
 /// No proxy wired (the default of `AppDependencies`, used by tests): never healthy, does nothing, so every
@@ -57,6 +61,8 @@ final class InertProxyService: ProxyServiceControlling, Sendable {
     func push(_ config: ProxyConfig) async {}
     func erase(log: Bool, stats: Bool) async throws {}
     func uninstall() async {}
+    var route: ProxyServiceManager.RouteStatus? { nil }
+    func refreshRoute() async {}
 }
 
 enum ProxyServiceError: LocalizedError, Equatable {
@@ -90,7 +96,7 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         let state: String
         let engine: EngineID?
         let model: String?
-        /// `primary` | `engine-down`.
+        /// `primary` | `engine-down` | `pinned`.
         let reason: String?
         /// `unknown` | `ok` | `slow`.
         let speed: String

@@ -28,6 +28,7 @@ final class AppModelTests: XCTestCase {
                            cloudLogin: Bool = true, localTools: [any LocalCodingTool] = [],
                            mlxRepos: FakeMLXRepos = FakeMLXRepos(),
                            proxy: any ProxyServiceControlling = InertProxyService(),
+                           routePollInterval: Duration = .seconds(10),
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
@@ -55,8 +56,65 @@ final class AppModelTests: XCTestCase {
             notify: { [weak self] in self?.notified.append($0) },
             localTools: localTools,
             mlxRepos: mlxRepos,
-            proxy: proxy)
+            proxy: proxy,
+            routePollInterval: routePollInterval)
         return AppModel(deps: deps, confirmMemory: { _ in true })
+    }
+
+    // MARK: Router route (menu bar)
+
+    private func waitUntil(_ cond: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+        let end = Date().addingTimeInterval(2)
+        while !cond() {
+            guard Date() < end else { return XCTFail("timed out", file: file, line: line) }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    private func route(_ state: String, failure: EngineID? = nil) -> ProxyServiceManager.RouteStatus {
+        .init(state: state, engine: .ollama, model: "m", reason: state == "fallback" ? "engine-down" : "primary",
+              speed: "ok", engineFailure: failure)
+    }
+
+    func test_menuBarState_offWhenLocalModeOff() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = route("down")
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        XCTAssertEqual(model.menuBarState, .off, "a router in trouble does not matter while local mode is off")
+        await model.setLocalMode(true)
+        await waitUntil { model.menuBarState == .trouble }
+        await model.setLocalMode(false)
+        XCTAssertEqual(model.menuBarState, .off)
+    }
+
+    func test_menuBarState_troubleOnFallbackAndDown() async {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        await model.setLocalMode(true)
+        XCTAssertEqual(model.menuBarState, .local, "no route yet (a 1.3 service, no answer): plain local")
+        for (status, expected) in [(route("local"), MenuBarState.local), (route("idle"), .local),
+                                   (route("fallback"), .trouble), (route("down"), .trouble),
+                                   (route("local", failure: .mlx), .trouble), (route("local"), .local)] {
+            proxy.route = status
+            await waitUntil { model.route == status }
+            XCTAssertEqual(model.menuBarState, expected, "\(status)")
+        }
+    }
+
+    func test_routePoll_stopsWhenLocalModeOff() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        proxy.route = route("fallback")
+        let model = makeModel(engine: FakeEngine(installed: ["m1"]), proxy: proxy, routePollInterval: .milliseconds(5))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(proxy.routeRefreshes, 0, "no polling while local mode is off")
+        await model.setLocalMode(true)
+        await waitUntil { proxy.routeRefreshes >= 2 }
+        await model.setLocalMode(false)
+        XCTAssertNil(model.route, "the route is forgotten when local mode turns off")
+        let count = proxy.routeRefreshes
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(proxy.routeRefreshes, count, "the poll stopped")
+        XCTAssertNil(model.route)
     }
 
     func test_changingRetention_pushesConfig() async {
@@ -1425,7 +1483,11 @@ final class FakeProxyService: ProxyServiceControlling {
     /// The state a check or a restart leaves; nil keeps it.
     var stateAfterCheck: ProxyState?
     private(set) var checks = 0, restarts = 0, probes = 0
+    /// What the router says it does now; `refreshRoute()` counts its calls.
+    var route: ProxyServiceManager.RouteStatus?
+    private(set) var routeRefreshes = 0
     init(state: ProxyState) { self.state = state }
+    func refreshRoute() async { routeRefreshes += 1 }
     func ensureRunning() async { checks += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func restart() async { restarts += 1; if let stateAfterCheck { state = stateAfterCheck } }
     func answers() async -> Bool { probes += 1; return answering ?? isHealthy }

@@ -174,7 +174,7 @@ final class DockSnapshotTests: XCTestCase {
 
     // MARK: Log page
 
-    private func logUsage(recorded: Bool) async -> (UsageModel, UUID) {
+    private func logUsage(recorded: Bool, routed: Bool = false) async -> (UsageModel, UUID) {
         let now = Date()
         func record(_ i: Int, tool: String?, model: String, status: Int, output: Int?, error: String? = nil,
                     outcome: String? = nil, durationMs: Int? = nil) -> RequestRecord {
@@ -184,7 +184,7 @@ final class DockSnapshotTests: XCTestCase {
                           httpStatus: status, usage: TokenUsage(input: output.map { $0 * 9 }, output: output), error: error)
         }
         let reader = FakeUsageReader()
-        let rows = [
+        var rows = [
             record(0, tool: "Claude Code", model: "gemma3:12b", status: 200, output: 420),
             record(1, tool: "Codex", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", status: 200, output: nil),
             record(2, tool: "Claude Code", model: "gemma3:12b", status: 500, output: 0, error: "upstream closed the connection"),
@@ -197,6 +197,12 @@ final class DockSnapshotTests: XCTestCase {
             record(5, tool: "Claude Code", model: "gemma3:12b", status: 200, output: 80,
                    error: RequestRecord.clientClosedError, outcome: "cancelled"),
         ]
+        if routed {
+            // The router's reasons: the usual engine, a fallback while the first one was stopped, a pinned engine.
+            rows[0].routedTo = "ollama"; rows[0].reason = "primary"
+            rows[1].routedTo = "llamacpp"; rows[1].reason = "engine-down"
+            rows[3].routedTo = "mlx"; rows[3].reason = "pinned"
+        }
         reader.records = rows
         if recorded {
             reader.contents[rows[0].id] = RecordedContent(
@@ -257,6 +263,19 @@ final class DockSnapshotTests: XCTestCase {
         try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded", size: CGSize(width: 900, height: 560))
         try snapshot(LogPage(usage: usage, modelName: Self.friendly), named: "dock-log-list", size: CGSize(width: 860, height: 400))
         try snapshot(LogPage(usage: usage, initialSelection: id, initialContent: .some(content)), named: "dock-log-recorded-min", size: CGSize(width: 860, height: 560))
+    }
+
+    /// The Route column names a fallback or a pinned engine and stays empty for the usual route; the detail pane
+    /// repeats it. Fits the window's minimum width with the detail pane open.
+    func test_log_withRouteColumn() async throws {
+        let (usage, _) = await logUsage(recorded: false, routed: true)
+        XCTAssertNil(LogPage.routeText(usage.requests[0]), "the usual route says nothing")
+        XCTAssertEqual(LogPage.routeText(usage.requests[1]), String(localized: "Fallback — engine stopped"))
+        XCTAssertEqual(LogPage.routeText(usage.requests[3]), String(localized: "Fixed engine"))
+        XCTAssertNil(LogPage.routeText(usage.requests[2]), "a row the router did not route")
+        try snapshot(LogPage(usage: usage, modelName: Self.friendly), named: "dock-log-route-list", size: CGSize(width: 860, height: 400))
+        try snapshot(LogPage(usage: usage, modelName: Self.friendly, initialSelection: usage.requests[1].id, initialContent: .some(nil)),
+                     named: "dock-log-route-min", size: CGSize(width: 860, height: 560))
     }
 
     func test_log_withDetail_notRecorded() async throws {
