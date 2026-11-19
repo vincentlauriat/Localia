@@ -136,6 +136,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var downloads: [String: DownloadState] = [:]
     /// `InstalledRow.id` of the model being made the default, while `setDefault` runs.
     @Published private(set) var selectingModel: String?
+    /// One-time plain-words notice of the Active model card: the engine of the active model moved (update to
+    /// model-first, an engine switched off). Cleared by the card once shown or dismissed.
+    @Published var modelNotice: String?
     /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
     @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
 
@@ -233,6 +236,9 @@ final class AppModel: ObservableObject {
         }
         await registry.setActive(settings.activeEngine)
         await refreshAll()
+        // Needs the engines' states and installed models (refreshAll), and runs before the first router push
+        // (startRouting) so that push already carries the re-resolved model.
+        await migrateToModelFirst()
         statusTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -678,8 +684,8 @@ final class AppModel: ObservableObject {
     }
 
     /// What the router answers the neutral model name with: the selected model on the active engine, then the
-    /// same llmfit candidate installed on each other engine (ollama, llama.cpp, MLX order). A served name with
-    /// no candidate id has no equivalent.
+    /// same llmfit candidate installed on each other enabled engine, in priority order (llama.cpp, MLX,
+    /// Ollama). A served name with no candidate id has no equivalent; a switched-off engine is never one.
     func routingConfig() async -> RoutingConfig {
         let activeEngine = settings.activeEngine
         var active: TargetSpec?
@@ -690,7 +696,8 @@ final class AppModel: ObservableObject {
             active = TargetSpec(engine: activeEngine, model: model,
                                 contextTokens: await contextTokens(engine: activeEngine, model: model))
             if let id = settings.modelIDs[model] {
-                for engine in EngineID.allCases where engine != activeEngine {
+                let enabled = enabledEngines
+                for engine in EngineID.priority where engine != activeEngine && enabled.contains(engine) {
                     for row in installed where row.engine == engine && settings.modelIDs[row.name] == id {
                         equivalents.append(TargetSpec(engine: engine, model: row.name,
                                                       contextTokens: await contextTokens(engine: engine, model: row.name)))
@@ -1416,11 +1423,12 @@ final class AppModel: ObservableObject {
 
     /// Makes `row` the model launches and chat use (Models window "Set as Default", or a click in the panel),
     /// switching the active engine when it lives on the other one. Nothing is loaded here. Refused when
-    /// llama.cpp would have to serve another model than the one a session uses.
-    func setDefault(_ row: InstalledRow) async {
+    /// llama.cpp would have to serve another model than the one a session uses. Returns false when refused.
+    @discardableResult
+    func setDefault(_ row: InstalledRow) async -> Bool {
         if let other = await llamaConflict(engine: row.engine, model: row.name) {
             alert = await llamaBusyAlert(other)
-            return
+            return false
         }
         selectingModel = row.id
         defer { selectingModel = nil }
@@ -1429,6 +1437,7 @@ final class AppModel: ObservableObject {
         await noteModelUsed(row.name)
         await refreshInstalled()
         await refreshLaunchTarget()
+        return true
     }
 
     /// Served name of the model a launch or chat would use on the active engine: what a local launch resolves,
@@ -1439,6 +1448,131 @@ final class AppModel: ObservableObject {
         if let m = launchModel, names.contains(m) { return m }
         return [settings.lastModel, settings.defaultModel].compactMap { $0 }.first(where: names.contains)
             ?? chatModel(for: active)
+    }
+
+    // MARK: - Model-first selection
+
+    /// Installed engines (install state `.installed`, running or not) the person has not switched off.
+    var enabledEngines: Set<EngineID> { enabledEngines(disabled: settings.disabledEngines) }
+
+    private func enabledEngines(disabled: Set<EngineID>) -> Set<EngineID> {
+        let installedEngines = Set(engineStates.compactMap { id, state -> EngineID? in
+            if case .installed = state { return id }
+            return nil
+        })
+        return installedEngines.subtracting(disabled)
+    }
+
+    /// The models the person picks from: installed models grouped across the enabled engines, each with its
+    /// engines in priority order.
+    var modelChoices: [ModelChoice] { modelChoices(enabled: enabledEngines) }
+
+    private func modelChoices(enabled: Set<EngineID>) -> [ModelChoice] {
+        // The stored candidate id only: `candidateID(for:)` falls back to the served name, which would give
+        // every row an id and break the friendly-name grouping (and the router-equivalent rule).
+        let entries = installed.map {
+            ModelEntry(engine: $0.engine, name: $0.name, candidateID: settings.modelIDs[$0.name],
+                       friendlyName: friendlyName(for: $0.name))
+        }
+        return ModelChoices.group(entries, enabled: enabled)
+    }
+
+    /// The choice holding the selected model on the active engine.
+    var activeChoice: ModelChoice? {
+        let active = settings.activeEngine
+        guard let model = selectedModel else { return nil }
+        return modelChoices.first { $0.entries.contains { $0.engine == active && $0.name == model } }
+    }
+
+    /// The entry a choice runs on: the advanced-mode override when it is enabled and has the model, else the
+    /// first enabled engine in priority order.
+    func resolvedEntry(_ choice: ModelChoice, enabled: Set<EngineID>? = nil) -> ModelEntry? {
+        ModelChoices.resolve(choice, enabled: enabled ?? enabledEngines, override: settings.engineOverrides[choice.key])
+    }
+
+    private func row(for entry: ModelEntry) -> InstalledRow? {
+        installed.first { $0.engine == entry.engine && $0.name == entry.name }
+    }
+
+    /// Picks a model: its engine is resolved, the model made the default (`setDefault`, with its llama.cpp
+    /// busy check), and the engine started when it does not run. Returns false when nothing changed (refused,
+    /// or nothing to run it on).
+    @discardableResult
+    func choose(_ choice: ModelChoice) async -> Bool {
+        guard let entry = resolvedEntry(choice) else { return false }
+        return await use(entry)
+    }
+
+    private func use(_ entry: ModelEntry) async -> Bool {
+        guard let row = row(for: entry), await setDefault(row) else { return false }
+        if !activeServing { await startEngine() }
+        return true
+    }
+
+    /// Advanced mode "Engine" menu: `nil` is Automatic (priority order). The model is chosen again at once;
+    /// a refused move (llama.cpp busy) keeps the previous override.
+    func setOverride(_ engine: EngineID?, for choice: ModelChoice) async {
+        let previous = settings.engineOverrides[choice.key]
+        settings.engineOverrides[choice.key] = engine
+        if !(await choose(choice)) { settings.engineOverrides[choice.key] = previous }
+    }
+
+    /// Settings "Engines Localia uses". The last enabled engine cannot be switched off. The active model is
+    /// re-resolved on the new set of engines before the switch is stored: if the move is refused (llama.cpp
+    /// busy), the switch does not happen, so a switched-off engine is never left active.
+    func setEngine(_ id: EngineID, enabled: Bool) async {
+        let disabled = enabled ? settings.disabledEngines.subtracting([id]) : settings.disabledEngines.union([id])
+        guard disabled != settings.disabledEngines else { return }
+        let nowEnabled = enabledEngines(disabled: disabled)
+        if !enabled, nowEnabled.isEmpty { return }
+
+        let oldEngine = settings.activeEngine
+        let oldKey = activeChoice?.key
+        let oldModel = selectedModel
+        let choices = modelChoices(enabled: nowEnabled)
+        // Overrides on the engine switched off do not count any more (the store voids them below).
+        let overrides = settings.engineOverrides.filter { enabled || $0.value != id }
+        func resolve(_ c: ModelChoice) -> ModelEntry? {
+            ModelChoices.resolve(c, enabled: nowEnabled, override: overrides[c.key])
+        }
+        var notice: String?
+        var target: ModelEntry?
+        var moved = false
+        if let key = oldKey, let same = choices.first(where: { $0.key == key }) {
+            target = resolve(same)
+        } else if let first = choices.first {
+            target = resolve(first)
+        } else if !enabled, !nowEnabled.contains(oldEngine) {
+            notice = String(localized: "No installed model runs on the engines you chose.")
+        }
+        if let t = target, t.engine != oldEngine || t.name != oldModel {
+            guard let row = row(for: t), await setDefault(row) else { return }
+            moved = true
+            if !enabled, oldEngine == id {
+                notice = String(localized: "\(Self.engineName(id)) is no longer used: \(t.friendlyName) now runs on \(Self.engineName(t.engine)).")
+            }
+        }
+        settings.setEngine(id, enabled: enabled)
+        if target == nil, !nowEnabled.contains(settings.activeEngine),
+           let next = EngineID.priority.first(where: nowEnabled.contains) {
+            await setActiveEngine(next)   // no model left anywhere: the empty state, on an enabled engine
+        }
+        if let notice { modelNotice = notice }
+        if moved, !activeServing { await startEngine() }
+        await pushProxyConfig()
+    }
+
+    /// Once, on the first launch of the model-first version: the active model is re-resolved by the priority
+    /// rule (no override is made from the old engine). When its engine moves, the new engine is started and
+    /// the card says so once. Nothing happens when no model was chosen yet.
+    func migrateToModelFirst() async {
+        guard !settings.modelFirstMigrated else { return }
+        defer { settings.modelFirstMigrated = true }
+        guard [settings.defaultModel, settings.lastModel].contains(where: { !($0 ?? "").isEmpty }),
+              let choice = activeChoice, let entry = resolvedEntry(choice) else { return }
+        let oldEngine = settings.activeEngine
+        guard entry.engine != oldEngine, await choose(choice) else { return }
+        modelNotice = String(localized: "Localia now uses \(Self.engineName(entry.engine)), which it manages itself. \(Self.engineName(oldEngine)) stays as a backup.")
     }
 
     /// Whether `row` is the selected model (same engine and name).

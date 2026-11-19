@@ -262,13 +262,14 @@ extension AppModel {
         return nil
     }
 
-    /// The panel's chooser: installed models with one row per human name, the active engine's first (the same
-    /// model on two engines would otherwise be listed twice under one name).
+    /// The panel's chooser: one row per model choice (`modelChoices`), the row of the engine it resolves to.
     var simpleModelChoices: [InstalledRow] {
-        let active = installed.filter { $0.engine == settings.activeEngine }
-        let others = installed.filter { $0.engine != settings.activeEngine }
-        var seen = Set<String>()
-        return (active + others).filter { seen.insert(friendlyName(for: $0.name)).inserted }
+        let enabled = enabledEngines
+        return modelChoices.compactMap { choice in
+            resolvedEntry(choice, enabled: enabled).flatMap { e in
+                installed.first { $0.engine == e.engine && $0.name == e.name }
+            }
+        }
     }
 
     /// The three models of the simple Models window, from the current recommendation.

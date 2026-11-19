@@ -348,7 +348,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.proxyRestarting)
     }
 
-    /// The same llmfit candidate on the other engines, in the order ollama, llama.cpp, MLX, each with its own
+    /// The same llmfit candidate on the other engines, in priority order (llama.cpp, MLX, Ollama), each with its own
     /// engine's window; MLX's loaded model is named for the router.
     func test_routingConfig_listsSameCandidateOnOtherEngines_inOrder() async {
         let llama = FakeEngine(id: .llamaCpp, installed: ["q-gguf"], contextWindow: 65536)
@@ -364,8 +364,8 @@ final class AppModelTests: XCTestCase {
         let routing = await model.routingConfig()
         XCTAssertEqual(routing, RoutingConfig(
             active: TargetSpec(engine: .llamaCpp, model: "q-gguf", contextTokens: 65536),
-            equivalents: [TargetSpec(engine: .ollama, model: "q-localia", contextTokens: 32768),
-                          TargetSpec(engine: .mlx, model: "q-mlx", contextTokens: 40960)],
+            equivalents: [TargetSpec(engine: .mlx, model: "q-mlx", contextTokens: 40960),
+                          TargetSpec(engine: .ollama, model: "q-localia", contextTokens: 32768)],
             mlxModel: "q-mlx"))
     }
 
@@ -1474,6 +1474,206 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.alert?.title, String(localized: "No \(AppModel.engineName(.llamaCpp)) model"))
         let loads = await llama.loads
         XCTAssertEqual(loads, [])
+    }
+
+    // MARK: Model-first selection
+
+    /// The same llmfit candidate on Ollama and llama.cpp: two engines, one model to pick.
+    private func twoEngineModel(active: EngineID = .ollama, ollamaInstalled: [String] = ["q-localia"],
+                                llamaInstalled: [String] = ["q-gguf"],
+                                configure: @escaping (SettingsStore) -> Void = { _ in })
+    -> (AppModel, FakeEngine, FakeEngine) {
+        let ollama = FakeEngine(installed: ollamaInstalled)
+        let llama = FakeEngine(id: .llamaCpp, installed: llamaInstalled)
+        let model = makeModel(engine: ollama, others: [llama]) {
+            $0.activeEngine = active
+            $0.modelIDs = ["q-localia": "Qwen/Qwen3-8B", "q-gguf": "Qwen/Qwen3-8B"]
+            configure($0)
+        }
+        return (model, ollama, llama)
+    }
+
+    func test_modelChoices_mergesSameModelAcrossEngines() async throws {
+        let (model, _, _) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"])
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let choices = model.modelChoices
+        XCTAssertEqual(choices.count, 2)
+        let q = try XCTUnwrap(choices.first { $0.key == "id:Qwen/Qwen3-8B" })
+        XCTAssertEqual(q.engines, [.llamaCpp, .ollama])
+        XCTAssertEqual(q.displayName, model.friendlyName(for: "q-gguf"))
+        let plain = try XCTUnwrap(choices.first { $0.entries.map(\.name) == ["plain"] })
+        XCTAssertFalse(plain.hasCandidateID, "a served name without a candidate id groups by friendly name")
+        XCTAssertEqual(model.activeChoice?.key, q.key, "the selected Ollama model belongs to the merged choice")
+    }
+
+    /// Running state never decides: llama.cpp comes first even while only Ollama runs, and it is started.
+    func test_choose_startsPriorityEngine_evenWhenOllamaRuns() async throws {
+        let (model, ollama, llama) = twoEngineModel { $0.lastModel = "q-localia" }
+        try await ollama.startServing()
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        XCTAssertTrue(model.activeServing)
+        await model.choose(try XCTUnwrap(model.modelChoices.first))
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
+        let starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(model.activeChoice?.key, "id:Qwen/Qwen3-8B")
+    }
+
+    func test_choose_withOverride_usesOverrideEngine() async throws {
+        let (model, _, llama) = twoEngineModel {
+            $0.activeEngine = .llamaCpp
+            $0.engineOverrides = ["id:Qwen/Qwen3-8B": .ollama]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        let choice = try XCTUnwrap(model.modelChoices.first)
+        await model.choose(choice)
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertEqual(model.settings.defaultModel, "q-localia")
+        // Back to Automatic: the priority engine again.
+        await model.setOverride(nil, for: choice)
+        XCTAssertNil(model.settings.engineOverrides[choice.key])
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
+        // And forced again through setOverride.
+        await model.setOverride(.ollama, for: choice)
+        XCTAssertEqual(model.settings.engineOverrides[choice.key], .ollama)
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        let starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+    }
+
+    func test_disableActiveEngine_reresolvesToNextEngine_andSetsNotice() async throws {
+        let (model, ollama, _) = twoEngineModel(active: .llamaCpp) { $0.lastModel = "q-gguf"; $0.defaultModel = "q-gguf" }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        XCTAssertNil(model.modelNotice)
+        await model.setEngine(.llamaCpp, enabled: false)
+        XCTAssertEqual(model.settings.disabledEngines, [.llamaCpp])
+        XCTAssertEqual(model.enabledEngines, [.ollama])
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertEqual(model.settings.defaultModel, "q-localia")
+        let name = model.friendlyName(for: "q-localia")
+        XCTAssertEqual(model.modelNotice, String(localized: "\(AppModel.engineName(.llamaCpp)) is no longer used: \(name) now runs on \(AppModel.engineName(.ollama))."))
+        let starts = await ollama.startCount
+        XCTAssertEqual(starts, 1, "the model's new engine is started")
+        XCTAssertEqual(model.modelChoices.flatMap(\.engines), [.ollama])
+    }
+
+    /// The model left on llama.cpp is busy: the move goes through setDefault's check and is refused, and the
+    /// engine the person tried to switch off stays on (it would otherwise stay active while unchecked).
+    func test_disableActiveEngine_respectsLlamaBusyCheck() async throws {
+        let (model, _, _) = twoEngineModel(active: .llamaCpp, ollamaInstalled: ["m-localia"],
+                                           llamaInstalled: ["X", "m-gguf"]) {
+            $0.defaultModel = "X"; $0.lastModel = "X"
+            $0.modelIDs = ["X": "org/X", "m-gguf": "org/M", "m-localia": "org/M"]
+            $0.engineOverrides = ["id:org/M": .ollama, "id:org/X": .llamaCpp]
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await model.setLocalMode(true)
+        await model.launch(folder: try folder())   // a session holds llama.cpp on X
+        XCTAssertNil(model.alert)
+        await model.setDefault(try row(model, "m-localia"))
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+
+        await model.setEngine(.ollama, enabled: false)
+        XCTAssertEqual(model.alert?.title, String(localized: "\(AppModel.engineName(.llamaCpp)) is busy"))
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertEqual(model.settings.defaultModel, "m-localia")
+        XCTAssertEqual(model.settings.disabledEngines, [], "the refused switch-off is undone")
+        XCTAssertEqual(model.settings.engineOverrides["id:org/M"], .ollama, "and so is its voided override")
+        XCTAssertNil(model.modelNotice)
+    }
+
+    func test_cannotDisableLastEnabledEngine() async throws {
+        let (model, _, _) = twoEngineModel { $0.lastModel = "q-localia" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        await model.setEngine(.ollama, enabled: false)
+        XCTAssertEqual(model.enabledEngines, [.llamaCpp])
+        await model.setEngine(.llamaCpp, enabled: false)
+        XCTAssertEqual(model.enabledEngines, [.llamaCpp], "the last engine stays on")
+        XCTAssertEqual(model.settings.disabledEngines, [.ollama])
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+    }
+
+    func test_routingConfig_equivalentsFollowPriority_andSkipDisabled() async throws {
+        let ollama = FakeEngine(installed: ["q-localia"])
+        let llama = FakeEngine(id: .llamaCpp, installed: ["q-gguf"])
+        let mlx = FakeEngine(id: .mlx, installed: ["q-mlx"])
+        let model = makeModel(engine: ollama, others: [mlx, llama]) {
+            $0.activeEngine = .ollama
+            $0.lastModel = "q-localia"
+            $0.modelIDs = ["q-localia": "org/Q", "q-gguf": "org/Q", "q-mlx": "org/Q"]
+            $0.disabledEngines = [.mlx]
+        }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        var routing = await model.routingConfig()
+        XCTAssertEqual(routing.active?.engine, .ollama)
+        XCTAssertEqual(routing.equivalents.map(\.engine), [.llamaCpp])
+        model.settings.setEngine(.mlx, enabled: true)
+        routing = await model.routingConfig()
+        XCTAssertEqual(routing.equivalents.map(\.engine), [.llamaCpp, .mlx])
+        XCTAssertEqual(routing.equivalents.map(\.model), ["q-gguf", "q-mlx"])
+    }
+
+    /// Update to model-first: Vincent's Ollama model also on llama.cpp moves there once, with a notice.
+    func test_updateReresolution_movesOllamaToLlama_once() async throws {
+        let (model, _, llama) = twoEngineModel { $0.lastModel = "q-localia"; $0.defaultModel = "q-localia" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        XCTAssertFalse(model.settings.modelFirstMigrated)
+        await model.migrateToModelFirst()
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
+        XCTAssertEqual(model.modelNotice, String(localized: "Localia now uses \(AppModel.engineName(.llamaCpp)), which it manages itself. \(AppModel.engineName(.ollama)) stays as a backup."))
+        XCTAssertTrue(model.settings.modelFirstMigrated)
+        var starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+
+        // The person goes back to Ollama by hand: a second run changes nothing.
+        model.modelNotice = nil
+        await model.setDefault(try row(model, "q-localia"))
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        await model.migrateToModelFirst()
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertNil(model.modelNotice)
+        starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+    }
+
+    /// No model chosen yet (no default, no last model): nothing moves and nothing is said, even though
+    /// models are installed on both engines.
+    func test_updateReresolution_noModel_noNotice() async throws {
+        let (model, ollama, llama) = twoEngineModel()
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        XCTAssertNotNil(model.activeChoice, "a model is installed on the active engine")
+        await model.migrateToModelFirst()
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertNil(model.modelNotice)
+        XCTAssertNil(model.settings.defaultModel)
+        XCTAssertTrue(model.settings.modelFirstMigrated)
+        let starts = (await ollama.startCount, await llama.startCount)
+        XCTAssertEqual(starts.0 + starts.1, 0)
+    }
+
+    /// One row per choice, the row of the engine the choice resolves to.
+    func test_simpleModelChoices_followModelChoices() async throws {
+        let (model, _, _) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"]) { $0.lastModel = "q-localia" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let rows = model.simpleModelChoices
+        XCTAssertEqual(rows.count, model.modelChoices.count)
+        XCTAssertEqual(Set(rows.map { "\($0.engine.rawValue)/\($0.name)" }),
+                       ["\(EngineID.llamaCpp.rawValue)/q-gguf", "\(EngineID.ollama.rawValue)/plain"])
+        XCTAssertEqual(rows.map { model.friendlyName(for: $0.name) }, model.modelChoices.map(\.displayName))
     }
 }
 
