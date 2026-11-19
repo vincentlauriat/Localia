@@ -57,6 +57,18 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         didSet { defaults.set(routerSettingsVersion, forKey: "routerSettingsVersion") }
     }
 
+    /// Engines the user switched off. Stored as *disabled* so a missing key means every installed engine
+    /// is enabled, with no migration.
+    @Published public var disabledEngines: Set<EngineID> {
+        didSet { defaults.set(disabledEngines.map(\.rawValue).sorted(), forKey: "disabledEngines") }
+    }
+    /// `ModelChoice.key` -> engine forced for that model (advanced mode). Voided when its engine is disabled.
+    @Published public var engineOverrides: [String: EngineID] {
+        didSet { defaults.set(engineOverrides.mapValues(\.rawValue), forKey: "engineOverrides") }
+    }
+    /// True once the one-time model-first re-resolution of the active model ran.
+    @Published public var modelFirstMigrated: Bool { didSet { defaults.set(modelFirstMigrated, forKey: "modelFirstMigrated") } }
+
     public var recentFolders: [String] {
         get { load() }
         set { objectWillChange.send(); save(newValue) }
@@ -87,6 +99,24 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
         measurements = defaults.data(forKey: "measurements")
             .flatMap { try? JSONDecoder().decode(Measurements.self, from: $0) } ?? Measurements()
         routerSettingsVersion = defaults.integer(forKey: "routerSettingsVersion")
+        disabledEngines = Set((defaults.stringArray(forKey: "disabledEngines") ?? []).compactMap(EngineID.init(rawValue:)))
+        engineOverrides = (defaults.dictionary(forKey: "engineOverrides") as? [String: String] ?? [:])
+            .compactMapValues(EngineID.init(rawValue:))
+        modelFirstMigrated = defaults.bool(forKey: "modelFirstMigrated")
+    }
+
+    /// The installed engines the user has not switched off.
+    public func enabledEngines(installed: Set<EngineID>) -> Set<EngineID> { installed.subtracting(disabledEngines) }
+
+    /// Enables or disables an engine. Disabling also voids every per-model override pointing at it;
+    /// re-enabling does not restore them.
+    public func setEngine(_ id: EngineID, enabled: Bool) {
+        if enabled {
+            disabledEngines.remove(id)
+        } else {
+            disabledEngines.insert(id)
+            engineOverrides = engineOverrides.filter { $0.value != id }
+        }
     }
 
     /// Settings of 1.4 and earlier, once: the router serves MLX itself, so an MLX "Direct" route is dropped.
