@@ -30,17 +30,20 @@ final class PanelSnapshotTests: XCTestCase {
     private static let served = "qwen3-coder:30b"
 
     private func makeModel(heavyApps: [String] = [], installed: [String] = [served, "gemma3:12b"],
-                           advanced: Bool = true, proxy: any ProxyServiceControlling = InertProxyService()) -> AppModel {
+                           advanced: Bool = true, proxy: any ProxyServiceControlling = InertProxyService(),
+                           engines: [FakeEngine]? = nil, modelIDs: [String: String]? = nil,
+                           configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         // Today's panel, unchanged: advanced mode. The simple panel has its own snapshots (SimpleModeAppTests).
         settings.advancedMode = advanced
-        settings.modelIDs = [Self.served: "Qwen/Qwen3-Coder-30B-A3B-Instruct"]
+        settings.modelIDs = modelIDs ?? [Self.served: "Qwen/Qwen3-Coder-30B-A3B-Instruct"]
         settings.measurements = Measurements(tps: ["Qwen/Qwen3-Coder-30B-A3B-Instruct": 32])
         settings.recentFolders = ["/Users/vincent/DevApps/Localia", "/Users/vincent/Documents/GitHub/ClaudeCockpit"]
+        configure(settings)
         let engine = FakeEngine(installed: installed, loaded: installed.isEmpty ? [] : [Self.served])
         let deps = AppDependencies(
-            settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
+            settings: settings, engines: engines ?? [engine], registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
             speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { heavyApps }),
@@ -106,7 +109,7 @@ final class PanelSnapshotTests: XCTestCase {
             }
             // Card state lives in the test suite, never in the app's own defaults.
             let cards = UserDefaults(suiteName: suite)!
-            for key in [MenuBarPanel.Key.models, MenuBarPanel.Key.apps, MenuBarPanel.Key.sessions, MenuBarPanel.Key.engine] {
+            for key in [MenuBarPanel.Key.models, MenuBarPanel.Key.apps, MenuBarPanel.Key.sessions] {
                 cards.set(v.expanded, forKey: key)
             }
 
@@ -121,6 +124,149 @@ final class PanelSnapshotTests: XCTestCase {
                 XCTAssertGreaterThan(bytes, 10_000, url.lastPathComponent)
             }
         }
+    }
+
+    // MARK: Model-first: the Active model card and one row per model
+
+    /// The llama.cpp copy of the served Ollama model: same candidate id, so one model on two engines.
+    private static let servedGGUF = "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+    private static let candidate = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+
+    /// Ollama (the served model and Gemma) plus llama.cpp (the served model again): three installed rows, two
+    /// models. Ollama is active and running, as an existing user before model-first; `llamaStopped`: the model
+    /// is chosen on llama.cpp, which does not run, while Ollama does (the router's backup).
+    private func twoEngineModel(proxy: any ProxyServiceControlling = InertProxyService(),
+                                llamaStopped: Bool = false) async throws -> AppModel {
+        suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
+        suites.append(suite)
+        let ollama = FakeEngine(installed: [Self.served, "gemma3:12b"], loaded: [Self.served])
+        let llama = FakeEngine(id: .llamaCpp, installed: [Self.servedGGUF])
+        let model = makeModel(proxy: proxy, engines: [ollama, llama],
+                              modelIDs: [Self.served: Self.candidate, Self.servedGGUF: Self.candidate]) {
+            $0.activeEngine = llamaStopped ? .llamaCpp : .ollama
+            $0.lastModel = llamaStopped ? Self.servedGGUF : Self.served
+        }
+        if llamaStopped {
+            try await ollama.startServing()
+            await model.setActiveEngine(.llamaCpp)
+        } else {
+            await model.setActiveEngine(.ollama)
+            await model.startEngine()
+        }
+        await model.refreshAll()
+        return model
+    }
+
+    private func renderCard(_ model: AppModel, name: String) throws {
+        let dir = outputDir
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let lang = Bundle.main.preferredLocalizations.first ?? "en"
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let card = render(ActiveModelCard(model: model, style: .panel).padding(10),
+                              appearance: appearance, to: dir.appendingPathComponent("card-\(name)-\(suffix)-\(lang).png"))
+            XCTAssertGreaterThan(card.height, 40, "card-\(name)-\(suffix)")
+            let url = dir.appendingPathComponent("panel-mf-\(name)-\(suffix)-\(lang).png")
+            let cards = UserDefaults(suiteName: suite)!
+            cards.set(true, forKey: MenuBarPanel.Key.models)
+            let size = render(MenuBarPanel(model: model, windows: WindowManager(model: model),
+                                           updater: Updater(enabled: false), scrolls: false, store: cards),
+                              appearance: appearance, to: url)
+            XCTAssertGreaterThan(size.height, 300, url.lastPathComponent)
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            XCTAssertGreaterThan(bytes, 10_000, url.lastPathComponent)
+        }
+    }
+
+    /// Choosing the model resolves llama.cpp (first in priority) and starts it: green, "Ready on llama.cpp",
+    /// Ollama named as the backup, a Stop button, and the Engine menu (advanced mode) on Automatic.
+    func test_panel_activeModelCard_ready() async throws {
+        let model = try await twoEngineModel()
+        let choice = try XCTUnwrap(model.modelChoices.first { $0.key == "id:\(Self.candidate)" })
+        let chose = await model.choose(choice)
+        XCTAssertTrue(chose)
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(state.title, choice.displayName)
+        XCTAssertEqual(state.dot, .ready)
+        XCTAssertEqual(state.line, String(localized: "Ready on \("llama.cpp") · backup: \("Ollama")"))
+        XCTAssertEqual(state.action, .stop)
+        XCTAssertEqual(state.engineMenu, [.llamaCpp, .ollama])
+        XCTAssertNil(state.override)
+
+        // Simple mode: the same card never names an engine.
+        model.settings.advancedMode = false
+        let simple = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(simple.line, String(localized: "Ready"))
+        XCTAssertNil(simple.engineMenu)
+        XCTAssertFalse(simple.line.contains("llama") || simple.line.contains("Ollama"), simple.line)
+        model.settings.advancedMode = true
+
+        // The one-time notice, dismissable, in advanced mode only.
+        model.modelNotice = "Localia now uses llama.cpp, which it manages itself. Ollama stays as a backup."
+        XCTAssertEqual(ActiveModelCard.State(model: model)?.notice, model.modelNotice)
+        model.settings.advancedMode = false
+        XCTAssertNil(ActiveModelCard.State(model: model)?.notice)
+        model.settings.advancedMode = true
+        try renderCard(model, name: "ready")
+    }
+
+    /// The router answers from the backup while the chosen engine is stopped: the line says so from the route,
+    /// the dot is grey (the resolved engine's own health) and Start is offered.
+    func test_panel_activeModelCard_fallback() async throws {
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let model = try await twoEngineModel(proxy: proxy, llamaStopped: true)
+        XCTAssertEqual(model.activeChoice?.key, "id:\(Self.candidate)")
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertFalse(model.activeServing)
+        await model.setLocalMode(true)
+        proxy.route = ProxyServiceManager.RouteStatus(state: "fallback", engine: .ollama, model: Self.served,
+                                                      reason: "engine-down", speed: "ok", engineFailure: nil)
+        // The route poll runs in its own task; turn local mode off and on so it asks again now.
+        await model.setLocalMode(false)
+        await model.setLocalMode(true)
+        let deadline = Date().addingTimeInterval(5)
+        while model.route?.state != "fallback", Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(model.route?.state, "fallback")
+        let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(state.line, String(localized: "Using backup: \("Ollama") — \("llama.cpp") is stopped"))
+        XCTAssertEqual(state.dot, .stopped)
+        XCTAssertEqual(state.action, .start)
+
+        proxy.route = ProxyServiceManager.RouteStatus(state: "down", engine: nil, model: nil, reason: nil,
+                                                      speed: "unknown", engineFailure: nil)
+        await model.setLocalMode(false)
+        await model.setLocalMode(true)
+        let deadline2 = Date().addingTimeInterval(5)
+        while model.route?.state != "down", Date() < deadline2 { try await Task.sleep(for: .milliseconds(50)) }
+        let down = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(down.line, String(localized: "Not available — start it"))
+        XCTAssertEqual(down.action, .start)
+
+        proxy.route = ProxyServiceManager.RouteStatus(state: "fallback", engine: .ollama, model: Self.served,
+                                                      reason: "engine-down", speed: "ok", engineFailure: nil)
+        await model.setLocalMode(false)
+        await model.setLocalMode(true)
+        let deadline3 = Date().addingTimeInterval(5)
+        while model.route?.state != "fallback", Date() < deadline3 { try await Task.sleep(for: .milliseconds(50)) }
+        try renderCard(model, name: "fallback")
+    }
+
+    /// A model on two engines is one row: three installed rows give two models. Engine tags only in advanced
+    /// mode, the check on the active model.
+    func test_panel_modelList_oneRowPerModel() async throws {
+        let model = try await twoEngineModel()
+        XCTAssertEqual(model.installed.count, 3)
+        let rows = ModelChoiceRow.rows(for: model)
+        XCTAssertEqual(rows.count, 2)
+        let qwen = try XCTUnwrap(rows.first { $0.choice.key == "id:\(Self.candidate)" })
+        XCTAssertEqual(qwen.tags, ["llama.cpp", "Ollama"])
+        XCTAssertTrue(qwen.checked)
+        XCTAssertEqual(rows.filter(\.checked).count, 1)
+        model.settings.advancedMode = false
+        XCTAssertTrue(ModelChoiceRow.rows(for: model).allSatisfy { $0.tags.isEmpty }, "simple mode names no engine")
+        model.settings.advancedMode = true
+        try renderCard(model, name: "model-list")
     }
 
     /// The fallback banner shows in both modes, and only while the proxy is unavailable: the panel with it is
