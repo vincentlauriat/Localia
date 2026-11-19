@@ -235,14 +235,16 @@ final class AppModel: ObservableObject {
             log.error("cannot refresh the shell shim: \(String(describing: error), privacy: .public)")
         }
         await registry.setActive(settings.activeEngine)
+        // The model-first re-resolution runs at the end of refreshAll (it needs the engines' states and
+        // installed models), before the first router push (startRouting), so that push already carries the
+        // re-resolved model. While the active engine cannot be read it is retried by the status poll.
+        modelFirstPending = !settings.modelFirstMigrated
         await refreshAll()
-        // Needs the engines' states and installed models (refreshAll), and runs before the first router push
-        // (startRouting) so that push already carries the re-resolved model.
-        await migrateToModelFirst()
         statusTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 await self?.refreshStatus()
+                await self?.retryModelFirstMigration()
             }
         }
         startPathMonitor()
@@ -284,6 +286,7 @@ final class AppModel: ObservableObject {
         await refreshStatus()
         await refreshLaunchTarget()
         llmfitVersion = await llmfit.version()
+        if modelFirstPending { await migrateToModelFirst() }
     }
 
     /// Re-resolves the model a launch would use. Not part of the 5 s status poll: it reads the engine's model list.
@@ -1505,8 +1508,16 @@ final class AppModel: ObservableObject {
 
     private func use(_ entry: ModelEntry) async -> Bool {
         guard let row = row(for: entry), await setDefault(row) else { return false }
-        if !activeServing { await startEngine() }
+        await serveSelected(entry)
         return true
+    }
+
+    /// Makes the engine serve `entry`: started when it does not run; llama.cpp / MLX serving another model
+    /// load this one (`startEngine`: busy check, reservation and memory check, as a launch).
+    private func serveSelected(_ entry: ModelEntry) async {
+        await refreshStatus()
+        let servesIt = !entry.engine.servesOneModel || loaded.contains { $0.name == entry.name }
+        if !activeServing || !servesIt { await startEngine() }
     }
 
     /// Advanced mode "Engine" menu: `nil` is Automatic (priority order). The model is chosen again at once;
@@ -1540,8 +1551,11 @@ final class AppModel: ObservableObject {
         var moved = false
         if let key = oldKey, let same = choices.first(where: { $0.key == key }) {
             target = resolve(same)
-        } else if let first = choices.first {
+        } else if oldKey != nil || !nowEnabled.contains(oldEngine), let first = choices.first {
+            // The active model has no enabled engine left (or there was none, on an engine switched off).
             target = resolve(first)
+        } else if !choices.isEmpty {
+            // No active model on an engine that stays on: an unrelated switch moves nothing.
         } else if !enabled, !nowEnabled.contains(oldEngine) {
             notice = String(localized: "No installed model runs on the engines you chose.")
         }
@@ -1558,18 +1572,42 @@ final class AppModel: ObservableObject {
             await setActiveEngine(next)   // no model left anywhere: the empty state, on an enabled engine
         }
         if let notice { modelNotice = notice }
-        if moved, !activeServing { await startEngine() }
+        if moved, let t = target { await serveSelected(t) }
         await pushProxyConfig()
     }
 
     /// Once, on the first launch of the model-first version: the active model is re-resolved by the priority
     /// rule (no override is made from the old engine). When its engine moves, the new engine is started and
     /// the card says so once. Nothing happens when no model was chosen yet.
+    /// Set by `start()` while the one-time re-resolution has not been evaluated yet.
+    var modelFirstPending = false
+    private var modelFirstRunning = false
+
+    /// Status poll: once the active engine answers again, its models are read and the migration retried.
+    func retryModelFirstMigration() async {
+        guard modelFirstPending else { return }
+        guard !settings.modelFirstMigrated else { modelFirstPending = false; return }
+        if unreachableEngines.contains(settings.activeEngine) {
+            guard activeServing else { return }
+            await refreshInstalled()
+        }
+        await migrateToModelFirst()
+    }
+
+    /// The marker is set only once the migration could be evaluated: not while the active engine's models
+    /// cannot be read (a stopped Ollama at the first launch), so the move is not lost; it is tried again by
+    /// the status poll and at the next launch.
     func migrateToModelFirst() async {
-        guard !settings.modelFirstMigrated else { return }
-        defer { settings.modelFirstMigrated = true }
-        guard [settings.defaultModel, settings.lastModel].contains(where: { !($0 ?? "").isEmpty }),
-              let choice = activeChoice, let entry = resolvedEntry(choice) else { return }
+        guard !settings.modelFirstMigrated, !modelFirstRunning else { return }
+        let hasModel = [settings.defaultModel, settings.lastModel].contains(where: { !($0 ?? "").isEmpty })
+        if hasModel, unreachableEngines.contains(settings.activeEngine) || engineStates.isEmpty { return }
+        modelFirstRunning = true
+        defer {
+            modelFirstRunning = false
+            settings.modelFirstMigrated = true
+            modelFirstPending = false
+        }
+        guard hasModel, let choice = activeChoice, let entry = resolvedEntry(choice) else { return }
         let oldEngine = settings.activeEngine
         guard entry.engine != oldEngine, await choose(choice) else { return }
         modelNotice = String(localized: "Localia now uses \(Self.engineName(entry.engine)), which it manages itself. \(Self.engineName(oldEngine)) stays as a backup.")

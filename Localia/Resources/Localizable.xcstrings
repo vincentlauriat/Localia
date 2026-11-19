@@ -113,18 +113,18 @@
         }
       }
     },
-    "%@ is no longer used: %@ now runs on %@." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ is no longer used: %2$@ now runs on %3$@."
+    "%@ is no longer used: %@ now runs on %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ is no longer used: %2$@ now runs on %3$@."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ n'est plus utilisé : %2$@ tourne maintenant sur %3$@."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ n'est plus utilisé : %2$@ tourne maintenant sur %3$@."
           }
         }
       }
@@ -3313,18 +3313,18 @@
         }
       }
     },
-    "Localia now uses %@, which it manages itself. %@ stays as a backup." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Localia now uses %1$@, which it manages itself. %2$@ stays as a backup."
+    "Localia now uses %@, which it manages itself. %@ stays as a backup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia now uses %1$@, which it manages itself. %2$@ stays as a backup."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Localia utilise maintenant %1$@, qu'il gère lui-même. %2$@ reste en secours."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia utilise maintenant %1$@, qu'il gère lui-même. %2$@ reste en secours."
           }
         }
       }
@@ -4161,18 +4161,18 @@
         }
       }
     },
-    "No installed model runs on the engines you chose." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No installed model runs on the engines you chose."
+    "No installed model runs on the engines you chose.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No installed model runs on the engines you chose."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aucun modèle installé ne tourne sur les moteurs choisis."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle installé ne tourne sur les moteurs choisis."
           }
         }
       }
