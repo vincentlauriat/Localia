@@ -36,6 +36,25 @@ final class ModelChoicesTests: XCTestCase {
         XCTAssertFalse(r[0].hasCandidateID)
     }
 
+    func test_group_unkeyedCopy_foldsIntoKeyedGroupWithSameName() {
+        let keyed = entry(.llamaCpp, "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf", id: "Qwen/Qwen3.5-4B", "Qwen3.5 4B")
+        let unkeyed = entry(.ollama, "qwen3.5:4b", id: nil, "Qwen3.5 4B")
+        let r = ModelChoices.group([unkeyed, keyed], enabled: all)
+        XCTAssertEqual(r.count, 1)
+        XCTAssertEqual(r[0].key, "id:Qwen/Qwen3.5-4B")
+        XCTAssertEqual(r[0].engines, [.llamaCpp, .ollama])
+        XCTAssertTrue(r[0].hasCandidateID)
+    }
+
+    func test_group_unkeyedCopy_staysAlone_whenTwoKeyedGroupsShareItsName() {
+        let a = entry(.llamaCpp, "a", id: "A", "Same")
+        let b = entry(.mlx, "b", id: "B", "Same")
+        let c = entry(.ollama, "c", id: nil, "Same")
+        let r = ModelChoices.group([a, b, c], enabled: all)
+        XCTAssertEqual(r.count, 3)
+        XCTAssertEqual(Set(r.map(\.key)), ["id:A", "id:B", "name:Same"])
+    }
+
     func test_group_disabledEngineEntriesAreDropped() {
         let only = entry(.ollama, "x", id: "X", "X")
         let two1 = entry(.ollama, "y", id: "Y", "Y")

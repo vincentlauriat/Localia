@@ -47,6 +47,15 @@ public enum ModelChoices {
             if buckets[k] == nil { order.append(k) }
             buckets[k, default: []].append(entry)
         }
+        // A copy without a candidate id joins the keyed group of the same friendly name, when exactly one
+        // exists (a model pulled outside Localia next to one Localia downloaded): one row per model.
+        for k in order where k.hasPrefix("name:") {
+            guard let loose = buckets[k], let name = loose.first?.friendlyName else { continue }
+            let keyed = order.filter { $0.hasPrefix("id:") && buckets[$0]?.contains { $0.friendlyName == name } == true }
+            guard keyed.count == 1 else { continue }
+            buckets[keyed[0], default: []].append(contentsOf: loose)
+            buckets[k] = nil
+        }
         let choices: [ModelChoice] = order.compactMap { k in
             guard let bucket = buckets[k], !bucket.isEmpty else { return nil }
             let sorted = bucket.enumerated()
