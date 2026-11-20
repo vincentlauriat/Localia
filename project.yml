@@ -92,7 +92,7 @@ targets:
         PRODUCT_NAME: Localia
         PRODUCT_BUNDLE_IDENTIFIER: fr.vincentlauriat.localia
         MARKETING_VERSION: "1.4.0"
-        CURRENT_PROJECT_VERSION: "10"
+        CURRENT_PROJECT_VERSION: "11"
         SWIFT_VERSION: "6.0"
         ENABLE_HARDENED_RUNTIME: YES
         # The pre-build phase runs Scripts/fetch-llmfit.sh, which needs the network and writes
