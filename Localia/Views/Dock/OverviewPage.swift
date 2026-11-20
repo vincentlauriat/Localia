@@ -20,10 +20,17 @@ struct OverviewPage: View {
         return lines
     }
 
+    /// The diagram draws a model only once it is loaded and served; until then (stopped, starting, loads on
+    /// first use, or no model yet) the Active model card says which model is selected.
+    static func showsActiveModel(_ model: AppModel) -> Bool {
+        ActiveModelCard.State(model: model)?.dot != .ready
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if model.proxyFallbackActive { banner }
+                if Self.showsActiveModel(model) { ActiveModelCard(model: model, style: .page) }
                 OverviewFlowCard(model: model, usage: usage, navigation: navigation)
                 if usage.isEmpty {
                     Text(String(localized: "No activity yet. Usage appears here after your first session through Localia."))

@@ -2609,6 +2609,22 @@
         }
       }
     },
+    "in use": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in use"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "utilisé"
+          }
+        }
+      }
+    },
     "Install": {
       "localizations": {
         "en": {
@@ -2829,6 +2845,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Installé. En faire le modèle par défaut."
+          }
+        }
+      }
+    },
+    "Installed. Use this model.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed. Use this model."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installé. Utiliser ce modèle."
           }
         }
       }
@@ -3837,6 +3869,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Modèles présents sur ce Mac, par moteur. Le mode local utilise celui par défaut."
+          }
+        }
+      }
+    },
+    "Models on this Mac, one row per model. Use picks the one Localia runs.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models on this Mac, one row per model. Use picks the one Localia runs."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèles présents sur ce Mac, une ligne par modèle. Utiliser choisit celui que Localia fait tourner."
           }
         }
       }

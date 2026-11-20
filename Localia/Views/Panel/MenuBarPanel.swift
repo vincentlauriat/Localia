@@ -150,12 +150,12 @@ struct MenuBarPanel: View {
     private var isBusy: Bool { model.switchingLocalMode || model.busyMessage != nil }
 
     /// The model the hero describes: what a launch would use, else the selected model, else what is loaded.
-    private var heroModel: String? {
+    private static func heroModel(_ model: AppModel) -> String? {
         model.launchModel ?? model.selectedModel ?? model.loaded.first?.name
     }
 
     private var heroCard: some View {
-        let served = heroModel
+        let served = Self.heroModel(model)
         let speed = served.flatMap { model.wordsPerSecond(for: $0) }
         let number = speed.map { ($0.measured ? "" : "≈") + String(Int($0.value.rounded())) } ?? "—"
         let total = model.profile.totalRAMGB
@@ -187,7 +187,7 @@ struct MenuBarPanel: View {
                             .frame(width: 16, height: 16)
                             .frame(width: 18)
                             .accessibilityHidden(true)
-                        Text(heroLine(served))
+                        Text(Self.heroLine(model))
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(3)
                     }
@@ -217,10 +217,12 @@ struct MenuBarPanel: View {
         .card()
     }
 
-    /// `<model> · <engine>`, or the empty state when nothing is installed.
-    private func heroLine(_ served: String?) -> String {
-        guard let served else { return String(localized: "No model yet") }
-        return "\(model.displayName(for: served)) · \(AppModel.engineName(model.settings.activeEngine))"
+    /// The model's friendly name, the one the Active model card shows (one name for one model; the card's line
+    /// says which engine runs it), or the empty state when nothing is installed.
+    static func heroLine(_ model: AppModel) -> String {
+        guard let served = heroModel(model) else { return String(localized: "No model yet") }
+        return model.activeChoice.flatMap { c in c.entries.contains { $0.name == served } ? c.displayName : nil }
+            ?? model.friendlyName(for: served)
     }
 
     /// "✈︎ Local mode" while local mode is on, a spinner while switching or loading, nothing otherwise.
@@ -383,7 +385,7 @@ struct MenuBarPanel: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(s.folder?.lastPathComponent ?? String(localized: "Unknown folder"))
                                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(verbatim: [s.tool, AppModel.engineName(s.engine), model.displayName(for: s.model)]
+                            Text(verbatim: [s.tool, AppModel.engineName(s.engine), model.friendlyName(for: s.model)]
                                 .compactMap { $0 }.joined(separator: " · "))
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                                 .lineLimit(1).truncationMode(.middle)
@@ -408,12 +410,12 @@ struct MenuBarPanel: View {
     private var launchSubtitle: String {
         guard model.isLocalModeOn else { return String(localized: "Cloud") }
         guard let m = model.launchModel else { return String(localized: "Local") }
-        return String(localized: "Local · \(model.displayName(for: m))")
+        return String(localized: "Local · \(model.friendlyName(for: m))")
     }
 
     private var chatSubtitle: String {
         guard let m = model.chatModel(for: model.settings.activeEngine) else { return String(localized: "No local model") }
-        return model.displayName(for: m)
+        return model.friendlyName(for: m)
     }
 
     var localModeBinding: Binding<Bool> {

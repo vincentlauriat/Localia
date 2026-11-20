@@ -22,13 +22,14 @@ final class DockSnapshotTests: XCTestCase {
         for s in suites { UserDefaults().removePersistentDomain(forName: s) }
     }
 
-    private func makeModel(advanced: Bool, proxy: any ProxyServiceControlling = InertProxyService()) -> AppModel {
+    private func makeModel(advanced: Bool, proxy: any ProxyServiceControlling = InertProxyService(),
+                           loaded: Set<String> = []) -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         settings.advancedMode = advanced
-        let engine = FakeEngine(installed: ["gemma3:12b"], loaded: [])
+        let engine = FakeEngine(installed: ["gemma3:12b"], loaded: loaded)
         let deps = AppDependencies(
             settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
@@ -119,6 +120,34 @@ final class DockSnapshotTests: XCTestCase {
         let paused = makeModel(advanced: false, proxy: FakeProxyService(state: .unavailable(reason: "x")))
         await paused.ensureProxy()
         try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
+    }
+
+    /// The selected model shows on the Overview while it is not loaded (the diagram only draws loaded models):
+    /// its friendly name, grey, "loads on first use". Once it is loaded and served the diagram shows it and the
+    /// card steps aside. Simple mode names no engine.
+    func test_overview_showsSelectedModel_whenNotLoaded() async throws {
+        let usage = UsageModel(reader: FakeUsageReader())
+        await usage.refresh()
+        for advanced in [true, false] {
+            let model = makeModel(advanced: advanced)
+            await model.startEngine()
+            await model.refreshAll()
+            XCTAssertTrue(model.loaded.isEmpty)
+            let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+            XCTAssertEqual(state.title, model.friendlyName(for: "gemma3:12b"))
+            XCTAssertEqual(state.dot, .stopped)
+            XCTAssertEqual(state.line, advanced ? String(localized: "Ready on \("Ollama") · loads on first use")
+                                                : String(localized: "Ready · loads on first use"))
+            XCTAssertTrue(OverviewPage.showsActiveModel(model))
+            try snapshot(OverviewPage(model: model, usage: usage),
+                         named: "dock-overview-not-loaded-\(advanced ? "advanced" : "simple")",
+                         size: CGSize(width: 760, height: 620))
+        }
+        let ready = makeModel(advanced: true, loaded: ["gemma3:12b"])
+        await ready.startEngine()
+        await ready.refreshAll()
+        XCTAssertEqual(ActiveModelCard.State(model: ready)?.dot, .ready)
+        XCTAssertFalse(OverviewPage.showsActiveModel(ready))
     }
 
     // MARK: Sessions page

@@ -89,19 +89,22 @@ final class ModelsSnapshotTests: XCTestCase {
         hf("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", mem: 21.4, tps: 9, verdict: nil),
     ]
 
-    private func makeModel(engine: FakeEngine, hf: FakeHFCatalog, mlxRepos: FakeMLXRepos? = nil) throws -> AppModel {
+    private func makeModel(engine: FakeEngine, hf: FakeHFCatalog, mlxRepos: FakeMLXRepos? = nil,
+                           extraEngines: [FakeEngine] = [], configure: (SettingsStore) -> Void = { _ in }) throws -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         settings.modelIDs = ["gemma4:e4b-localia": "google/gemma-4-E4B-it",
-                             "qwen2.5-coder:7b-localia": "Qwen/Qwen2.5-Coder-7B-Instruct"]
+                             "qwen2.5-coder:7b-localia": "Qwen/Qwen2.5-Coder-7B-Instruct",
+                             Self.qwenGGUF: "Qwen/Qwen2.5-Coder-7B-Instruct"]
         settings.defaultModel = "gemma4:e4b-localia"
         if mlxRepos != nil { settings.activeEngine = .mlx }
+        configure(settings)
         settings.measurements = Measurements(tps: ["mistralai/Ministral-8B-Instruct-2410": 23],
                                              memoryGB: ["mistralai/Ministral-8B-Instruct-2410": 9.1])
         let deps = AppDependencies(
-            settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
+            settings: settings, engines: [engine] + extraEngines, registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
             speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { [] }),
@@ -225,6 +228,61 @@ final class ModelsSnapshotTests: XCTestCase {
             }
         }
         await engine.releasePulls()
+    }
+
+    /// The llama.cpp copy of the installed Qwen2.5 Coder (same candidate id as the Ollama one).
+    private static let qwenGGUF = "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+
+    /// Installed lists one row per model: the Qwen on Ollama and llama.cpp is one row with both engines as
+    /// tags and one detail line per copy (priority order); "Use" chooses the model, which resolves llama.cpp
+    /// and starts it. The tab counts models, not copies, and Discover's "Use" finds the same model.
+    func test_installedTab_groupsByModel() async throws {
+        let ollama = FakeEngine(installed: ["gemma4:e4b-localia", "qwen2.5-coder:7b-localia"])
+        let llama = FakeEngine(id: .llamaCpp, installed: [Self.qwenGGUF])
+        let model = try makeModel(engine: ollama, hf: FakeHFCatalog(offline: true), extraEngines: [llama]) {
+            $0.advancedMode = true
+            $0.activeEngine = .ollama
+        }
+        await model.refreshAll()
+        XCTAssertNil(model.alert)
+        XCTAssertEqual(model.installed.count, 3)
+        XCTAssertEqual(model.itemCount(for: .installed), 2)
+
+        let groups = InstalledPane.groups(for: model)
+        XCTAssertEqual(groups.count, 2)
+        let qwen = try XCTUnwrap(groups.first { $0.row.choice.key == "id:Qwen/Qwen2.5-Coder-7B-Instruct" })
+        XCTAssertEqual(qwen.entries.map(\.engine), [.llamaCpp, .ollama])
+        XCTAssertEqual(qwen.entries.map(\.name), [Self.qwenGGUF, "qwen2.5-coder:7b-localia"])
+        XCTAssertEqual(qwen.row.tags, ["llama.cpp", "Ollama"])
+        XCTAssertFalse(qwen.row.checked)
+        XCTAssertEqual(model.choice(forCandidateID: "Qwen/Qwen2.5-Coder-7B-Instruct")?.key, qwen.row.choice.key)
+
+        let chose = await model.choose(qwen.row.choice)
+        XCTAssertTrue(chose)
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        let after = InstalledPane.groups(for: model)
+        XCTAssertEqual(after.filter(\.row.checked).map(\.row.choice.key), [qwen.row.choice.key])
+        let card = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(card.title, qwen.row.choice.displayName)
+
+        // Simple mode (the full catalog): one row per model still, no engine tag.
+        model.settings.advancedMode = false
+        XCTAssertTrue(InstalledPane.groups(for: model).allSatisfy { $0.row.tags.isEmpty })
+        model.settings.advancedMode = true
+
+        let dir = outputDir
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let lang = Bundle.main.preferredLocalizations.first ?? "en"
+        model.modelsTab = ModelsSection.installed.rawValue
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            for (name, size) in [("installed-grouped", ModelsWindow.defaultSize), ("installed-grouped-min", ModelsWindow.minSize)] {
+                let url = dir.appendingPathComponent("models-\(name)-\(suffix)-\(lang).png")
+                let rendered = await render(ModelsWindow(model: model), size: size, appearance: appearance, to: url)
+                XCTAssertEqual(rendered.width, size.width, url.lastPathComponent)
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                XCTAssertGreaterThan(bytes, 30_000, url.lastPathComponent)
+            }
+        }
     }
 
     /// Old tab indices still open the same places, and the new entries have their own.

@@ -193,6 +193,9 @@ final class PanelSnapshotTests: XCTestCase {
         XCTAssertEqual(state.action, .stop)
         XCTAssertEqual(state.engineMenu, [.llamaCpp, .ollama])
         XCTAssertNil(state.override)
+        // One name for one model: the hero says the card's friendly name, not the served file name, and leaves
+        // the engine to the card's line.
+        XCTAssertEqual(MenuBarPanel.heroLine(model), state.title)
 
         // Simple mode: the same card never names an engine.
         model.settings.advancedMode = false
