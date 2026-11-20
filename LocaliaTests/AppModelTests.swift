@@ -1676,6 +1676,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(rows.map { model.friendlyName(for: $0.name) }, model.modelChoices.map(\.displayName))
     }
 
+    /// Simple mode's chooser goes through `choose`: a click on a model whose engine (llama.cpp) is stopped
+    /// starts it, so a near-novice never lands on a stopped engine.
+    func test_simpleChooser_click_startsTheResolvedEngine() async throws {
+        let (model, ollama, llama) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"]) { $0.lastModel = "plain" }
+        try await ollama.startServing()
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let row = try XCTUnwrap(model.simpleModelChoices.first { $0.name == "q-gguf" })
+        await model.chooseSimple(row)
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
+        let starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+        XCTAssertTrue(model.isChosen(row))
+    }
+
+    /// The check follows the active model's group, even when it runs on another copy than the row shown.
+    func test_simpleChooser_checksTheActiveGroup_onAnotherCopy() async throws {
+        let (model, _, _) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"]) { $0.lastModel = "q-localia" }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let row = try XCTUnwrap(model.simpleModelChoices.first { $0.name == "q-gguf" })
+        XCTAssertTrue(model.isChosen(row), "Ollama serves this model: its row is checked")
+        let plain = try XCTUnwrap(model.simpleModelChoices.first { $0.name == "plain" })
+        XCTAssertFalse(model.isChosen(plain))
+    }
+
     /// Ollama is not running when the model-first version first starts (Vincent's update): its models cannot be
     /// read, but the stored model's candidate id finds its llama.cpp copy, so Localia moves there at once,
     /// starts llama.cpp and says so, instead of staying on a stopped Ollama with "No model yet".

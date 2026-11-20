@@ -272,6 +272,22 @@ extension AppModel {
         }
     }
 
+    /// Simple mode's chooser: a click picks the row's model through `choose` (its engine started).
+    func chooseSimple(_ row: InstalledRow) async {
+        guard let choice = choice(containing: row) else { return }
+        await choose(choice)
+    }
+
+    /// Whether the row's model is the active one, whichever of its copies runs it.
+    func isChosen(_ row: InstalledRow) -> Bool {
+        guard let key = activeChoice?.key else { return false }
+        return choice(containing: row)?.key == key
+    }
+
+    private func choice(containing row: InstalledRow) -> ModelChoice? {
+        modelChoices.first { $0.entries.contains { $0.engine == row.engine && $0.name == row.name } }
+    }
+
     /// The three models of the simple Models window, from the current recommendation.
     var simplePicks: SimplePicks { recommendation.map(SimplePicks.choose) ?? SimplePicks() }
 }
