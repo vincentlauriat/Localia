@@ -816,7 +816,11 @@ pub async fn handle(state: Arc<AppState>, req: Request<Body>, path: ProxyPath) -
     let body = axum::body::to_bytes(body, usize::MAX)
         .await
         .unwrap_or_default();
-    let log_content = state.config.read().unwrap_or_else(|e| e.into_inner()).log_content;
+    let log_content = state
+        .config
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .log_content;
     let ctx = Ctx {
         method: parts.method,
         headers: parts.headers,
@@ -912,7 +916,7 @@ async fn pinned(ctx: Ctx, k: EngineKind) -> Response<Body> {
         context_tokens: 0,
     };
     match forward(&ctx, k, body).await {
-        Ok(resp) => passthrough(ctx, resp, d, row, target, false),
+        Ok(resp) => passthrough(ctx, resp, d, row, target, false, None),
         Err(e) => {
             let msg = match e {
                 Unreached::Refused(m) | Unreached::Failed(m) => m,
@@ -993,6 +997,7 @@ fn passthrough(
     row: Option<Row>,
     target: TargetSpec,
     gateway: bool,
+    echo: Option<String>,
 ) -> Response<Body> {
     let code = resp.status().as_u16();
     let ok = (200..300).contains(&code);
@@ -1019,9 +1024,16 @@ fn passthrough(
     } else {
         sink
     };
+    let echo = echo.filter(|_| ok);
     tokio::spawn(async move {
         let mut first_content = None;
         let mut interrupted: Option<String> = None;
+        // Streamed: the lines carrying the model are rewritten as they pass. Not streamed: the whole object.
+        let mut lines = echo.clone().filter(|_| streamed).map(LineEcho::new);
+        let mut whole_body = echo
+            .clone()
+            .filter(|_| !streamed)
+            .map(|m| (m, Vec::<u8>::new()));
         loop {
             tokio::select! {
                 biased;
@@ -1031,6 +1043,14 @@ fn passthrough(
                 }
                 c = resp.chunk() => match c {
                     Ok(Some(b)) => {
+                        if let Some((_, buf)) = &mut whole_body {
+                            buf.extend_from_slice(&b);
+                            continue;
+                        }
+                        let b = match &mut lines {
+                            Some(l) => l.push(&b),
+                            None => b,
+                        };
                         let sent = sink.send(b).await;
                         if first_content.is_none() && sink.saw_content() {
                             first_content = Some(sink.clock.now());
@@ -1049,6 +1069,12 @@ fn passthrough(
         }
         // Dropping the answer cancels the engine's generation.
         drop(resp);
+        if let Some((model, buf)) = whole_body {
+            sink.send(echo_model(buf, &model)).await;
+        }
+        if let Some(l) = &mut lines {
+            sink.send(l.finish()).await;
+        }
         if let (Some(reason), true, true, Some(d)) = (&interrupted, ok, streamed, d) {
             // The client's stream must not read as finished: it ends with the dialect's error event.
             let lead = sink.line_start();
@@ -1109,6 +1135,132 @@ fn passthrough(
         ctx.save(row, out);
     });
     head(code, &headers, body)
+}
+
+/// The byte range (quotes included) of the string value of a `model` key in the JSON `b`: at the top level,
+/// or (when `nested`) inside a top-level `message` or `response` object (Anthropic's `message_start`, the
+/// Responses events). `None` when `b` is not valid JSON or has no such string.
+fn model_span(b: &[u8], nested: bool) -> Option<std::ops::Range<usize>> {
+    serde_json::from_slice::<serde::de::IgnoredAny>(b).ok()?;
+    // One frame per open container: whether it is an object, and the key its current value sits under.
+    struct Frame {
+        object: bool,
+        key: Option<Vec<u8>>,
+    }
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut expect_key = false;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'{' | b'[' => {
+                let object = b[i] == b'{';
+                stack.push(Frame { object, key: None });
+                expect_key = object;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                expect_key = false;
+            }
+            b',' => expect_key = stack.last().is_some_and(|f| f.object),
+            b'"' => {
+                let start = i;
+                i += 1;
+                while b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                if expect_key {
+                    stack.last_mut()?.key = Some(b[start + 1..i].to_vec());
+                    expect_key = false;
+                } else if let Some((top, parents)) = stack.split_last() {
+                    let model = top.object && top.key.as_deref() == Some(b"model");
+                    let parent_ok = match parents {
+                        [] => true,
+                        [p] => {
+                            nested
+                                && p.object
+                                && matches!(p.key.as_deref(), Some(b"message" | b"response"))
+                        }
+                        _ => false,
+                    };
+                    if model && parent_ok {
+                        return Some(start..i + 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `body` with the string value of its top-level `model` replaced by `model`, every other byte kept; unchanged
+/// when it is not a JSON object with such a key.
+fn echo_model(body: Vec<u8>, model: &str) -> Bytes {
+    match model_span(&body, false) {
+        Some(r) => splice(&body, r, model),
+        None => Bytes::from(body),
+    }
+}
+
+fn splice(body: &[u8], r: std::ops::Range<usize>, model: &str) -> Bytes {
+    let mut out = Vec::with_capacity(body.len() + model.len());
+    out.extend_from_slice(&body[..r.start]);
+    out.extend_from_slice(json!(model).to_string().as_bytes());
+    out.extend_from_slice(&body[r.end..]);
+    Bytes::from(out)
+}
+
+/// Rewrites, in a streamed passthrough, the `data:` lines that carry the engine's model (a chat chunk's
+/// `model`, Anthropic's `message_start.message.model`, the Responses events' `response.model`). Every other
+/// byte passes as it came; a line is held only until its newline arrives.
+struct LineEcho {
+    model: String,
+    partial: Vec<u8>,
+}
+
+impl LineEcho {
+    fn new(model: String) -> Self {
+        LineEcho {
+            model,
+            partial: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, b: &[u8]) -> Bytes {
+        let mut out = Vec::with_capacity(b.len() + self.partial.len());
+        let mut rest = b;
+        while let Some(i) = rest.iter().position(|c| *c == b'\n') {
+            self.partial.extend_from_slice(&rest[..=i]);
+            rest = &rest[i + 1..];
+            let line = std::mem::take(&mut self.partial);
+            out.extend_from_slice(&self.rewrite(line));
+        }
+        self.partial.extend_from_slice(rest);
+        Bytes::from(out)
+    }
+
+    /// What is still held when the stream ends.
+    fn finish(&mut self) -> Bytes {
+        Bytes::from(std::mem::take(&mut self.partial))
+    }
+
+    fn rewrite(&self, line: Vec<u8>) -> Vec<u8> {
+        let Some(data) = line.strip_prefix(b"data:") else {
+            return line;
+        };
+        if !data.windows(7).any(|w| w == b"\"model\"") {
+            return line;
+        }
+        let end = line
+            .iter()
+            .rposition(|c| *c != b'\n' && *c != b'\r')
+            .map_or(0, |i| i + 1);
+        match model_span(&line[5..end], true) {
+            Some(r) => splice(&line, r.start + 5..r.end + 5, &self.model).to_vec(),
+            None => line,
+        }
+    }
 }
 
 /// The event that ends a passthrough stream the engine broke.
@@ -1180,7 +1332,7 @@ async fn pinned_mlx(ctx: Ctx) -> Response<Body> {
     );
     ctx.expect(row.clone());
     let served = match d {
-        Dialect::Chat => mlx_chat(ctx, &target, row).await,
+        Dialect::Chat => mlx_chat(ctx, &target, row, false).await,
         _ => translate(ctx, d, &target, row).await,
     };
     match served {
@@ -1197,7 +1349,14 @@ enum Served {
 
 /// Chat completions passed through to `mlx_lm.server` with `model: default_model`, which is the only name it
 /// knows its loaded model by (any other it tries to load as a repo), as the Swift gateway did.
-async fn mlx_chat(ctx: Ctx, target: &TargetSpec, row: Option<Row>) -> Served {
+/// `echo_client_model`: routed requests (a tool's neutral `localia`) get their model named back; the pinned 1.4
+/// path keeps the engine's bytes.
+async fn mlx_chat(
+    ctx: Ctx,
+    target: &TargetSpec,
+    row: Option<Row>,
+    echo_client_model: bool,
+) -> Served {
     let Some(mut obj) = ctx
         .json()
         .filter(|o| o.get("messages").is_some_and(Value::is_array))
@@ -1209,6 +1368,12 @@ async fn mlx_chat(ctx: Ctx, target: &TargetSpec, row: Option<Row>) -> Served {
         );
         return Served::Answer(answer(ctx, 400, body, row));
     };
+    let echo = obj
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|m| !m.is_empty())
+        .map(str::to_owned)
+        .filter(|_| echo_client_model);
     obj.insert("model".into(), json!(MLX_MODEL));
     let body = serde_json::to_vec(&Value::Object(obj)).unwrap_or_default();
     let mut resp = match post_json(&ctx, EngineKind::Mlx, "/v1/chat/completions", body).await {
@@ -1255,6 +1420,7 @@ async fn mlx_chat(ctx: Ctx, target: &TargetSpec, row: Option<Row>) -> Served {
         row,
         target.clone(),
         true,
+        echo,
     ))
 }
 
@@ -1576,7 +1742,7 @@ async fn routed(
         let row = ctx.row(Some(d), t.engine, Some(t.model.clone()), Some(dec.reason));
         ctx.expect(row.clone());
         let served = match (t.engine, d) {
-            (EngineKind::Mlx, Dialect::Chat) => mlx_chat(ctx, &t, row).await,
+            (EngineKind::Mlx, Dialect::Chat) => mlx_chat(ctx, &t, row, true).await,
             (EngineKind::Mlx, _) => translate(ctx, d, &t, row).await,
             _ => routed_passthrough(ctx, d, &t, row).await,
         };
@@ -1616,6 +1782,12 @@ async fn routed_passthrough(ctx: Ctx, d: Dialect, t: &TargetSpec, row: Option<Ro
         ctx.take_pending();
         return Served::Answer(answer(ctx, 400, body, None));
     };
+    // The tool asked for a neutral name (`localia`): its answer names that, not the engine's model.
+    let echo = obj
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|m| !m.is_empty())
+        .map(str::to_owned);
     obj.insert("model".into(), json!(t.model));
     let mut body = serde_json::to_vec(&Value::Object(obj)).unwrap_or_default();
     if d == Dialect::Chat {
@@ -1624,7 +1796,7 @@ async fn routed_passthrough(ctx: Ctx, d: Dialect, t: &TargetSpec, row: Option<Ro
         }
     }
     match forward(&ctx, t.engine, Bytes::from(body)).await {
-        Ok(resp) => Served::Answer(passthrough(ctx, resp, Some(d), row, t.clone(), false)),
+        Ok(resp) => Served::Answer(passthrough(ctx, resp, Some(d), row, t.clone(), false, echo)),
         Err(Unreached::Refused(m)) => Served::Refused(Box::new(ctx), row, m),
         Err(Unreached::Failed(m)) => Served::Answer(refused_answer(ctx, t.engine, Some(d), row, m)),
     }

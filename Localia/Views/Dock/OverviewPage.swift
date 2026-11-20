@@ -24,6 +24,8 @@ struct OverviewPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if model.proxyFallbackActive { banner }
+                // The selected model, always: the diagram draws a model only once it is loaded.
+                ActiveModelCard(model: model, style: .page)
                 OverviewFlowCard(model: model, usage: usage, navigation: navigation)
                 if usage.isEmpty {
                     Text(String(localized: "No activity yet. Usage appears here after your first session through Localia."))

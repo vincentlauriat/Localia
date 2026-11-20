@@ -8,6 +8,9 @@ public enum EngineID: String, Sendable, Codable, CaseIterable {
 
     /// The engine's `/v1` serves the OpenAI Responses API (Codex). `mlx_lm.server` has only chat completions.
     public var servesResponsesAPI: Bool { self != .mlx }
+
+    /// Fixed engine priority used to resolve which engine serves a model.
+    public static let priority: [EngineID] = [.llamaCpp, .mlx, .ollama]
 }
 
 public enum InstallState: Sendable, Equatable {

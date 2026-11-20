@@ -11,7 +11,7 @@ struct SettingsView: View {
     /// The Advanced tab's sections, in order: this array is what the body renders. Engines, proxy status and
     /// routes live on `EnginesPage`.
     enum AdvancedSection: String, CaseIterable, Identifiable {
-        case general, localMode, recommendations, proxyLog, beforeDeleting, claudeCode
+        case general, engines, localMode, recommendations, proxyLog, beforeDeleting, claudeCode
         var id: String { rawValue }
     }
     static let sections: [AdvancedSection] = AdvancedSection.allCases
@@ -30,20 +30,51 @@ struct SettingsView: View {
         }
     }
 
+    /// One switch per installed engine, in priority order. Switching an engine off re-resolves the active
+    /// model; a refusal (llama.cpp busy) comes back as an `AppModel` alert, shown like the other actions' alerts.
+    private var enginesSection: some View {
+        let installed = Set(model.engineStates.compactMap { id, state -> EngineID? in
+            if case .installed = state { return id }
+            return nil
+        })
+        let rows = EngineToggleRow.rows(installed: installed, enabled: model.enabledEngines)
+        return Section {
+            ForEach(rows) { row in
+                Toggle(isOn: Binding(
+                    get: { row.isOn },
+                    set: { on in
+                        Task {
+                            await model.setEngine(row.id, enabled: on)
+                            if model.alert != nil { AlertPresenter.present(model) }
+                        }
+                    })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.name)
+                        Text(row.role).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(row.isLocked || model.switchingEngines || model.selectingModel != nil)
+            }
+        } header: {
+            Text(String(localized: "Engines Localia uses"))
+        } footer: {
+            if rows.contains(where: \.isLocked) {
+                Text(String(localized: "Localia needs at least one engine."))
+            }
+        }
+    }
+
     @ViewBuilder private func section(for section: AdvancedSection) -> some View {
         switch section {
         case .general:
             Section(String(localized: "General")) {
-                Picker(String(localized: "Engine"), selection: Binding(
-                    get: { settings.activeEngine },
-                    set: { id in Task { await model.setActiveEngine(id) } })) {
-                    ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
-                }
                 Picker(String(localized: "Terminal"), selection: Binding(
                     get: { settings.terminalApp }, set: { settings.terminalApp = $0 })) {
                     ForEach(terminals, id: \.self) { Text(Self.terminalName($0)).tag($0) }
                 }
             }
+        case .engines:
+            enginesSection
         case .localMode:
             Section(String(localized: "Local mode")) {
                 // Where local mode applies is set in the General tab (SettingsRoot), with its confirmation.
@@ -292,6 +323,26 @@ struct ProxyEraseSheet: View {
                 outcome = .failed(error.localizedDescription)
             }
             working = false
+        }
+    }
+}
+
+/// A row of Settings "Engines Localia uses": installed engines only, in `EngineID.priority` order, the last
+/// enabled one locked so Localia always keeps an engine.
+struct EngineToggleRow: Identifiable, Equatable {
+    let id: EngineID
+    let name: String
+    let role: String
+    let isOn: Bool
+    let isLocked: Bool
+
+    static func rows(installed: Set<EngineID>, enabled: Set<EngineID>) -> [EngineToggleRow] {
+        let on = enabled.intersection(installed)
+        return EngineID.priority.filter(installed.contains).map { id in
+            EngineToggleRow(
+                id: id, name: AppModel.engineName(id),
+                role: id == .ollama ? String(localized: "External app") : String(localized: "Managed by Localia"),
+                isOn: on.contains(id), isLocked: on == [id])
         }
     }
 }

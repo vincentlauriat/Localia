@@ -172,8 +172,9 @@ final class SimpleModeAppTests: XCTestCase {
             $0.modelIDs["qwen3-coder:30b-localia"] = Self.servedID
         }
         await m.refreshAll()
-        // The -localia variant hides its base tag already; the two left have different human names.
-        XCTAssertEqual(m.simpleModelChoices.map { m.friendlyName(for: $0.name) }, ["Qwen3 Coder 30B A3B", "Gemma 3 12B"])
+        // The -localia variant hides its base tag already; the two left have different human names (listed
+        // in name order, as the model choices are).
+        XCTAssertEqual(m.simpleModelChoices.map { m.friendlyName(for: $0.name) }, ["Gemma 3 12B", "Qwen3 Coder 30B A3B"])
     }
 
     // MARK: First run

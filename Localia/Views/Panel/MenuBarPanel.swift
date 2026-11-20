@@ -3,8 +3,8 @@ import LocaliaCore
 import SwiftUI
 
 /// The menu-bar panel (`MenuBarExtra` in `.window` style), laid out like Juicy's: a hero card (model speed,
-/// free memory, local-mode badge, memory bar), four collapsible cards (installed models, memory-hungry apps,
-/// running sessions, engine), then a list card with the actions and the local-mode switch. Every action goes
+/// free memory, local-mode badge, memory bar), the Active model card, three collapsible cards (models,
+/// memory-hungry apps, running sessions), then a list card with the actions and the local-mode switch. Every action goes
 /// through `AppModel`.
 struct MenuBarPanel: View {
     @ObservedObject var model: AppModel
@@ -18,7 +18,6 @@ struct MenuBarPanel: View {
     @AppStorage private var modelsOpen: Bool
     @AppStorage private var appsOpen: Bool
     @AppStorage private var sessionsOpen: Bool
-    @AppStorage private var engineOpen: Bool
     /// The tool whose inline folder list is open (`claudeCode`, or a local tool's id): not persisted, it is
     /// a submenu.
     @State private var launchOpen: String?
@@ -36,7 +35,6 @@ struct MenuBarPanel: View {
         static let models = "panel.modelsOpen"
         static let apps = "panel.appsOpen"
         static let sessions = "panel.sessionsOpen"
-        static let engine = "panel.engineOpen"
     }
 
     init(model: AppModel, windows: WindowManager, updater: Updater, scrolls: Bool = true,
@@ -49,7 +47,6 @@ struct MenuBarPanel: View {
         _modelsOpen = AppStorage(wrappedValue: false, Key.models, store: store)
         _appsOpen = AppStorage(wrappedValue: false, Key.apps, store: store)
         _sessionsOpen = AppStorage(wrappedValue: false, Key.sessions, store: store)
-        _engineOpen = AppStorage(wrappedValue: false, Key.engine, store: store)
         _launchOpen = State(initialValue: launchOpen)
         _chooserOpen = State(initialValue: chooserOpen)
     }
@@ -74,12 +71,13 @@ struct MenuBarPanel: View {
     /// Everything that changes how tall the panel wants to be. Text that merely gets longer is absorbed
     /// by the scroll view.
     private var layoutSignature: String {
-        let flags = [modelsOpen, appsOpen, sessionsOpen, engineOpen, model.isLocalModeOn, isBusy,
-                     model.launchModel != nil] + model.localTools.map { $0.path != nil }
-        let counts = [model.installed.count, model.heavyApps.count, model.runningSessions.count,
+        let flags = [modelsOpen, appsOpen, sessionsOpen, model.isLocalModeOn, isBusy,
+                     model.launchModel != nil, model.modelNotice != nil, model.selectingModel != nil,
+                     model.activeChoice != nil] + model.localTools.map { $0.path != nil }
+        let counts = [model.modelChoices.count, model.heavyApps.count, model.runningSessions.count,
                       model.recentFolders().count, model.localTools.count]
         let simple = model.settings.advancedMode ? "" : "\(model.simpleStatus.kind)|\(chooserOpen)|\(model.simpleModelChoices.count)"
-        return "\(flags)|\(counts)|\(launchOpen ?? "")|\(model.settings.advancedMode)|\(simple)|\(model.proxyFallbackActive)"
+        return "\(flags)|\(counts)|\(launchOpen ?? "")|\(model.settings.advancedMode)|\(simple)|\(model.proxyFallbackActive)|\(model.route?.state ?? "")"
     }
 
     // MARK: Body
@@ -110,10 +108,10 @@ struct MenuBarPanel: View {
                 proxyBanner
                 heroCard
                 localModeCard
+                ActiveModelCard(model: model, style: .panel, onResult: presentAlertIfNeeded)
                 modelsCard
                 appsCard
                 sessionsCard
-                engineCard
                 listCard
             }
             .padding(10)
@@ -152,12 +150,12 @@ struct MenuBarPanel: View {
     private var isBusy: Bool { model.switchingLocalMode || model.busyMessage != nil }
 
     /// The model the hero describes: what a launch would use, else the selected model, else what is loaded.
-    private var heroModel: String? {
+    private static func heroModel(_ model: AppModel) -> String? {
         model.launchModel ?? model.selectedModel ?? model.loaded.first?.name
     }
 
     private var heroCard: some View {
-        let served = heroModel
+        let served = Self.heroModel(model)
         let speed = served.flatMap { model.wordsPerSecond(for: $0) }
         let number = speed.map { ($0.measured ? "" : "≈") + String(Int($0.value.rounded())) } ?? "—"
         let total = model.profile.totalRAMGB
@@ -189,7 +187,7 @@ struct MenuBarPanel: View {
                             .frame(width: 16, height: 16)
                             .frame(width: 18)
                             .accessibilityHidden(true)
-                        Text(heroLine(served))
+                        Text(Self.heroLine(model))
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(3)
                     }
@@ -219,10 +217,12 @@ struct MenuBarPanel: View {
         .card()
     }
 
-    /// `<model> · <engine>`, or the empty state when nothing is installed.
-    private func heroLine(_ served: String?) -> String {
-        guard let served else { return String(localized: "No model yet") }
-        return "\(model.displayName(for: served)) · \(AppModel.engineName(model.settings.activeEngine))"
+    /// The model's friendly name, the one the Active model card shows (one name for one model; the card's line
+    /// says which engine runs it), or the empty state when nothing is installed.
+    static func heroLine(_ model: AppModel) -> String {
+        guard let served = heroModel(model) else { return String(localized: "No model yet") }
+        return model.activeChoice.flatMap { c in c.entries.contains { $0.name == served } ? c.displayName : nil }
+            ?? model.friendlyName(for: served)
     }
 
     /// "✈︎ Local mode" while local mode is on, a spinner while switching or loading, nothing otherwise.
@@ -253,23 +253,23 @@ struct MenuBarPanel: View {
 
     // MARK: Collapsible cards
 
-    private var engineName: String { AppModel.engineName(model.settings.activeEngine) }
-
-    /// Collapsed: the selected model's name. Open: the number of models (the names are listed).
+    /// Collapsed: the active model's name. Open: the number of models (the names are listed).
     private var modelsCardValue: String? {
-        guard !model.installed.isEmpty else { return nil }
-        if !modelsOpen, let m = model.selectedModel { return model.displayName(for: m) }
-        return String(model.installed.count)
+        let choices = model.modelChoices
+        guard !choices.isEmpty else { return nil }
+        if !modelsOpen, let active = model.activeChoice { return active.displayName }
+        return String(choices.count)
     }
 
     private var modelsCard: some View {
-        DisclosureCard(title: String(localized: "Models"), icon: "square.stack.3d.up.fill",
-                       iconColor: Theme.blue, value: modelsCardValue,
-                       expanded: $modelsOpen) {
-            if model.installed.isEmpty {
+        let rows = ModelChoiceRow.rows(for: model)
+        return DisclosureCard(title: String(localized: "Models"), icon: "square.stack.3d.up.fill",
+                              iconColor: Theme.blue, value: modelsCardValue,
+                              expanded: $modelsOpen) {
+            if rows.isEmpty {
                 emptyLine(String(localized: "No local model"))
             } else {
-                ForEach(Array(model.installed.enumerated()), id: \.element.id) { i, row in
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
                     if i > 0 { Divider().opacity(0.4) }
                     modelRow(row)
                 }
@@ -294,42 +294,46 @@ struct MenuBarPanel: View {
         }
     }
 
-    /// One installed model: a click makes it the model launches and chat use. Teal check: selected; green
-    /// dot: in memory.
-    private func modelRow(_ row: InstalledRow) -> some View {
-        let selected = model.isSelected(row)
-        let name = model.displayName(for: row.name)
+    /// One model, whatever the engines it is on: a click chooses it (its engine is resolved and started).
+    /// Teal check: the active model; engine tags in advanced mode only.
+    private func modelRow(_ row: ModelChoiceRow) -> some View {
+        let name = row.choice.displayName
         return Button {
             Task {
-                await model.setDefault(row)
+                await model.choose(row.choice)
                 presentAlertIfNeeded()
             }
         } label: {
             HStack(spacing: 8) {
                 ZStack {
-                    if model.selectingModel == row.id {
+                    if let id = row.rowID, model.selectingModel == id {
                         ProgressView().controlSize(.mini)
-                    } else if selected {
+                    } else if row.checked {
                         Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
                     }
                 }
                 .frame(width: 14)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.displayName)
-                        .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(selected ? Theme.accent : Color.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 12, weight: row.checked ? .semibold : .medium))
+                        .foregroundStyle(row.checked ? Theme.accent : Color.primary)
                         .lineLimit(1).truncationMode(.middle)
-                    HStack(spacing: 4) {
-                        if row.loaded {
-                            Circle().fill(Theme.local).frame(width: 5, height: 5)
+                    if !row.tags.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(row.tags, id: \.self) { tag in
+                                Text(verbatim: tag)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(Theme.track.opacity(0.6), in: Capsule())
+                            }
                         }
-                        Text(row.loaded ? "\(AppModel.engineName(row.engine)) · \(String(localized: "loaded"))"
-                                        : AppModel.engineName(row.engine))
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
-                Text(Fmt.gb(row.sizeGB)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                if let size = row.sizeGB {
+                    Text(Fmt.gb(size)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                }
             }
             .padding(.vertical, 5)
             .padding(.horizontal, 8)
@@ -339,8 +343,8 @@ struct MenuBarPanel: View {
         .padding(.horizontal, -8)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(String(localized: "Use \(name)")))
-        .accessibilityValue(Text(row.loaded ? String(localized: "loaded") : ""))
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(Text(row.tags.joined(separator: ", ")))
+        .accessibilityAddTraits(row.checked ? [.isButton, .isSelected] : .isButton)
     }
 
     private var appsCard: some View {
@@ -381,7 +385,7 @@ struct MenuBarPanel: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(s.folder?.lastPathComponent ?? String(localized: "Unknown folder"))
                                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(verbatim: [s.tool, AppModel.engineName(s.engine), model.displayName(for: s.model)]
+                            Text(verbatim: [s.tool, AppModel.engineName(s.engine), model.friendlyName(for: s.model)]
                                 .compactMap { $0 }.joined(separator: " · "))
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                                 .lineLimit(1).truncationMode(.middle)
@@ -392,42 +396,6 @@ struct MenuBarPanel: View {
                     .help(s.folder?.path ?? "")
                 }
             }
-        }
-    }
-
-    private var engineCard: some View {
-        DisclosureCard(title: String(localized: "Engine"), icon: "server.rack", iconColor: .primary,
-                       value: "\(engineName) · \(model.activeServing ? String(localized: "running") : String(localized: "stopped"))",
-                       expanded: $engineOpen) {
-            Picker(String(localized: "Active Engine"), selection: Binding(
-                get: { model.settings.activeEngine },
-                set: { id in Task { await model.setActiveEngine(id) } })) {
-                ForEach(EngineID.allCases, id: \.self) { Text(AppModel.engineName($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-
-            Button {
-                Task {
-                    if model.activeServing { await model.stopEngine() } else { await model.startEngine() }
-                    presentAlertIfNeeded()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: model.activeServing ? "stop.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(model.activeServing ? Theme.red : Theme.local)
-                    Text(model.activeServing ? String(localized: "Stop \(engineName)")
-                                             : String(localized: "Start \(engineName)"))
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer()
-                }
-                .frame(minHeight: 30)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -442,12 +410,12 @@ struct MenuBarPanel: View {
     private var launchSubtitle: String {
         guard model.isLocalModeOn else { return String(localized: "Cloud") }
         guard let m = model.launchModel else { return String(localized: "Local") }
-        return String(localized: "Local · \(model.displayName(for: m))")
+        return String(localized: "Local · \(model.friendlyName(for: m))")
     }
 
     private var chatSubtitle: String {
         guard let m = model.chatModel(for: model.settings.activeEngine) else { return String(localized: "No local model") }
-        return model.displayName(for: m)
+        return model.friendlyName(for: m)
     }
 
     var localModeBinding: Binding<Bool> {

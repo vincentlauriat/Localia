@@ -124,7 +124,8 @@ private struct PickCard: View {
     var highlighted = false
 
     private var name: String { model.friendlyName(for: candidate) }
-    private var row: InstalledRow? { model.installedRow(for: candidate) }
+    /// The installed model this pick is, on whichever enabled engine has it.
+    private var choice: ModelChoice? { model.choice(forCandidateID: candidate.id) }
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -138,7 +139,7 @@ private struct PickCard: View {
                     WordPill(text: speed.title, symbol: speed.symbol, tint: speed.tint)
                     let memory = model.memoryBucket(for: candidate)
                     WordPill(text: memory.title, tint: memory.tint)
-                    if row == nil {
+                    if choice == nil {
                         Text(String(localized: "\(Fmt.gb(candidate.weightsGB)) download"))
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -169,14 +170,14 @@ private struct PickCard: View {
                 }
                 TealProgressBar(value: d.fraction).frame(width: 130)
             }
-        } else if let row {
-            if model.isSelected(row) {
+        } else if let choice {
+            if choice.key == model.activeChoice?.key {
                 Text(String(localized: "Installed ✓"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .accessibilityLabel(Text(String(localized: "\(name) is installed and in use")))
             } else {
-                Button(String(localized: "Use")) { Task { await model.setDefault(row) } }
+                Button(String(localized: "Use")) { Task { await model.choose(choice) } }
                     .buttonStyle(OnboardingButtonStyle(prominent: false))
                     .disabled(model.selectingModel != nil)
                     .accessibilityLabel(Text(String(localized: "Use \(name)")))

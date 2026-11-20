@@ -22,15 +22,16 @@ final class DockSnapshotTests: XCTestCase {
         for s in suites { UserDefaults().removePersistentDomain(forName: s) }
     }
 
-    private func makeModel(advanced: Bool, proxy: any ProxyServiceControlling = InertProxyService()) -> AppModel {
+    private func makeModel(advanced: Bool, proxy: any ProxyServiceControlling = InertProxyService(),
+                           loaded: Set<String> = [], extraEngines: [FakeEngine] = []) -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         let defaults = UserDefaults(suiteName: suite)!
         let settings = SettingsStore(defaults: defaults)
         settings.advancedMode = advanced
-        let engine = FakeEngine(installed: ["gemma3:12b"], loaded: [])
+        let engine = FakeEngine(installed: ["gemma3:12b"], loaded: loaded)
         let deps = AppDependencies(
-            settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
+            settings: settings, engines: [engine] + extraEngines, registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
             speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { [] }),
@@ -75,13 +76,25 @@ final class DockSnapshotTests: XCTestCase {
         // `SettingsView.body` renders exactly this array: a section not listed here is not shown.
         XCTAssertTrue(SettingsView.sections.contains(.proxyLog))
         XCTAssertEqual(SettingsView.sections.map(\.rawValue),
-                       ["general", "localMode", "recommendations", "proxyLog", "beforeDeleting", "claudeCode"])
+                       ["general", "engines", "localMode", "recommendations", "proxyLog", "beforeDeleting", "claudeCode"])
         let model = makeModel(advanced: true)
         await model.refreshAll()
         try snapshot(SettingsRoot(model: model), named: "dock-settings", size: SettingsRoot.advancedSize)
         // The Advanced tab's own content, which the tab view above does not show in a borderless render.
         try snapshot(SettingsView(model: model), named: "dock-settings-advanced",
                      size: CGSize(width: 560, height: 1000))
+    }
+
+    /// "Engines Localia uses": three installed engines in priority order; with one switched off, the last
+    /// enabled switch is locked and the footnote shows.
+    func test_settingsPage_enginesSection_light_dark() async throws {
+        let model = makeModel(advanced: true, extraEngines: [
+            FakeEngine(id: .llamaCpp, installed: ["gemma3:12b"]), FakeEngine(id: .mlx, installed: ["gemma3:12b"])])
+        await model.refreshAll()
+        XCTAssertEqual(model.enabledEngines, [.llamaCpp, .mlx, .ollama])
+        try snapshot(SettingsView(model: model), named: "settings-engines", size: CGSize(width: 560, height: 700))
+        model.settings.disabledEngines = [.llamaCpp, .mlx]
+        try snapshot(SettingsView(model: model), named: "settings-engines-last", size: CGSize(width: 560, height: 700))
     }
 
     func test_modelsPage_simple_and_advanced() async throws {
@@ -119,6 +132,36 @@ final class DockSnapshotTests: XCTestCase {
         let paused = makeModel(advanced: false, proxy: FakeProxyService(state: .unavailable(reason: "x")))
         await paused.ensureProxy()
         try snapshot(OverviewPage(model: paused, usage: usage), named: "dock-overview-paused", size: CGSize(width: 760, height: 620))
+    }
+
+    /// The selected model always shows on the Overview, also while it is not loaded (the diagram only draws
+    /// loaded models): its friendly name, grey, "loads on first use"; green "Ready" once loaded and served.
+    /// Simple mode names no engine.
+    func test_overview_showsSelectedModel_whenNotLoaded() async throws {
+        let usage = UsageModel(reader: FakeUsageReader())
+        await usage.refresh()
+        for advanced in [true, false] {
+            let model = makeModel(advanced: advanced)
+            await model.startEngine()
+            await model.refreshAll()
+            XCTAssertTrue(model.loaded.isEmpty)
+            let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+            XCTAssertEqual(state.title, model.friendlyName(for: "gemma3:12b"))
+            XCTAssertEqual(state.dot, .stopped)
+            XCTAssertEqual(state.line, advanced ? String(localized: "Ready on \("Ollama") · loads on first use")
+                                                : String(localized: "Ready · loads on first use"))
+            try snapshot(OverviewPage(model: model, usage: usage),
+                         named: "dock-overview-not-loaded-\(advanced ? "advanced" : "simple")",
+                         size: CGSize(width: 760, height: 620))
+        }
+        let ready = makeModel(advanced: true, loaded: ["gemma3:12b"])
+        await ready.startEngine()
+        await ready.refreshAll()
+        XCTAssertEqual(ActiveModelCard.State(model: ready)?.dot, .ready)
+        let readyUsage = UsageModel(reader: FakeUsageReader())
+        await readyUsage.refresh()
+        try snapshot(OverviewPage(model: ready, usage: readyUsage), named: "dock-overview-loaded-advanced",
+                     size: CGSize(width: 760, height: 620))
     }
 
     // MARK: Sessions page

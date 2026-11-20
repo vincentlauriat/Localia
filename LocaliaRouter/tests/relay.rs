@@ -27,6 +27,32 @@ const QWEN_OLLAMA: &str = "qwen3:8b";
 const QWEN_LLAMA: &str = "qwen3-8b";
 const QWEN_MLX: &str = "mlx-community/Qwen3-8B-4bit";
 
+/// What the router sends back of an engine's fixture when the client asked for model `to`: the engine's
+/// `"model"` string values become `to`, every other byte stays.
+fn echoed(bytes: &[u8], to: &str) -> Vec<u8> {
+    let key = b"\"model\"";
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(key) {
+            let mut j = i + key.len();
+            while bytes[j] == b':' || bytes[j] == b' ' {
+                j += 1;
+            }
+            if bytes[j] == b'"' {
+                let end = j + 1 + bytes[j + 1..].iter().position(|c| *c == b'"').unwrap();
+                out.extend_from_slice(&bytes[i..j]);
+                out.extend_from_slice(format!("\"{to}\"").as_bytes());
+                i = end + 1;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -201,7 +227,7 @@ async fn content_stored_only_when_enabled() {
     let second = all.iter().find(|r| r.id != first.id).unwrap();
     let (req, resp, truncated) = content(&h, &second.id).expect("content recorded");
     assert_eq!(req, ANTHROPIC_STREAM.as_bytes());
-    assert_eq!(resp, sse);
+    assert_eq!(resp, echoed(&sse, QWEN_OLLAMA));
     assert!(!truncated);
     // The config push without `routing` kept the routing: still served by Ollama.
     assert_eq!(second.reason.as_deref(), Some("primary"));
@@ -217,7 +243,11 @@ async fn content_log_toggled_mid_request_follows_its_start() {
     let hold = Arc::new(Notify::new());
     let held = hold.clone();
     stubs.0.on(move |_| {
-        Reply::sse(first).steps(vec![Step::Data(first.into()), Step::Wait(held.clone()), Step::Data(last.into())])
+        Reply::sse(first).steps(vec![
+            Step::Data(first.into()),
+            Step::Wait(held.clone()),
+            Step::Data(last.into()),
+        ])
     });
     let h = router_on(Ollama, &stubs, false).await;
     let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
@@ -235,7 +265,10 @@ async fn content_log_toggled_mid_request_follows_its_start() {
     s.read_count("message_stop", 1).await;
     let row = &wait_rows(&h, 1).await[0];
     assert_eq!(row.status, "ok");
-    assert!(content(&h, &row.id).is_none(), "the log was off when the request started");
+    assert!(
+        content(&h, &row.id).is_none(),
+        "the log was off when the request started"
+    );
 }
 
 #[tokio::test]
@@ -331,7 +364,13 @@ async fn passthrough_drops_hop_headers_and_asks_identity_encoding() {
     )
     .await;
     assert_eq!(r.status, 200);
-    assert_eq!(r.body, json);
+    // Same answer, but for the model: the client asked for `localia`, and the answer names it.
+    let mut want: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    want["model"] = "localia".into();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&r.body).unwrap(),
+        want
+    );
     assert_eq!(r.header("x-engine"), Some("ollama"));
     assert_eq!(r.header("keep-alive"), None);
     assert_eq!(r.header("content-encoding"), None);
@@ -618,7 +657,7 @@ async fn auto_rewrites_model_and_records_real_model() {
     let body = r#"{"model":"localia","max_tokens":64,"stream":true,"system":"be brief","messages":[{"role":"user","content":"hi"}]}"#;
     let r = post(&h, &path("auto", "/v1/messages"), body).await;
     assert_eq!(r.status, 200);
-    assert_eq!(r.body, sse, "the engine's bytes");
+    assert_eq!(r.body, echoed(&sse, "localia"), "the engine's bytes");
     let sent = stubs.0.seen()[0].json();
     let mut want: Value = serde_json::from_str(body).unwrap();
     want["model"] = json!(QWEN_OLLAMA);
@@ -715,6 +754,7 @@ async fn midstream_engine_death_never_switches() {
     let blocks: Vec<&str> = text.split_inclusive("\n\n").collect();
     let two = format!("{}{}", blocks[0], blocks[1]);
     let t = two.clone();
+    let two = String::from_utf8(echoed(two.as_bytes(), QWEN_OLLAMA)).unwrap();
     // The engine dies once the client has its first two events.
     let die = Arc::new(Notify::new());
     let d = die.clone();
@@ -872,7 +912,7 @@ async fn responses_recorded_with_usage_as_openai() {
     let h = router_on(LlamaCpp, &stubs, false).await;
     let body = r#"{"model":"localia","stream":true,"input":"hi"}"#;
     let r = post(&h, &path("auto", "/v1/responses"), body).await;
-    assert_eq!(r.body, sse);
+    assert_eq!(r.body, echoed(&sse, "localia"));
     assert_eq!(stubs.1.seen()[0].path, "/v1/responses");
     let r = &wait_rows(&h, 1).await[0];
     assert_eq!(r.api, "openai");
@@ -1448,8 +1488,9 @@ async fn golden_matrix_dialect_by_engine() {
                         );
                     } else {
                         assert_eq!(
-                            r.body, want,
-                            "{cell} at {chunk}-byte chunks: the engine's bytes"
+                            r.body,
+                            echoed(&want, "localia"),
+                            "{cell} at {chunk}-byte chunks: the engine's bytes, the client's model"
                         );
                     }
                     cells += 1;
@@ -1458,4 +1499,146 @@ async fn golden_matrix_dialect_by_engine() {
         }
     }
     assert_eq!(cells, 36);
+}
+
+// MARK: - Passthrough echoes the client's model
+
+const ENGINE_MODEL: &str = "unsloth/x.gguf";
+
+fn model_of(v: &serde_json::Value) -> Option<&str> {
+    v["model"]
+        .as_str()
+        .or_else(|| v["message"]["model"].as_str())
+        .or_else(|| v["response"]["model"].as_str())
+}
+
+/// Every `data:` JSON of an SSE body.
+fn data_events(body: &[u8]) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(body)
+        .lines()
+        .filter_map(|l| l.strip_prefix("data:"))
+        .filter_map(|d| serde_json::from_str(d.trim()).ok())
+        .collect()
+}
+
+async fn llama_answering(reply: Reply) -> Harness {
+    let stubs = engines().await;
+    stubs.1.on(move |_| reply.clone());
+    router_on(LlamaCpp, &stubs, false).await
+}
+
+#[tokio::test]
+async fn passthrough_non_stream_echoes_client_model() {
+    let body = format!(
+        r#"{{"id":"m1","type":"message","role":"assistant","model":"{ENGINE_MODEL}","content":[{{"type":"text","text":"hi"}}],"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+    );
+    let h = llama_answering(Reply::json(body.clone())).await;
+    let r = post(
+        &h,
+        &path("auto", "/v1/messages"),
+        r#"{"model":"localia","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    let got: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let mut want: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(got["model"], "localia");
+    want["model"] = "localia".into();
+    assert_eq!(got, want, "only the model changed");
+}
+
+#[tokio::test]
+async fn passthrough_stream_echoes_client_model() {
+    let sse = format!(
+        "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"model\":\"{ENGINE_MODEL}\",\"usage\":{{\"input_tokens\":5,\"output_tokens\":1}}}}}}\n\nevent: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\nevent: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
+    );
+    let h = llama_answering(Reply::sse(sse.clone())).await;
+    let r = post(
+        &h,
+        &path("auto", "/v1/messages"),
+        r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    let ev = data_events(&r.body);
+    assert_eq!(ev[0]["message"]["model"], "localia");
+    assert_eq!(ev.len(), 3);
+    assert!(!text(&r).contains(ENGINE_MODEL));
+    assert!(text(&r).contains("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
+}
+
+#[tokio::test]
+async fn passthrough_responses_stream_echoes_client_model() {
+    let sse = format!(
+        "event: response.created\ndata: {{\"type\":\"response.created\",\"response\":{{\"id\":\"r\",\"model\":\"{ENGINE_MODEL}\"}}}}\n\nevent: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"r\",\"model\":\"{ENGINE_MODEL}\",\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}}}\n\n"
+    );
+    let h = llama_answering(Reply::sse(sse)).await;
+    let r = post(
+        &h,
+        &path("auto", "/v1/responses"),
+        r#"{"model":"localia","stream":true,"input":"hi"}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    let ev = data_events(&r.body);
+    assert_eq!(ev.len(), 2);
+    assert!(ev.iter().all(|e| model_of(e) == Some("localia")));
+    assert!(!text(&r).contains(ENGINE_MODEL));
+}
+
+#[tokio::test]
+async fn passthrough_chat_echoes_client_model_streamed_and_not() {
+    let chunk = |fin: &str| {
+        format!(
+            "data: {{\"id\":\"c\",\"model\":\"{ENGINE_MODEL}\",\"choices\":[{{\"delta\":{{\"content\":\"hi\"}}{fin}}}]}}\n\n"
+        )
+    };
+    let sse = format!(
+        "{}{}data: [DONE]\n\n",
+        chunk(""),
+        chunk(",\"finish_reason\":\"stop\"")
+    );
+    let h = llama_answering(Reply::sse(sse)).await;
+    let r = post(
+        &h,
+        &path("auto", "/v1/chat/completions"),
+        r#"{"model":"localia","stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .await;
+    let ev = data_events(&r.body);
+    assert_eq!(ev.len(), 2);
+    assert!(ev.iter().all(|e| model_of(e) == Some("localia")));
+    assert!(text(&r).ends_with("data: [DONE]\n\n"));
+
+    let body = format!(
+        r#"{{"id":"c","model":"{ENGINE_MODEL}","choices":[{{"message":{{"role":"assistant","content":"hi"}}}}]}}"#
+    );
+    let h = llama_answering(Reply::json(body)).await;
+    let r = post(
+        &h,
+        &path("auto", "/v1/chat/completions"),
+        r#"{"model":"localia","messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .await;
+    let got: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(got["model"], "localia");
+    assert_eq!(got["choices"][0]["message"]["content"], "hi");
+}
+
+#[tokio::test]
+async fn pinned_passthrough_keeps_engine_model() {
+    let body = format!(r#"{{"model":"{ENGINE_MODEL}","content":[]}}"#);
+    let stubs = engines().await;
+    stubs.1.on({
+        let b = body.clone();
+        move |_| Reply::json(b.clone())
+    });
+    let h = router_on(LlamaCpp, &stubs, false).await;
+    let r = post(
+        &h,
+        &path("llamaCpp", "/v1/messages"),
+        r#"{"model":"localia","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}"#,
+    )
+    .await;
+    assert_eq!(r.body, body.as_bytes());
 }

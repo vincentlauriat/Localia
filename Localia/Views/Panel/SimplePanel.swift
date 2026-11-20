@@ -160,14 +160,14 @@ extension MenuBarPanel {
         .card()
     }
 
-    /// An installed model: a click makes it the one Claude uses.
+    /// An installed model: a click makes it the one Claude uses and starts what runs it.
     private func choiceRow(_ row: InstalledRow) -> some View {
-        let selected = model.isSelected(row)
+        let selected = model.isChosen(row)
         let name = model.friendlyName(for: row.name)
         let speed = model.speedBucket(for: row.name)
         return Button {
             Task {
-                await model.setDefault(row)
+                await model.chooseSimple(row)
                 presentAlertIfNeeded()
             }
         } label: {

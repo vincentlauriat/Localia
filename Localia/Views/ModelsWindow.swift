@@ -90,6 +90,11 @@ struct ModelsWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The model in use, above the tabs: every tab's "Use" changes it. In full on Installed, on one line
+            // on the Discover and Downloads tabs, where the list needs the room.
+            let installedTab = (section.wrappedValue ?? .forThisMac) == .installed
+            ActiveModelCard(model: model, style: installedTab ? .page : .compact)
+                .padding(.horizontal, 16).padding(.top, installedTab ? 12 : 8).padding(.bottom, installedTab ? 10 : 6)
             ModelsTabBar(model: model, selection: section)
             Divider()
             Group {
@@ -197,9 +202,15 @@ extension AppModel {
         switch section {
         case .forThisMac, .compatible: recommendation == nil ? nil : items(for: section).count
         case .newOnHF: hfRecentState == .loaded ? hfRecent.count : nil
-        case .installed: installed.count
+        case .installed: modelChoices.count
         case .downloads: downloads.count
         }
+    }
+
+    /// The installed model (on any enabled engine) that is this llmfit / Hugging Face candidate.
+    func choice(forCandidateID id: String) -> ModelChoice? {
+        let key = ModelChoices.key(candidateID: id, friendlyName: "")
+        return modelChoices.first { $0.key == key }
     }
 
     /// Installed row of a candidate on the active engine, if any.
@@ -858,11 +869,11 @@ private struct ModelAction: View {
                         .help(String(localized: "Cancel"))
                         .accessibilityLabel(String(localized: "Cancel download"))
                 }
-            } else if let row = model.installedRow(for: c), !row.isDefault {
-                Button(String(localized: "Use")) { Task { await model.setDefault(row) } }
-                    .help(String(localized: "Installed. Make it the default model."))
+            } else if let choice = model.choice(forCandidateID: c.id), choice.key != model.activeChoice?.key {
+                Button(String(localized: "Use")) { Task { await model.choose(choice) } }
+                    .help(String(localized: "Installed. Use this model."))
                     .disabled(model.selectingModel != nil)
-            } else if model.installedName(for: c) != nil {
+            } else if model.choice(forCandidateID: c.id) != nil {
                 Label(String(localized: "status.installed", defaultValue: "Installed"), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Theme.local)
                     .fixedSize()
@@ -1089,14 +1100,53 @@ private struct PaneHeader: View {
     }
 }
 
-private struct InstalledPane: View {
+/// One model of the Installed tab: the shared row model (friendly name, engine tags in advanced mode, the check
+/// on the model in use) and the installed copy on each enabled engine that has it, in priority order.
+struct InstalledGroup: Identifiable {
+    let row: ModelChoiceRow
+    let entries: [InstalledRow]
+    var id: String { row.id }
+}
+
+/// One line under a model of the Installed tab. Advanced mode: one per copy, naming its engine and file.
+/// Simple mode: one for the whole model, naming nothing (no file, no engine), with its total size; its Delete
+/// removes every copy Localia downloaded.
+struct InstalledLine: Identifiable {
+    let id: String
+    let label: String
+    let sizeGB: Double
+    let rows: [InstalledRow]
+}
+
+struct InstalledPane: View {
     @ObservedObject var model: AppModel
+
+    static func copyLines(_ group: InstalledGroup, advanced: Bool) -> [InstalledLine] {
+        if advanced {
+            return group.entries.map {
+                InstalledLine(id: $0.id, label: "\(AppModel.engineName($0.engine)) · \($0.name)", sizeGB: $0.sizeGB, rows: [$0])
+            }
+        }
+        guard !group.entries.isEmpty else { return [] }
+        return [InstalledLine(id: group.id, label: "", sizeGB: group.entries.map(\.sizeGB).reduce(0, +),
+                              rows: group.entries)]
+    }
+
+    /// One group per model choice, its copies as `InstalledRow`s (size, loaded, delete) in the choice's order.
+    static func groups(for model: AppModel) -> [InstalledGroup] {
+        ModelChoiceRow.rows(for: model).map { row in
+            InstalledGroup(row: row, entries: row.choice.entries.compactMap { e in
+                model.installed.first { $0.engine == e.engine && $0.name == e.name }
+            })
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(subtitle: String(localized: "Models on this Mac, by engine. Local mode uses the default one."))
+            PaneHeader(subtitle: String(localized: "Models on this Mac, one row per model. Use picks the one Localia runs."))
             Divider()
-            if model.installed.isEmpty {
+            let groups = Self.groups(for: model)
+            if groups.isEmpty {
                 ContentUnavailableView {
                     Label(String(localized: "No model installed yet"), systemImage: "shippingbox")
                 } description: {
@@ -1106,23 +1156,17 @@ private struct InstalledPane: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                List {
-                    ForEach(EngineID.allCases, id: \.self) { engine in
-                        let rows = model.installed.filter { $0.engine == engine }
-                        if !rows.isEmpty {
-                            Section(AppModel.engineName(engine)) {
-                                ForEach(rows) { InstalledModelRow(model: model, row: $0) }
-                            }
-                        }
-                    }
-                }
-                .listStyle(.inset)
+                List(groups) { InstalledChoiceRow(model: model, group: $0) }
+                    .listStyle(.inset)
             }
             Divider()
             HStack(spacing: 16) {
-                ForEach(EngineID.allCases, id: \.self) { e in
-                    if let gb = model.diskUsageGB[e] {
-                        Text(String(localized: "\(AppModel.engineName(e)): \(Fmt.gb(gb)) on disk"))
+                // Per-engine disk use names engines: advanced mode only.
+                if model.settings.advancedMode {
+                    ForEach(EngineID.allCases, id: \.self) { e in
+                        if let gb = model.diskUsageGB[e] {
+                            Text(String(localized: "\(AppModel.engineName(e)): \(Fmt.gb(gb)) on disk"))
+                        }
                     }
                 }
                 Spacer()
@@ -1134,44 +1178,78 @@ private struct InstalledPane: View {
     }
 }
 
-private struct InstalledModelRow: View {
+/// A model and its one action, "Use"; under it its lines (`InstalledPane.copyLines`): one per copy in advanced
+/// mode (engine, file name, size, speed, Measure Speed and Delete), one for the whole model in simple mode.
+private struct InstalledChoiceRow: View {
     @ObservedObject var model: AppModel
-    let row: InstalledRow
+    let group: InstalledGroup
+
+    private var advanced: Bool { model.settings.advancedMode }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(group.row.choice.displayName).font(.body.weight(.semibold)).lineLimit(1)
+                if group.entries.contains(where: \.loaded) { Badge(text: String(localized: "loaded"), color: Theme.local) }
+                if group.row.checked { Badge(text: String(localized: "in use"), color: Theme.blue) }
+                ForEach(group.row.tags, id: \.self) { Badge(text: $0, color: .secondary) }
+                Spacer()
+                if model.selectingModel != nil, model.selectingModel == group.row.rowID {
+                    ProgressView().controlSize(.small)
+                } else if !group.row.checked {
+                    Button(String(localized: "Use")) { Task { await model.choose(group.row.choice) } }
+                        .disabled(model.selectingModel != nil)
+                }
+            }
+            ForEach(InstalledPane.copyLines(group, advanced: advanced)) {
+                InstalledCopyLine(model: model, line: $0, modelName: group.row.choice.displayName)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// One line of an installed model: a copy (advanced mode) or the whole model (simple mode, no file name).
+private struct InstalledCopyLine: View {
+    @ObservedObject var model: AppModel
+    let line: InstalledLine
+    let modelName: String
     @State private var confirmDelete = false
+
+    private var deletable: [InstalledRow] { line.rows.filter(\.deletable) }
+    /// The copy measured: the first, in priority order (the one the model runs on by default).
+    private var measured: InstalledRow? { line.rows.first }
+    /// Advanced mode names the copy (its file); simple mode names the model.
+    private var deleteName: String { line.label.isEmpty ? modelName : (line.rows.first?.name ?? modelName) }
 
     var body: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(row.displayName).font(.body.weight(.medium)).lineLimit(1)
-                    if row.loaded { Badge(text: String(localized: "loaded"), color: Theme.local) }
-                    if row.isDefault { Badge(text: String(localized: "default"), color: Theme.blue) }
-                }
-                if row.displayName != row.name {
-                    Text(row.name).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-            }
+            Text(verbatim: line.label)
+                .font(.callout).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+                .textSelection(.enabled)
             Spacer()
-            Text(Fmt.gb(row.sizeGB)).font(.callout.monospacedDigit())
-            if let tps = model.settings.measurements.tps[model.candidateID(for: row.name)] {
+            Text(Fmt.gb(line.sizeGB)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            if let row = measured, let tps = model.settings.measurements.tps[model.candidateID(for: row.name)] {
                 HStack(spacing: 4) {
                     MeasuredMark()
                     Text(Fmt.tps(tps))
                 }
                 .font(.callout.monospacedDigit())
             }
-            Button(String(localized: "Measure Speed")) { Task { await model.measureSpeed(row) } }
-            Button(String(localized: "Set as Default")) { Task { await model.setDefault(row) } }
-                .disabled(row.isDefault)
+            if let row = measured {
+                Button(String(localized: "Measure Speed")) { Task { await model.measureSpeed(row) } }
+            }
             Button(String(localized: "Delete"), role: .destructive) { confirmDelete = true }
-                .disabled(!row.deletable)
-                .help(row.deletable ? "" : String(localized: "Only models downloaded by Localia can be deleted here."))
+                .disabled(deletable.isEmpty)
+                .help(deletable.isEmpty ? String(localized: "Only models downloaded by Localia can be deleted here.") : "")
         }
-        .padding(.vertical, 3)
-        .confirmationDialog(String(localized: "Delete \(row.displayName)?"), isPresented: $confirmDelete) {
-            Button(String(localized: "Delete"), role: .destructive) { Task { await model.delete(row) } }
+        .controlSize(.small)
+        .padding(.leading, 12)
+        .confirmationDialog(String(localized: "Delete \(deleteName)?"), isPresented: $confirmDelete) {
+            Button(String(localized: "Delete"), role: .destructive) { Task { await model.deleteModel(deletable) } }
         } message: {
-            Text(String(localized: "This frees \(Fmt.gb(row.sizeGB)) on disk."))
+            Text(String(localized: "This frees \(Fmt.gb(deletable.map(\.sizeGB).reduce(0, +))) on disk."))
         }
     }
 }
