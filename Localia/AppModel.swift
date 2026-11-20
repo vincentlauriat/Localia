@@ -1424,6 +1424,15 @@ final class AppModel: ObservableObject {
         await pushProxyConfig()
     }
 
+    /// Simple mode's single Delete for a model: every copy Localia downloaded goes; stops at the first refusal
+    /// (a session still uses it) or error, which shows its alert.
+    func deleteModel(_ rows: [InstalledRow]) async {
+        for row in rows where row.deletable {
+            await delete(row)
+            if alert != nil { return }
+        }
+    }
+
     /// Makes `row` the model launches and chat use (Models window "Set as Default", or a click in the panel),
     /// switching the active engine when it lives on the other one. Nothing is loaded here. Refused when
     /// llama.cpp would have to serve another model than the one a session uses. Returns false when refused.

@@ -1676,6 +1676,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(rows.map { model.friendlyName(for: $0.name) }, model.modelChoices.map(\.displayName))
     }
 
+    /// Simple mode's single Delete removes every copy Localia downloaded, and leaves the others.
+    func test_deleteModel_removesEveryDeletableCopy() async throws {
+        let (model, ollama, llama) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"])
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let choice = try XCTUnwrap(model.modelChoices.first { $0.key == "id:Qwen/Qwen3-8B" })
+        let rows = choice.entries.compactMap { e in model.installed.first { $0.engine == e.engine && $0.name == e.name } }
+        XCTAssertEqual(rows.count, 2)
+        await model.deleteModel(rows)
+        let gone = (await ollama.deleted, await llama.deleted)
+        XCTAssertEqual(gone.0, ["q-localia"])
+        XCTAssertEqual(gone.1, ["q-gguf"])
+        XCTAssertNil(model.modelChoices.first { $0.key == "id:Qwen/Qwen3-8B" })
+        XCTAssertNotNil(model.modelChoices.first { $0.entries.map(\.name) == ["plain"] })
+    }
+
     /// Simple mode's chooser goes through `choose`: a click on a model whose engine (llama.cpp) is stopped
     /// starts it, so a near-novice never lands on a stopped engine.
     func test_simpleChooser_click_startsTheResolvedEngine() async throws {
@@ -1910,7 +1926,11 @@ actor FakeEngine: Engine {
     /// Until `releasePulls()`, a pull reports 42 % and then suspends (a download in progress).
     func holdPulls() { holdingPulls = true }
     func releasePulls() { holdingPulls = false; heldPulls.forEach { $0.resume() }; heldPulls = [] }
-    func delete(_ modelName: String) async throws {}
+    private(set) var deleted: [String] = []
+    func delete(_ modelName: String) async throws {
+        deleted.append(modelName)
+        installed.removeAll { $0 == modelName }
+    }
     /// Until `releaseLoads()`, loads are recorded and then suspended (a slow llama-server start).
     func holdLoads() { holding = true }
     func releaseLoads() { holding = false; held.forEach { $0.resume() }; held = [] }

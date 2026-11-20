@@ -1108,8 +1108,29 @@ struct InstalledGroup: Identifiable {
     var id: String { row.id }
 }
 
+/// One line under a model of the Installed tab. Advanced mode: one per copy, naming its engine and file.
+/// Simple mode: one for the whole model, naming nothing (no file, no engine), with its total size; its Delete
+/// removes every copy Localia downloaded.
+struct InstalledLine: Identifiable {
+    let id: String
+    let label: String
+    let sizeGB: Double
+    let rows: [InstalledRow]
+}
+
 struct InstalledPane: View {
     @ObservedObject var model: AppModel
+
+    static func copyLines(_ group: InstalledGroup, advanced: Bool) -> [InstalledLine] {
+        if advanced {
+            return group.entries.map {
+                InstalledLine(id: $0.id, label: "\(AppModel.engineName($0.engine)) · \($0.name)", sizeGB: $0.sizeGB, rows: [$0])
+            }
+        }
+        guard !group.entries.isEmpty else { return [] }
+        return [InstalledLine(id: group.id, label: "", sizeGB: group.entries.map(\.sizeGB).reduce(0, +),
+                              rows: group.entries)]
+    }
 
     /// One group per model choice, its copies as `InstalledRow`s (size, loaded, delete) in the choice's order.
     static func groups(for model: AppModel) -> [InstalledGroup] {
@@ -1157,8 +1178,8 @@ struct InstalledPane: View {
     }
 }
 
-/// A model and its one action, "Use"; under it one line per installed copy with its engine (advanced mode),
-/// file name, size and measured speed, and Measure Speed and Delete for that copy.
+/// A model and its one action, "Use"; under it its lines (`InstalledPane.copyLines`): one per copy in advanced
+/// mode (engine, file name, size, speed, Measure Speed and Delete), one for the whole model in simple mode.
 private struct InstalledChoiceRow: View {
     @ObservedObject var model: AppModel
     let group: InstalledGroup
@@ -1180,51 +1201,55 @@ private struct InstalledChoiceRow: View {
                         .disabled(model.selectingModel != nil)
                 }
             }
-            ForEach(group.entries) { InstalledCopyLine(model: model, row: $0, showsEngine: advanced) }
+            ForEach(InstalledPane.copyLines(group, advanced: advanced)) {
+                InstalledCopyLine(model: model, line: $0, modelName: group.row.choice.displayName)
+            }
         }
         .padding(.vertical, 4)
     }
 }
 
-/// One installed copy of a model on one engine.
+/// One line of an installed model: a copy (advanced mode) or the whole model (simple mode, no file name).
 private struct InstalledCopyLine: View {
     @ObservedObject var model: AppModel
-    let row: InstalledRow
-    let showsEngine: Bool
+    let line: InstalledLine
+    let modelName: String
     @State private var confirmDelete = false
+
+    private var deletable: [InstalledRow] { line.rows.filter(\.deletable) }
+    /// The copy measured: the first, in priority order (the one the model runs on by default).
+    private var measured: InstalledRow? { line.rows.first }
+    /// Advanced mode names the copy (its file); simple mode names the model.
+    private var deleteName: String { line.label.isEmpty ? modelName : (line.rows.first?.name ?? modelName) }
 
     var body: some View {
         HStack(spacing: 10) {
-            Group {
-                if showsEngine {
-                    Text(verbatim: "\(AppModel.engineName(row.engine)) · \(row.name)")
-                } else {
-                    Text(verbatim: row.name)
-                }
-            }
-            .font(.callout).foregroundStyle(.secondary)
-            .lineLimit(1).truncationMode(.middle)
-            .textSelection(.enabled)
+            Text(verbatim: line.label)
+                .font(.callout).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+                .textSelection(.enabled)
             Spacer()
-            Text(Fmt.gb(row.sizeGB)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            if let tps = model.settings.measurements.tps[model.candidateID(for: row.name)] {
+            Text(Fmt.gb(line.sizeGB)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            if let row = measured, let tps = model.settings.measurements.tps[model.candidateID(for: row.name)] {
                 HStack(spacing: 4) {
                     MeasuredMark()
                     Text(Fmt.tps(tps))
                 }
                 .font(.callout.monospacedDigit())
             }
-            Button(String(localized: "Measure Speed")) { Task { await model.measureSpeed(row) } }
+            if let row = measured {
+                Button(String(localized: "Measure Speed")) { Task { await model.measureSpeed(row) } }
+            }
             Button(String(localized: "Delete"), role: .destructive) { confirmDelete = true }
-                .disabled(!row.deletable)
-                .help(row.deletable ? "" : String(localized: "Only models downloaded by Localia can be deleted here."))
+                .disabled(deletable.isEmpty)
+                .help(deletable.isEmpty ? String(localized: "Only models downloaded by Localia can be deleted here.") : "")
         }
         .controlSize(.small)
         .padding(.leading, 12)
-        .confirmationDialog(String(localized: "Delete \(row.name)?"), isPresented: $confirmDelete) {
-            Button(String(localized: "Delete"), role: .destructive) { Task { await model.delete(row) } }
+        .confirmationDialog(String(localized: "Delete \(deleteName)?"), isPresented: $confirmDelete) {
+            Button(String(localized: "Delete"), role: .destructive) { Task { await model.deleteModel(deletable) } }
         } message: {
-            Text(String(localized: "This frees \(Fmt.gb(row.sizeGB)) on disk."))
+            Text(String(localized: "This frees \(Fmt.gb(deletable.map(\.sizeGB).reduce(0, +))) on disk."))
         }
     }
 }

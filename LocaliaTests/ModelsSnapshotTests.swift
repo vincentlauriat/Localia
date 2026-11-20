@@ -270,9 +270,18 @@ final class ModelsSnapshotTests: XCTestCase {
         XCTAssertEqual(card.engineName, "llama.cpp")
         XCTAssertNotNil(card.engineMenu)
 
-        // Simple mode (the full catalog): one row per model still, no engine tag, no engine in the card.
+        // Simple mode (the full catalog): one row per model still, no engine tag, no engine in the card, and
+        // no file name: one line per model (its total size), not one per copy.
         model.settings.advancedMode = false
         XCTAssertTrue(InstalledPane.groups(for: model).allSatisfy { $0.row.tags.isEmpty })
+        let simpleQwen = try XCTUnwrap(InstalledPane.groups(for: model).first { $0.id == qwen.id })
+        let lines = InstalledPane.copyLines(simpleQwen, advanced: false)
+        XCTAssertEqual(lines.count, 1)
+        for raw in qwen.entries.map(\.name) + ["llama.cpp", "Ollama", "gguf"] {
+            XCTAssertFalse(lines.contains { $0.label.localizedCaseInsensitiveContains(raw) }, "\(raw) in \(lines)")
+        }
+        XCTAssertEqual(lines[0].sizeGB, qwen.entries.map(\.sizeGB).reduce(0, +))
+        XCTAssertEqual(InstalledPane.copyLines(qwen, advanced: true).count, 2, "advanced keeps one line per copy")
         XCTAssertNil(ActiveModelCard.State(model: model)?.engineMenu)
         model.settings.advancedMode = true
 
