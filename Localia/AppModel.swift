@@ -1435,9 +1435,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Makes `row` the model launches and chat use (Models window "Set as Default", or a click in the panel),
-    /// switching the active engine when it lives on the other one. Nothing is loaded here. Refused when
-    /// llama.cpp would have to serve another model than the one a session uses. Returns false when refused.
+    /// Makes `row` the model launches and chat use (reached through `choose`, the update migration and the
+    /// engine switches), switching the active engine when it lives on another one. Nothing is loaded here.
+    /// Refused when llama.cpp would have to serve another model than the one a session uses. Returns false
+    /// when refused.
     @discardableResult
     func setDefault(_ row: InstalledRow) async -> Bool {
         if let other = await llamaConflict(engine: row.engine, model: row.name) {

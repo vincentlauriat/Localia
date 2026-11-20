@@ -609,22 +609,6 @@
         }
       }
     },
-    "Active Engine": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Active Engine"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Moteur actif"
-          }
-        }
-      }
-    },
     "Add the Block": {
       "localizations": {
         "en": {
@@ -2833,22 +2817,6 @@
         }
       }
     },
-    "Installed. Make it the default model.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installed. Make it the default model."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installé. En faire le modèle par défaut."
-          }
-        }
-      }
-    },
     "Installed. Use this model.": {
       "localizations": {
         "en": {
@@ -3853,22 +3821,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Modèles en cours de téléchargement. Ils passent dans Installés une fois terminés."
-          }
-        }
-      }
-    },
-    "Models on this Mac, by engine. Local mode uses the default one.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Models on this Mac, by engine. Local mode uses the default one."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modèles présents sur ce Mac, par moteur. Le mode local utilise celui par défaut."
           }
         }
       }
@@ -5233,22 +5185,6 @@
         }
       }
     },
-    "Set as Default": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Set as Default"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Définir par défaut"
-          }
-        }
-      }
-    },
     "Settings": {
       "localizations": {
         "en": {
@@ -5473,22 +5409,6 @@
         }
       }
     },
-    "Start %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Démarrer %@"
-          }
-        }
-      }
-    },
     "Start it automatically": {
       "localizations": {
         "en": {
@@ -5565,22 +5485,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Étape %lld sur 3"
-          }
-        }
-      }
-    },
-    "Stop %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arrêter %@"
           }
         }
       }
@@ -6525,22 +6429,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Votre propre IA, directement sur ce Mac."
-          }
-        }
-      }
-    },
-    "default": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "default"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "par défaut"
           }
         }
       }
