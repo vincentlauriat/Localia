@@ -1676,6 +1676,21 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(rows.map { model.friendlyName(for: $0.name) }, model.modelChoices.map(\.displayName))
     }
 
+    /// Two quick toggles in Settings: the second waits for nothing and is ignored while the first moves the
+    /// model, so the two cannot interleave and switch every engine off.
+    func test_setEngine_quickSecondToggle_isIgnoredWhileTheFirstRuns() async throws {
+        let (model, _, _) = twoEngineModel(active: .llamaCpp) { $0.lastModel = "q-gguf"; $0.defaultModel = "q-gguf" }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        XCTAssertEqual(model.enabledEngines, [.llamaCpp, .ollama])
+        async let first: Void = model.setEngine(.llamaCpp, enabled: false)
+        async let second: Void = model.setEngine(.ollama, enabled: false)
+        _ = await (first, second)
+        XCTAssertFalse(model.enabledEngines.isEmpty, "an engine stays enabled")
+        XCTAssertEqual(model.enabledEngines, [.ollama])
+        XCTAssertFalse(model.switchingEngines)
+    }
+
     /// Simple mode's single Delete removes every copy Localia downloaded, and leaves the others.
     func test_deleteModel_removesEveryDeletableCopy() async throws {
         let (model, ollama, llama) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"])

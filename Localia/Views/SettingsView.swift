@@ -53,7 +53,7 @@ struct SettingsView: View {
                         Text(row.role).font(.callout).foregroundStyle(.secondary)
                     }
                 }
-                .disabled(row.isLocked)
+                .disabled(row.isLocked || model.switchingEngines || model.selectingModel != nil)
             }
         } header: {
             Text(String(localized: "Engines Localia uses"))

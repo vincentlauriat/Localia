@@ -136,6 +136,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var downloads: [String: DownloadState] = [:]
     /// `InstalledRow.id` of the model being made the default, while `setDefault` runs.
     @Published private(set) var selectingModel: String?
+    /// True while Settings' "Engines Localia uses" applies a switch: the toggles are disabled meanwhile.
+    @Published private(set) var switchingEngines = false
     /// One-time plain-words notice of the Active model card: the engine of the active model moved (update to
     /// model-first, an engine switched off). Cleared by the card once shown or dismissed.
     @Published var modelNotice: String?
@@ -1539,8 +1541,13 @@ final class AppModel: ObservableObject {
 
     /// Settings "Engines Localia uses". The last enabled engine cannot be switched off. The active model is
     /// re-resolved on the new set of engines before the switch is stored: if the move is refused (llama.cpp
-    /// busy), the switch does not happen, so a switched-off engine is never left active.
+    /// busy), the switch does not happen, so a switched-off engine is never left active. A switch arriving while
+    /// another is applied is ignored (Settings disables the toggles meanwhile).
     func setEngine(_ id: EngineID, enabled: Bool) async {
+        // One switch at a time: a second toggle during the awaits below would read a stale engine set.
+        guard !switchingEngines else { return }
+        switchingEngines = true
+        defer { switchingEngines = false }
         let disabled = enabled ? settings.disabledEngines.subtracting([id]) : settings.disabledEngines.union([id])
         guard disabled != settings.disabledEngines else { return }
         let nowEnabled = enabledEngines(disabled: disabled)
