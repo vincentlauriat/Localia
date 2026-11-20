@@ -90,9 +90,11 @@ struct ModelsWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The model in use, above the tabs: every tab's "Use" changes it.
-            ActiveModelCard(model: model, style: .page)
-                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+            // The model in use, above the tabs: every tab's "Use" changes it. In full on Installed, on one line
+            // on the Discover and Downloads tabs, where the list needs the room.
+            let installedTab = (section.wrappedValue ?? .forThisMac) == .installed
+            ActiveModelCard(model: model, style: installedTab ? .page : .compact)
+                .padding(.horizontal, 16).padding(.top, installedTab ? 12 : 8).padding(.bottom, installedTab ? 10 : 6)
             ModelsTabBar(model: model, selection: section)
             Divider()
             Group {
@@ -871,7 +873,7 @@ private struct ModelAction: View {
                 Button(String(localized: "Use")) { Task { await model.choose(choice) } }
                     .help(String(localized: "Installed. Use this model."))
                     .disabled(model.selectingModel != nil)
-            } else if model.choice(forCandidateID: c.id) != nil || model.installedName(for: c) != nil {
+            } else if model.choice(forCandidateID: c.id) != nil {
                 Label(String(localized: "status.installed", defaultValue: "Installed"), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Theme.local)
                     .fixedSize()
@@ -1138,9 +1140,12 @@ struct InstalledPane: View {
             }
             Divider()
             HStack(spacing: 16) {
-                ForEach(EngineID.allCases, id: \.self) { e in
-                    if let gb = model.diskUsageGB[e] {
-                        Text(String(localized: "\(AppModel.engineName(e)): \(Fmt.gb(gb)) on disk"))
+                // Per-engine disk use names engines: advanced mode only.
+                if model.settings.advancedMode {
+                    ForEach(EngineID.allCases, id: \.self) { e in
+                        if let gb = model.diskUsageGB[e] {
+                            Text(String(localized: "\(AppModel.engineName(e)): \(Fmt.gb(gb)) on disk"))
+                        }
                     }
                 }
                 Spacer()

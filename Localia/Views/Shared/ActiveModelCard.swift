@@ -5,7 +5,9 @@ import SwiftUI
 /// health dot, one line saying where it runs, Start or Stop on the engine it resolves to, and in advanced mode
 /// the per-model "Engine" menu and the one-time notice. Simple mode never names an engine.
 struct ActiveModelCard: View {
-    enum Style { case panel, page }
+    /// `compact`: one line (dot, name, "on <engine>" in advanced mode, Start/Stop), no Engine menu, no notice;
+    /// the Models page's Discover tabs, where the list needs the room.
+    enum Style { case panel, page, compact }
 
     /// The resolved engine's own health: green serving the model, grey stopped or not loaded yet, orange
     /// starting.
@@ -17,6 +19,8 @@ struct ActiveModelCard: View {
     struct State: Equatable {
         let choice: ModelChoice
         let title: String
+        /// Display name of the engine the choice resolves to.
+        let engineName: String
         let dot: Dot
         let line: String
         /// Nil while starting.
@@ -45,6 +49,7 @@ struct ActiveModelCard: View {
 
             self.choice = choice
             title = choice.displayName
+            engineName = engine
             dot = starting ? .starting : (servedHere && loaded ? .ready : .stopped)
 
             let route = model.isLocalModeOn ? model.route : nil
@@ -93,17 +98,18 @@ struct ActiveModelCard: View {
     }
 
     private var isPage: Bool { style == .page }
+    private var isCompact: Bool { style == .compact }
 
     var body: some View {
         Group {
             if let state = State(model: model) {
-                content(state)
+                if isCompact { compactContent(state) } else { content(state) }
             } else {
                 empty
             }
         }
         .padding(.horizontal, isPage ? 18 : 14)
-        .padding(.vertical, isPage ? 16 : 12)
+        .padding(.vertical, isPage ? 16 : isCompact ? 7 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
@@ -116,6 +122,23 @@ struct ActiveModelCard: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
+    }
+
+    private func compactContent(_ state: State) -> some View {
+        HStack(spacing: 8) {
+            dot(state.dot)
+            Text(state.title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1).truncationMode(.middle)
+            // Advanced mode only (engineMenu is nil in simple mode): Simple mode never names an engine.
+            if state.engineMenu != nil {
+                Text(String(localized: "on \(state.engineName)"))
+                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            actionButton(state)
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private func content(_ state: State) -> some View {

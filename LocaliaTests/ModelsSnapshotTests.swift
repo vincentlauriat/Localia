@@ -244,6 +244,7 @@ final class ModelsSnapshotTests: XCTestCase {
             $0.activeEngine = .ollama
         }
         await model.refreshAll()
+        await model.refreshRecommendations()
         XCTAssertNil(model.alert)
         XCTAssertEqual(model.installed.count, 3)
         XCTAssertEqual(model.itemCount(for: .installed), 2)
@@ -265,9 +266,14 @@ final class ModelsSnapshotTests: XCTestCase {
         let card = try XCTUnwrap(ActiveModelCard.State(model: model))
         XCTAssertEqual(card.title, qwen.row.choice.displayName)
 
-        // Simple mode (the full catalog): one row per model still, no engine tag.
+        // The compact card of the Discover tabs names the resolved engine (advanced mode only).
+        XCTAssertEqual(card.engineName, "llama.cpp")
+        XCTAssertNotNil(card.engineMenu)
+
+        // Simple mode (the full catalog): one row per model still, no engine tag, no engine in the card.
         model.settings.advancedMode = false
         XCTAssertTrue(InstalledPane.groups(for: model).allSatisfy { $0.row.tags.isEmpty })
+        XCTAssertNil(ActiveModelCard.State(model: model)?.engineMenu)
         model.settings.advancedMode = true
 
         let dir = outputDir
@@ -275,7 +281,17 @@ final class ModelsSnapshotTests: XCTestCase {
         let lang = Bundle.main.preferredLocalizations.first ?? "en"
         model.modelsTab = ModelsSection.installed.rawValue
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
-            for (name, size) in [("installed-grouped", ModelsWindow.defaultSize), ("installed-grouped-min", ModelsWindow.minSize)] {
+            let shots: [(String, CGSize, ModelsSection, Bool)] = [
+                ("installed-grouped", ModelsWindow.defaultSize, .installed, true),
+                ("installed-grouped-min", ModelsWindow.minSize, .installed, true),
+                ("installed-grouped-simple", ModelsWindow.defaultSize, .installed, false),
+                // The compact card above Discover at the minimum size, advanced mode (the tallest card).
+                ("compact-card-min", ModelsWindow.minSize, .forThisMac, true),
+            ]
+            for (name, size, section, advanced) in shots {
+                model.modelsTab = section.rawValue
+                model.settings.advancedMode = advanced
+                defer { model.settings.advancedMode = true }
                 let url = dir.appendingPathComponent("models-\(name)-\(suffix)-\(lang).png")
                 let rendered = await render(ModelsWindow(model: model), size: size, appearance: appearance, to: url)
                 XCTAssertEqual(rendered.width, size.width, url.lastPathComponent)
