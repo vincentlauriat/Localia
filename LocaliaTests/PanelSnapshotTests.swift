@@ -177,6 +177,24 @@ final class PanelSnapshotTests: XCTestCase {
         }
     }
 
+    /// VoiceOver: the dot and the text are read as one element whose label is `accessibilityLabel` (name,
+    /// then the line, which already says the status: the dot is not read too). Start/Stop is not part of it:
+    /// it stays its own button. Simple mode says "Ready" once and names no engine.
+    func test_activeModelCard_accessibilityLabel_leavesTheActionOut() async throws {
+        let model = try await twoEngineModel()
+        let choice = try XCTUnwrap(model.modelChoices.first { $0.key == "id:\(Self.candidate)" })
+        await model.choose(choice)
+        for advanced in [true, false] {
+            model.settings.advancedMode = advanced
+            let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+            XCTAssertEqual(state.accessibilityLabel, "\(state.title), \(state.line)")
+            XCTAssertFalse(state.accessibilityLabel.contains(String(localized: "Stop")), state.accessibilityLabel)
+            let ready = String(localized: "Ready")
+            XCTAssertEqual(state.accessibilityLabel.components(separatedBy: ready).count - 1, 1, state.accessibilityLabel)
+        }
+        XCTAssertFalse(try XCTUnwrap(ActiveModelCard.State(model: model)).accessibilityLabel.contains("llama"))
+    }
+
     /// Choosing the model resolves llama.cpp (first in priority) and starts it: green, "Ready on llama.cpp",
     /// Ollama named as the backup, a Stop button, and the Engine menu (advanced mode) on Automatic.
     func test_panel_activeModelCard_ready() async throws {

@@ -32,6 +32,10 @@ struct ActiveModelCard: View {
         /// The one-time notice (advanced mode only).
         let notice: String?
 
+        /// What VoiceOver reads for the dot and the text: the line already says the status, so the dot is not
+        /// read again; Start/Stop is a separate button.
+        var accessibilityLabel: String { "\(title), \(line)" }
+
         /// Nil when no model is chosen (nothing installed on the enabled engines).
         @MainActor init?(model: AppModel) {
             guard let choice = model.activeChoice else { return nil }
@@ -144,20 +148,25 @@ struct ActiveModelCard: View {
     private func content(_ state: State) -> some View {
         VStack(alignment: .leading, spacing: isPage ? 12 : 10) {
             HStack(alignment: .center, spacing: 10) {
-                dot(state.dot)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(state.title)
-                        .font(.system(size: isPage ? 17 : 14, weight: .semibold))
-                        .lineLimit(1).truncationMode(.middle)
-                    Text(state.line)
-                        .font(.system(size: isPage ? 13 : 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                // One element for VoiceOver (name, then the line, which says the status); Start/Stop stays its
+                // own button next to it.
+                HStack(alignment: .center, spacing: 10) {
+                    dot(state.dot)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(state.title)
+                            .font(.system(size: isPage ? 17 : 14, weight: .semibold))
+                            .lineLimit(1).truncationMode(.middle)
+                        Text(state.line)
+                            .font(.system(size: isPage ? 13 : 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(state.accessibilityLabel))
                 actionButton(state)
             }
-            .accessibilityElement(children: .combine)
 
             if let engines = state.engineMenu {
                 Divider().opacity(0.4)
