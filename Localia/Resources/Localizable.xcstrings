@@ -9124,6 +9124,70 @@
           }
         }
       }
+    },
+    "Engines Localia uses": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engines Localia uses"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moteurs utilisés par Localia"
+          }
+        }
+      }
+    },
+    "Managed by Localia": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Managed by Localia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Géré par Localia"
+          }
+        }
+      }
+    },
+    "External app": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application externe"
+          }
+        }
+      }
+    },
+    "Localia needs at least one engine.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia needs at least one engine."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Localia a besoin d'au moins un moteur."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

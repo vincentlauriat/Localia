@@ -2036,3 +2036,26 @@ final class FakeProxyService: ProxyServiceControlling {
     }
     func uninstall() async {}
 }
+
+final class EngineToggleRowsTests: XCTestCase {
+    func test_settings_engineToggles_listInstalledEnginesInPriorityOrder() {
+        let rows = EngineToggleRow.rows(installed: [.ollama, .llamaCpp], enabled: [.ollama, .llamaCpp])
+        XCTAssertEqual(rows.map(\.id), [.llamaCpp, .ollama])
+        XCTAssertEqual(rows.map(\.isOn), [true, true])
+        XCTAssertEqual(rows[0].role, String(localized: "Managed by Localia"))
+        XCTAssertEqual(rows[1].role, String(localized: "External app"))
+        XCTAssertNotEqual(rows[0].role, rows[1].role)
+        let all = EngineToggleRow.rows(installed: [.ollama, .mlx, .llamaCpp], enabled: [])
+        XCTAssertEqual(all.map(\.id), [.llamaCpp, .mlx, .ollama])
+        XCTAssertEqual(all.map(\.isOn), [false, false, false])
+    }
+
+    func test_settings_lastEnabledToggleIsDisabled() {
+        let one = EngineToggleRow.rows(installed: [.llamaCpp, .ollama], enabled: [.ollama])
+        XCTAssertEqual(one.map(\.isLocked), [false, true])
+        let two = EngineToggleRow.rows(installed: [.llamaCpp, .ollama], enabled: [.llamaCpp, .ollama])
+        XCTAssertEqual(two.map(\.isLocked), [false, false])
+        // A disabled engine is never locked, even when it is the only other row.
+        XCTAssertFalse(one[0].isLocked)
+    }
+}

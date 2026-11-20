@@ -23,7 +23,7 @@ final class DockSnapshotTests: XCTestCase {
     }
 
     private func makeModel(advanced: Bool, proxy: any ProxyServiceControlling = InertProxyService(),
-                           loaded: Set<String> = []) -> AppModel {
+                           loaded: Set<String> = [], extraEngines: [FakeEngine] = []) -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         let defaults = UserDefaults(suiteName: suite)!
@@ -31,7 +31,7 @@ final class DockSnapshotTests: XCTestCase {
         settings.advancedMode = advanced
         let engine = FakeEngine(installed: ["gemma3:12b"], loaded: loaded)
         let deps = AppDependencies(
-            settings: settings, engines: [engine], registryDefaults: defaults, appDefaults: defaults,
+            settings: settings, engines: [engine] + extraEngines, registryDefaults: defaults, appDefaults: defaults,
             tool: FakeTool(), shim: FakeShim(), terminal: FakeTerminal(), availableTerminals: { [.terminal] },
             speedMeter: FakeSpeedMeter(),
             memoryGuard: MemoryGuard(availableGB: { 9.6 }, runningHeavyApps: { [] }),
@@ -76,13 +76,25 @@ final class DockSnapshotTests: XCTestCase {
         // `SettingsView.body` renders exactly this array: a section not listed here is not shown.
         XCTAssertTrue(SettingsView.sections.contains(.proxyLog))
         XCTAssertEqual(SettingsView.sections.map(\.rawValue),
-                       ["general", "localMode", "recommendations", "proxyLog", "beforeDeleting", "claudeCode"])
+                       ["general", "engines", "localMode", "recommendations", "proxyLog", "beforeDeleting", "claudeCode"])
         let model = makeModel(advanced: true)
         await model.refreshAll()
         try snapshot(SettingsRoot(model: model), named: "dock-settings", size: SettingsRoot.advancedSize)
         // The Advanced tab's own content, which the tab view above does not show in a borderless render.
         try snapshot(SettingsView(model: model), named: "dock-settings-advanced",
                      size: CGSize(width: 560, height: 1000))
+    }
+
+    /// "Engines Localia uses": three installed engines in priority order; with one switched off, the last
+    /// enabled switch is locked and the footnote shows.
+    func test_settingsPage_enginesSection_light_dark() async throws {
+        let model = makeModel(advanced: true, extraEngines: [
+            FakeEngine(id: .llamaCpp, installed: ["gemma3:12b"]), FakeEngine(id: .mlx, installed: ["gemma3:12b"])])
+        await model.refreshAll()
+        XCTAssertEqual(model.enabledEngines, [.llamaCpp, .mlx, .ollama])
+        try snapshot(SettingsView(model: model), named: "settings-engines", size: CGSize(width: 560, height: 700))
+        model.settings.disabledEngines = [.llamaCpp, .mlx]
+        try snapshot(SettingsView(model: model), named: "settings-engines-last", size: CGSize(width: 560, height: 700))
     }
 
     func test_modelsPage_simple_and_advanced() async throws {
