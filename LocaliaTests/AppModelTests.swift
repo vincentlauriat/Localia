@@ -1676,15 +1676,39 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(rows.map { model.friendlyName(for: $0.name) }, model.modelChoices.map(\.displayName))
     }
 
-    /// Ollama is not running when the model-first version first starts: its models cannot be read, so the
-    /// migration cannot tell what to move. It waits (marker left false) and moves once Ollama answers.
-    func test_updateReresolution_activeEngineDown_waitsAndRetries() async throws {
+    /// Ollama is not running when the model-first version first starts (Vincent's update): its models cannot be
+    /// read, but the stored model's candidate id finds its llama.cpp copy, so Localia moves there at once,
+    /// starts llama.cpp and says so, instead of staying on a stopped Ollama with "No model yet".
+    func test_updateReresolution_activeEngineDown_movesAtOnce_whenAnotherEngineHasTheModel() async throws {
         let ollama = FakeEngine(installed: ["q-localia"], failUntilStarted: true)
         let llama = FakeEngine(id: .llamaCpp, installed: ["q-gguf"])
         let model = makeModel(engine: ollama, others: [llama]) {
             $0.activeEngine = .ollama
             $0.lastModel = "q-localia"; $0.defaultModel = "q-localia"
             $0.modelIDs = ["q-localia": "Qwen/Qwen3-8B", "q-gguf": "Qwen/Qwen3-8B"]
+        }
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        XCTAssertNil(model.activeChoice, "Ollama's models were not readable")
+        await model.migrateToModelFirst()
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
+        XCTAssertEqual(model.activeChoice?.key, "id:Qwen/Qwen3-8B")
+        XCTAssertEqual(model.modelNotice, String(localized: "Localia now uses \(AppModel.engineName(.llamaCpp)), which it manages itself. \(AppModel.engineName(.ollama)) stays as a backup."))
+        XCTAssertTrue(model.settings.modelFirstMigrated)
+        let starts = await llama.startCount
+        XCTAssertEqual(starts, 1)
+    }
+
+    /// Ollama is down and no other engine has the stored model: nothing to move to, so the migration waits
+    /// (marker left false) and is evaluated once Ollama answers (here: it stays on Ollama, nothing said).
+    func test_updateReresolution_activeEngineDown_noOtherCopy_waitsAndRetries() async throws {
+        let ollama = FakeEngine(installed: ["q-localia"], failUntilStarted: true)
+        let llama = FakeEngine(id: .llamaCpp, installed: ["other-gguf"])
+        let model = makeModel(engine: ollama, others: [llama]) {
+            $0.activeEngine = .ollama
+            $0.lastModel = "q-localia"; $0.defaultModel = "q-localia"
+            $0.modelIDs = ["q-localia": "Qwen/Qwen3-8B", "other-gguf": "Other/Model"]
         }
         await model.setActiveEngine(.ollama)
         await model.refreshAll()
@@ -1697,11 +1721,12 @@ final class AppModelTests: XCTestCase {
         model.modelFirstPending = true    // what start() sets
         await model.refreshStatus()       // the status poll: refreshStatus, then the retry
         await model.retryModelFirstMigration()
-        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
-        XCTAssertEqual(model.settings.defaultModel, "q-gguf")
-        XCTAssertNotNil(model.modelNotice)
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertNil(model.modelNotice)
         XCTAssertTrue(model.settings.modelFirstMigrated)
         XCTAssertFalse(model.modelFirstPending)
+        let starts = await llama.startCount
+        XCTAssertEqual(starts, 0)
     }
 
     /// llama.cpp already serves another model: choosing a model makes it the one served.

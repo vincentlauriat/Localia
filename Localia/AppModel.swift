@@ -1576,9 +1576,6 @@ final class AppModel: ObservableObject {
         await pushProxyConfig()
     }
 
-    /// Once, on the first launch of the model-first version: the active model is re-resolved by the priority
-    /// rule (no override is made from the old engine). When its engine moves, the new engine is started and
-    /// the card says so once. Nothing happens when no model was chosen yet.
     /// Set by `start()` while the one-time re-resolution has not been evaluated yet.
     var modelFirstPending = false
     private var modelFirstRunning = false
@@ -1594,24 +1591,45 @@ final class AppModel: ObservableObject {
         await migrateToModelFirst()
     }
 
-    /// The marker is set only once the migration could be evaluated: not while the active engine's models
-    /// cannot be read (a stopped Ollama at the first launch), so the move is not lost; it is tried again by
-    /// the status poll and at the next launch.
+    /// Once, on the first launch of the model-first version: the active model is re-resolved by the priority
+    /// rule (no override is made from the old engine). When its engine moves, the new engine is started and
+    /// the card says so once. Nothing happens when no model was chosen yet.
+    ///
+    /// When the active engine is down (a stopped Ollama at the first launch), its models cannot be read: the
+    /// model is found from its stored name through its candidate id, and moved at once when an enabled engine
+    /// of higher priority has it. Otherwise the marker is left unset, so the move is not lost: it is tried
+    /// again by the status poll and at the next launch.
     func migrateToModelFirst() async {
         guard !settings.modelFirstMigrated, !modelFirstRunning else { return }
-        let hasModel = [settings.defaultModel, settings.lastModel].contains(where: { !($0 ?? "").isEmpty })
-        if hasModel, unreachableEngines.contains(settings.activeEngine) || engineStates.isEmpty { return }
+        let stored = [settings.lastModel, settings.defaultModel].compactMap { $0 }.first { !$0.isEmpty }
+        let oldEngine = settings.activeEngine
+        var choice = activeChoice
+        if stored != nil, engineStates.isEmpty { return }
+        if let stored, unreachableEngines.contains(oldEngine) {
+            guard let found = storedChoice(stored), let entry = resolvedEntry(found),
+                  Self.rank(entry.engine) < Self.rank(oldEngine), !unreachableEngines.contains(entry.engine)
+            else { return }
+            choice = found
+        }
         modelFirstRunning = true
         defer {
             modelFirstRunning = false
             settings.modelFirstMigrated = true
             modelFirstPending = false
         }
-        guard hasModel, let choice = activeChoice, let entry = resolvedEntry(choice) else { return }
-        let oldEngine = settings.activeEngine
+        guard stored != nil, let choice, let entry = resolvedEntry(choice) else { return }
         guard entry.engine != oldEngine, await choose(choice) else { return }
         modelNotice = String(localized: "Localia now uses \(Self.engineName(entry.engine)), which it manages itself. \(Self.engineName(oldEngine)) stays as a backup.")
     }
+
+    /// The choice holding the copies of a stored served name, by its candidate id (none without one).
+    private func storedChoice(_ name: String) -> ModelChoice? {
+        guard let id = settings.modelIDs[name], !id.isEmpty else { return nil }
+        let key = ModelChoices.key(candidateID: id, friendlyName: "")
+        return modelChoices.first { $0.key == key }
+    }
+
+    private static func rank(_ engine: EngineID) -> Int { EngineID.priority.firstIndex(of: engine) ?? Int.max }
 
     /// Whether `row` is the selected model (same engine and name).
     func isSelected(_ row: InstalledRow) -> Bool {
