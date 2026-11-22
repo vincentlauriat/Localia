@@ -369,8 +369,7 @@ final class ModelsSnapshotTests: XCTestCase {
         window.title = String(localized: "Models")
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(size)
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         // Suspends (not a nested run loop), so the view's `.task`s run on the main actor meanwhile.
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         window.displayIfNeeded()

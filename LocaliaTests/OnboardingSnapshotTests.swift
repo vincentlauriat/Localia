@@ -165,8 +165,7 @@ final class OnboardingSnapshotTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: appearance)
         window.contentView = hosting
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         hosting.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
 

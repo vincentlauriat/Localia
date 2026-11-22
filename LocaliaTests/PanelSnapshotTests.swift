@@ -461,8 +461,7 @@ final class PanelSnapshotTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: appearance)
         window.contentView = hosting
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         hosting.layoutSubtreeIfNeeded()
         let fitting = hosting.fittingSize
         window.setContentSize(NSSize(width: width, height: fitting.height))

@@ -1793,8 +1793,10 @@ final class AppModelTests: XCTestCase {
         async let first: Void = model.setEngine(.llamaCpp, enabled: false)
         async let second: Void = model.setEngine(.ollama, enabled: false)
         _ = await (first, second)
-        XCTAssertFalse(model.enabledEngines.isEmpty, "an engine stays enabled")
-        XCTAssertEqual(model.enabledEngines, [.ollama])
+        // Either toggle may start first: whichever runs disables its engine, the other is ignored.
+        XCTAssertEqual(model.enabledEngines.count, 1, "exactly one engine was switched off: \(model.enabledEngines)")
+        XCTAssertTrue(model.enabledEngines == [.llamaCpp] || model.enabledEngines == [.ollama],
+                      "\(model.enabledEngines)")
         XCTAssertFalse(model.switchingEngines)
     }
 

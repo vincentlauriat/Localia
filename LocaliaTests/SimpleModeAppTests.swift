@@ -565,8 +565,7 @@ final class SimpleModeAppTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: appearance)
         window.contentView = hosting
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         hosting.layoutSubtreeIfNeeded()
         if height == nil {
             window.setContentSize(NSSize(width: width, height: hosting.fittingSize.height))
@@ -595,8 +594,7 @@ final class SimpleModeAppTests: XCTestCase {
         window.title = title
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(size)
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         try? await Task.sleep(nanoseconds: 800_000_000)
         window.displayIfNeeded()
         defer { window.close() }
