@@ -7,6 +7,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 struct Service(Child);
@@ -18,7 +19,49 @@ impl Drop for Service {
     }
 }
 
+/// Held while `free_port` probes a port and while a child is spawned (fork to exec: `spawn` returns once the
+/// child has exec'd). `free_port` only finds a port free and the service binds it later: a child forked
+/// meanwhile would get a copy of the probe socket, keep the port bound, and the service started for it would
+/// exit on "address in use".
+static PROBE_OR_SPAWN: Mutex<()> = Mutex::new(());
+
+fn probe_or_spawn() -> MutexGuard<'static, ()> {
+    PROBE_OR_SPAWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Spawns `cmd` keeping none of this test process's descriptors but stdio.
+///
+/// The tests run on parallel threads, and std on macOS opens a socket first and marks it close-on-exec only
+/// afterwards: a child spawned by another thread in between inherits it for its whole life (a leaked
+/// listener then shows in a service's `lsof` listing, or keeps a port another test's service needs). Just
+/// before exec the child marks every descriptor above stderr close-on-exec (std's exec-error pipe already
+/// is), and it is spawned under `PROBE_OR_SPAWN` so it never copies a `free_port` probe.
+fn spawn_clean(cmd: &mut Command) -> Child {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit only writes the struct it is given.
+    let max_fd = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        limit.rlim_cur.min(65_536) as libc::c_int
+    } else {
+        65_536
+    };
+    // SAFETY: the closure only calls fcntl, which is async-signal-safe, and allocates nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            for fd in 3..max_fd {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+            Ok(())
+        });
+    }
+    let _guard = probe_or_spawn();
+    cmd.spawn().unwrap()
+}
+
 fn free_port() -> u16 {
+    let _guard = probe_or_spawn();
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -27,14 +70,13 @@ fn free_port() -> u16 {
 }
 
 fn start(data: &std::path::Path, port: u16) -> Service {
-    let child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
-        .env("LOCALIA_ROUTER_PORT", port.to_string())
-        .env("LOCALIA_DATA_DIR", data)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    Service(child)
+    Service(spawn_clean(
+        Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+            .env("LOCALIA_ROUTER_PORT", port.to_string())
+            .env("LOCALIA_DATA_DIR", data)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    ))
 }
 
 fn get(port: u16, path: &str) -> Option<String> {
@@ -94,10 +136,13 @@ fn binary_listens_on_loopback_only() {
     let svc = start(data.path(), port);
     wait_health(port);
     let pid = svc.0.id().to_string();
-    let out = Command::new("lsof")
-        .args(["-nP", "-a", "-p", &pid, "-iTCP", "-sTCP:LISTEN", "-Fn"])
-        .output()
-        .unwrap();
+    let out = spawn_clean(
+        Command::new("lsof")
+            .args(["-nP", "-a", "-p", &pid, "-iTCP", "-sTCP:LISTEN", "-Fn"])
+            .stdout(Stdio::piped()),
+    )
+    .wait_with_output()
+    .unwrap();
     let listing = String::from_utf8_lossy(&out.stdout).to_string();
     let addrs: Vec<String> = listing
         .lines()
@@ -165,15 +210,15 @@ fn binary_reads_the_app_version_when_started_like_launchd() {
     std::fs::copy(env!("CARGO_BIN_EXE_LocaliaProxyService"), &exe).unwrap();
     let data = tempfile::tempdir().unwrap();
     let port = free_port();
-    let child = Command::new(&exe)
-        .arg0("Contents/MacOS/LocaliaProxyService")
-        .current_dir("/")
-        .env("LOCALIA_ROUTER_PORT", port.to_string())
-        .env("LOCALIA_DATA_DIR", data.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let child = spawn_clean(
+        Command::new(&exe)
+            .arg0("Contents/MacOS/LocaliaProxyService")
+            .current_dir("/")
+            .env("LOCALIA_ROUTER_PORT", port.to_string())
+            .env("LOCALIA_DATA_DIR", data.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
     let _svc = Service(child);
     let reply = wait_health(port);
     let body: serde_json::Value =
@@ -184,13 +229,13 @@ fn binary_reads_the_app_version_when_started_like_launchd() {
 #[test]
 fn binary_exits_1_on_an_invalid_port_override() {
     let data = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
-        .env("LOCALIA_ROUTER_PORT", "not-a-port")
-        .env("LOCALIA_DATA_DIR", data.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = spawn_clean(
+        Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+            .env("LOCALIA_ROUTER_PORT", "not-a-port")
+            .env("LOCALIA_DATA_DIR", data.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped()),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -296,17 +341,17 @@ mod sigterm {
         .save(&data.path().join("config.json"))
         .unwrap();
         let port = super::free_port();
-        let child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
-            .env("LOCALIA_ROUTER_PORT", port.to_string())
-            .env("LOCALIA_DATA_DIR", data.path())
-            .env(
-                "LOCALIA_ENGINE_PORTS",
-                format!("{},{},{}", stubs.0.port, stubs.1.port, stubs.2.port),
-            )
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let child = super::spawn_clean(
+            Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+                .env("LOCALIA_ROUTER_PORT", port.to_string())
+                .env("LOCALIA_DATA_DIR", data.path())
+                .env(
+                    "LOCALIA_ENGINE_PORTS",
+                    format!("{},{},{}", stubs.0.port, stubs.1.port, stubs.2.port),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        );
         let running = Running {
             child,
             h: Harness {
