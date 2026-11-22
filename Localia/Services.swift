@@ -109,7 +109,9 @@ struct AppDependencies {
 
     @MainActor
     static func live() -> AppDependencies {
-        let settings = SettingsStore()
+        let settingsDefaults = UserDefaults(suiteName: SettingsStore.suiteName) ?? .standard
+        settleActiveEngine(settings: settingsDefaults, app: .standard, registry: .standard)
+        let settings = SettingsStore(defaults: settingsDefaults)
         let shimDir = Paths.shell()
         let llmfit = LlmfitManager(bundled: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/llmfit"))
         let launcher = TerminalLauncher()
@@ -152,6 +154,13 @@ struct AppDependencies {
             localTools: [CodexTool(), OpenCodeTool(), PiTool()],
             proxy: ProxyServiceManager(),
             usage: UsageStoreReader.live())
+    }
+
+    /// Before anything else reads or writes the settings (the registry writes its key at launch): a first launch
+    /// on a fresh Mac stores llama.cpp, a Mac where an earlier Localia ran keeps Ollama when no engine was stored.
+    static func settleActiveEngine(settings: UserDefaults, app: UserDefaults, registry: UserDefaults) {
+        let priorLaunch = app.bool(forKey: AppModel.onboardingDoneKey) || registry.object(forKey: EngineRegistry.defaultsKey) != nil
+        SettingsStore.settleActiveEngine(in: settings, priorLaunch: priorLaunch)
     }
 }
 

@@ -2673,18 +2673,18 @@
         }
       }
     },
-    "Install Ollama (recommended)": {
+    "Install Ollama": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Install Ollama (recommended)"
+            "value": "Install Ollama"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Installer Ollama (recommandé)"
+            "value": "Installer Ollama"
           }
         }
       }
@@ -2753,18 +2753,18 @@
         }
       }
     },
-    "Install llama.cpp": {
+    "Install llama.cpp (recommended)": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Install llama.cpp"
+            "value": "Install llama.cpp (recommended)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Installer llama.cpp"
+            "value": "Installer llama.cpp (recommandé)"
           }
         }
       }
@@ -5697,18 +5697,18 @@
         }
       }
     },
-    "The engine runs the models on this Mac. Ollama is the simplest choice.": {
+    "The engine runs the models on this Mac. Localia installs, starts and updates llama.cpp itself.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The engine runs the models on this Mac. Ollama is the simplest choice."
+            "value": "The engine runs the models on this Mac. Localia installs, starts and updates llama.cpp itself."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le moteur fait tourner les modèles sur ce Mac. Ollama est le choix le plus simple."
+            "value": "Le moteur fait tourner les modèles sur ce Mac. Localia installe, démarre et met à jour llama.cpp lui-même."
           }
         }
       }

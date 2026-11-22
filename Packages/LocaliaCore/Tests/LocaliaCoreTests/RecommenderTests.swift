@@ -232,4 +232,38 @@ final class RecommenderTests: XCTestCase {
         XCTAssertEqual(e.total, 8)
         XCTAssertEqual(r.allCompatible.map(\.id), ["Qwen/OK"])
     }
+
+    // MARK: - First run on llama.cpp (1.4.1)
+
+    /// llama.cpp downloads the candidate's GGUF from `ggufRepo`: on every Mac size, the first-run pick of the
+    /// real llmfit catalog comes from a trusted GGUF provider, in a quant llama.cpp looks for.
+    func test_firstRunPick_alwaysHasATrustedGGUF() throws {
+        for gb in [6.0, 10, 16.26, 24, 40, 60, 110] {
+            let r = try rec(pool(gb))
+            guard let pick = SimplePicks.firstRunPick(r) else { continue }
+            let provider = String(pick.ggufRepo.split(separator: "/").first ?? "")
+            XCTAssertTrue(Recommender.trustedGGUFProviders.contains(provider), "\(gb) GB: \(pick.ggufRepo)")
+            XCTAssertTrue(pick.ggufRepo.uppercased().hasSuffix("GGUF"), "\(gb) GB: \(pick.ggufRepo)")
+            XCTAssertTrue([LocaliaConstants.defaultQuant, "MXFP4"].contains(pick.quant), "\(gb) GB: \(pick.quant)")
+        }
+        XCTAssertNotNil(SimplePicks.firstRunPick(try rec(m5)), "the M5 test Mac has a pick")
+    }
+
+    /// The best-rated rows have no GGUF (or none from a trusted provider): the first run picks the best row that
+    /// has one instead of failing.
+    func test_firstRunPick_skipsRowsWithoutAGGUF() throws {
+        func row(_ name: String, quality: Double, sources: [[String: String]]) -> [String: Any] {
+            ["name": name, "provider": "Qwen", "params_b": 8.0, "fit_level": "Perfect",
+             "score_components": ["quality": quality], "best_quant": "Q4_K_M", "memory_required_gb": 6.0,
+             "estimated_tps": 40.0, "gguf_sources": sources, "capabilities": ["Tool Use"], "category": "Coding",
+             "runnable": true]
+        }
+        let objs = [row("Qwen/NoGGUF-8B", quality: 99, sources: []),
+                    row("Qwen/Untrusted-8B", quality: 98, sources: [["provider": "randomuser", "repo": "randomuser/U-GGUF"]]),
+                    row("Qwen/Good-8B", quality: 80, sources: [["provider": "bartowski", "repo": "bartowski/Good-8B-GGUF"]])]
+        let rows = try LlmfitClient.decodeRows(JSONSerialization.data(withJSONObject: ["models": objs]))
+        let pick = try XCTUnwrap(SimplePicks.firstRunPick(Recommender().recommend(rows: rows, profile: m5)))
+        XCTAssertEqual(pick.id, "Qwen/Good-8B")
+        XCTAssertEqual(pick.ggufRepo, "bartowski/Good-8B-GGUF")
+    }
 }

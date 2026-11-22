@@ -262,10 +262,13 @@ final class AppModel: ObservableObject {
 
     /// First run, or no model at all. An engine that is merely stopped is not "nothing installed".
     var needsOnboarding: Bool {
-        !deps.appDefaults.bool(forKey: "onboardingDone") || (unreachableEngines.isEmpty && installed.isEmpty)
+        !deps.appDefaults.bool(forKey: Self.onboardingDoneKey) || (unreachableEngines.isEmpty && installed.isEmpty)
     }
 
-    func finishOnboarding() { deps.appDefaults.set(true, forKey: "onboardingDone") }
+    func finishOnboarding() { deps.appDefaults.set(true, forKey: Self.onboardingDoneKey) }
+
+    /// In `appDefaults` since 1.0.
+    nonisolated static let onboardingDoneKey = "onboardingDone"
 
     /// Unloads what Localia loaded and stops the servers it started (never the user's own). A model or an
     /// engine that a Localia session still uses is left running, so quitting never cuts a live session.

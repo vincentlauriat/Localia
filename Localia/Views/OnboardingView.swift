@@ -166,12 +166,12 @@ struct OnboardingView: View {
             Text(String(localized: "\(installedEngines) is ready.")).foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                Text(String(localized: "The engine runs the models on this Mac. Ollama is the simplest choice."))
+                Text(String(localized: "The engine runs the models on this Mac. Localia installs, starts and updates llama.cpp itself."))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    installButton(.ollama, label: String(localized: "Install Ollama (recommended)"), prominent: true)
-                    installButton(.llamaCpp, label: String(localized: "Install llama.cpp"), prominent: false)
+                    installButton(.llamaCpp, label: String(localized: "Install llama.cpp (recommended)"), prominent: true)
+                    installButton(.ollama, label: String(localized: "Install Ollama"), prominent: false)
                 }
             }
         }

@@ -2099,7 +2099,7 @@ actor FakeEngine: Engine {
     private var held: [CheckedContinuation<Void, Never>] = []
     private var holdingPulls = false
     private var heldPulls: [CheckedContinuation<Void, Never>] = []
-    private let state: InstallState
+    private var state: InstallState
     /// A server Localia did not start already answers (Ollama.app): serving, but not started by us.
     private let foreign: Bool
 
@@ -2120,7 +2120,14 @@ actor FakeEngine: Engine {
     }
 
     func installState() async -> InstallState { state }
-    func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
+    private(set) var installCount = 0
+    private var installMakesInstalled = false
+    /// From now on `install()` leaves the engine installed (managed by Localia), as the real installers do.
+    func installSucceeds() { installMakesInstalled = true }
+    func install(progress: @escaping @Sendable (Double) -> Void) async throws {
+        installCount += 1
+        if installMakesInstalled { state = .installed("1.0", managedByLocalia: true) }
+    }
     func uninstall() async throws {}
     func isServing() async -> Bool { startCount > 0 || foreign }
     func isServedByOthers() async -> Bool { foreign }

@@ -61,11 +61,15 @@ final class SimpleModeAppTests: XCTestCase {
     private func makeModel(engine: FakeEngine, claude: Bool = true, rows: [LlmfitRow] = [],
                            heavyApps: [String] = [], freeGB: Double = 9.6, advanced: Bool = false,
                            others: [FakeEngine] = [], mlxRepos: FakeMLXRepos = FakeMLXRepos(),
+                           firstLaunch: Bool = false,
                            configure: (SettingsStore) -> Void = { _ in }) -> AppModel {
         let suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
         engines.append(engine)
+        engines.append(contentsOf: others)
         let defaults = UserDefaults(suiteName: suite)!
+        // `live()` settles the engine on the untouched defaults of a Mac where no Localia ran before.
+        if firstLaunch { AppDependencies.settleActiveEngine(settings: defaults, app: defaults, registry: defaults) }
         let settings = SettingsStore(defaults: defaults)
         settings.advancedMode = advanced
         settings.modelIDs = [Self.served: Self.servedID, Self.second: Self.secondID]
@@ -196,6 +200,77 @@ final class SimpleModeAppTests: XCTestCase {
         XCTAssertTrue(m.isLocalModeOn)
         XCTAssertFalse(m.needsOnboarding)
         XCTAssertEqual(m.simpleStatus, .ready(name: "Qwen3 8B", speed: .fast))
+    }
+
+    /// A Mac where no Localia ran before: the first run installs llama.cpp (never Ollama) and downloads the pick
+    /// there, without naming the engine.
+    func testFreshMacFirstRunInstallsLlamaCpp() async throws {
+        let ollama = FakeEngine(id: .ollama, installed: [], state: .notInstalled)
+        let llama = FakeEngine(id: .llamaCpp, installed: [], state: .notInstalled)
+        await ollama.installSucceeds()
+        await llama.installSucceeds()
+        let m = makeModel(engine: ollama, rows: try Self.rows(), others: [llama], firstLaunch: true)
+        XCTAssertEqual(m.settings.activeEngine, .llamaCpp)
+        await m.refreshAll()
+        XCTAssertTrue(m.needsOnboarding)
+        await llama.holdPulls()
+        let setup = Task { await m.runSimpleSetup() }
+        for _ in 0..<300 where m.downloads.values.first?.fraction == nil {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(m.downloads.values.first?.engine, .llamaCpp, "the pick downloads to llama.cpp")
+        assertPlain(m.simpleSetupDetail, "setup detail")
+        await llama.releasePulls()
+        await setup.value
+        XCTAssertEqual(m.simpleSetup, .done)
+        XCTAssertNil(m.alert)
+        let llamaInstalls = await llama.installCount
+        let ollamaInstalls = await ollama.installCount
+        XCTAssertEqual(llamaInstalls, 1)
+        XCTAssertEqual(ollamaInstalls, 0, "Ollama is not installed on a fresh Mac")
+        XCTAssertEqual(m.settings.activeEngine, .llamaCpp)
+        XCTAssertEqual(m.installed.map(\.engine), [.llamaCpp])
+        XCTAssertEqual(m.settings.defaultModel, "Qwen/Qwen3-8B")
+        XCTAssertTrue(m.isLocalModeOn)
+    }
+
+    /// A 1.4.0 Mac that kept the default engine, so never stored `activeEngine`: the settings, app and registry
+    /// defaults as 1.4.0 leaves them (separate stores, as in `live()`). It keeps Ollama, as does each marker alone.
+    func testEarlierInstallWithoutStoredEngineKeepsOllama() throws {
+        func fresh() -> UserDefaults {
+            let name = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
+            suites.append(name)
+            return UserDefaults(suiteName: name)!
+        }
+        // Everything 1.4.0 wrote on a Mac that finished the first run on Ollama.
+        let settings = fresh(), app = fresh(), registry = fresh()
+        settings.set(["qwen3-coder:30b": Self.servedID], forKey: "modelIDs")
+        settings.set("qwen3-coder:30b", forKey: "defaultModel")
+        settings.set("qwen3-coder:30b", forKey: "lastModel")
+        settings.set(["ollama": "proxy", "llamaCpp": "proxy"], forKey: "engineRoutes")
+        settings.set(1, forKey: "routerSettingsVersion")
+        settings.set(true, forKey: "modelFirstMigrated")
+        settings.set(true, forKey: "localModeOn")
+        app.set(true, forKey: AppModel.onboardingDoneKey)
+        registry.set("ollama", forKey: EngineRegistry.defaultsKey)
+        AppDependencies.settleActiveEngine(settings: settings, app: app, registry: registry)
+        XCTAssertEqual(settings.string(forKey: "activeEngine"), "ollama")
+        XCTAssertEqual(SettingsStore(defaults: settings).activeEngine, .ollama)
+
+        // Only the onboarding flag, or only the registry key (a first run left before its end).
+        for marker in ["onboarding", "registry"] {
+            let s = fresh(), a = fresh(), r = fresh()
+            if marker == "onboarding" { a.set(true, forKey: AppModel.onboardingDoneKey) }
+            else { r.set("ollama", forKey: EngineRegistry.defaultsKey) }
+            AppDependencies.settleActiveEngine(settings: s, app: a, registry: r)
+            XCTAssertEqual(SettingsStore(defaults: s).activeEngine, .ollama, marker)
+        }
+
+        // A user who chose MLX keeps it, whatever else is there.
+        let chose = fresh()
+        chose.set("mlx", forKey: "activeEngine")
+        AppDependencies.settleActiveEngine(settings: chose, app: fresh(), registry: fresh())
+        XCTAssertEqual(SettingsStore(defaults: chose).activeEngine, .mlx)
     }
 
     func testFirstRunWithNothingThatFitsSaysSoInPlainWords() async {

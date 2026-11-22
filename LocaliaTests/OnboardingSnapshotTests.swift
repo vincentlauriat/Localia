@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 import LocaliaCore
 @testable import Localia
@@ -125,6 +126,33 @@ final class OnboardingSnapshotTests: XCTestCase {
             }
             await engine.releasePulls()
         }
+    }
+
+    /// Step 1 on a Mac with no engine: llama.cpp is the recommended (first) button, Ollama comes second, and the
+    /// explanation no longer calls Ollama the simplest choice. Read back from the rendered window with Vision.
+    func testEngineStepRecommendsLlamaCppFirst() async throws {
+        let model = makeModel(engine: FakeEngine(installed: [], state: .notInstalled), claude: false,
+                              rows: try Self.rows(tps: 38))
+        await model.refreshAll()
+        let url = base.appendingPathComponent("onboarding-engine-step.png")
+        render(OnboardingView(model: model, onDone: {}), appearance: .aqua, to: url)
+        let image = try XCTUnwrap(NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US", "fr-FR"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        // Reading order: top to bottom, then left to right on a line.
+        let lines = (request.results ?? []).sorted {
+            abs($0.boundingBox.midY - $1.boundingBox.midY) > 0.01 ? $0.boundingBox.midY > $1.boundingBox.midY
+                : $0.boundingBox.minX < $1.boundingBox.minX
+        }.compactMap { $0.topCandidates(1).first?.string }
+        let text = lines.joined(separator: " | ")
+        let llama = try XCTUnwrap(text.range(of: String(localized: "Install llama.cpp (recommended)")), text)
+        let ollama = try XCTUnwrap(text.range(of: String(localized: "Install Ollama")), text)
+        XCTAssertLessThan(llama.lowerBound, ollama.lowerBound, "llama.cpp first: \(text)")
+        XCTAssertFalse(text.localizedCaseInsensitiveContains("Ollama (recommand"), text)
+        XCTAssertFalse(text.contains("simplest") || text.contains("plus simple"), text)
     }
 
     /// The banner comes from the asset catalog, with a dark variant (not the light one on a dark window).

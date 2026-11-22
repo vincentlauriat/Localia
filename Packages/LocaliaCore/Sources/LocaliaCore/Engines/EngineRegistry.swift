@@ -4,13 +4,14 @@ import Foundation
 public actor EngineRegistry {
     private let engines: [EngineID: any Engine]
     private let defaults: UserDefaults
-    private static let key = "localia.activeEngine"
+    /// Written at every launch since 1.0, so its presence means an earlier Localia ran here.
+    public static let defaultsKey = "localia.activeEngine"
     public private(set) var activeID: EngineID
 
     public init(engines: [any Engine], defaults: UserDefaults = .standard) {
         self.engines = Dictionary(engines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         self.defaults = defaults
-        let saved = defaults.string(forKey: Self.key).flatMap(EngineID.init(rawValue:))
+        let saved = defaults.string(forKey: Self.defaultsKey).flatMap(EngineID.init(rawValue:))
         if let saved, self.engines[saved] != nil {
             activeID = saved
         } else {
@@ -26,6 +27,6 @@ public actor EngineRegistry {
     public func setActive(_ id: EngineID) {
         guard engines[id] != nil else { return }
         activeID = id
-        defaults.set(id.rawValue, forKey: Self.key)
+        defaults.set(id.rawValue, forKey: Self.defaultsKey)
     }
 }
