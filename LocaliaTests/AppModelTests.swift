@@ -1823,6 +1823,35 @@ final class AppModelTests: XCTestCase {
         await task.value
     }
 
+    /// While an engine starts, simple mode's status never names an engine (start button and launch paths).
+    private func assertSimpleStartMessage(_ run: @escaping (AppModel) async throws -> Void,
+                                          file: StaticString = #filePath, line: UInt = #line) async throws {
+        let engine = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let model = makeModel(engine: engine) { $0.defaultModel = "X"; $0.activeEngine = .llamaCpp; $0.advancedMode = false }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        await engine.holdStarts()
+        let task = Task { try await run(model) }
+        for _ in 0..<300 where await engine.startCount == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        let msg = try XCTUnwrap(model.busyMessage, file: file, line: line)
+        XCTAssertEqual(msg, String(localized: "Getting the model ready…"), file: file, line: line)
+        for raw in ["Ollama", "llama.cpp", "MLX"] { XCTAssertFalse(msg.contains(raw), msg, file: file, line: line) }
+        await engine.releaseStarts()
+        try await task.value
+    }
+
+    func test_startEngine_simpleMode_busyMessageHasNoEngineName() async throws {
+        try await assertSimpleStartMessage { await $0.startEngine() }
+    }
+
+    func test_launch_simpleMode_busyMessageHasNoEngineName() async throws {
+        let f = try folder()
+        try await assertSimpleStartMessage { model in
+            await model.setLocalMode(true)
+            await model.launch(folder: f)
+        }
+    }
+
     /// Advanced mode keeps naming the engine.
     func test_measureSpeed_advancedMode_busyMessageNamesTheEngine() async throws {
         let engine = FakeEngine(id: .llamaCpp, installed: ["X"])

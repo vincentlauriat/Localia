@@ -1037,9 +1037,15 @@ final class AppModel: ObservableObject {
         loadedForShim = loadedForShim.filter { $0.engine != engine.id || names.contains($0.model) }
     }
 
+    /// What the status shows while an engine starts: simple mode never names an engine.
+    func startingMessage(for engine: EngineID) -> String {
+        isSimpleMode ? String(localized: "Getting the model ready…")
+                     : String(localized: "Starting \(Self.engineName(engine))…")
+    }
+
     /// Starts the engine, warns about memory, loads the model and measures it the first time.
     private func prepareLocal(engine: any Engine, model: String) async throws -> LoadOutcome {
-        busyMessage = String(localized: "Starting \(Self.engineName(engine.id))…")
+        busyMessage = startingMessage(for: engine.id)
         let outcome = try await loadWithMemoryCheck(engine: engine, model: model)
         guard outcome != .cancelled else { return outcome }
         // Not while another session uses the engine: the figure would be wrong and the probe would slow it down.
@@ -1237,7 +1243,7 @@ final class AppModel: ObservableObject {
                 let key = ModelKey(engine: e.id, model: m)
                 llamaPending.append(key)
                 defer { release(key) }
-                busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
+                busyMessage = startingMessage(for: e.id)
                 _ = try await loadWithMemoryCheck(engine: e, model: m)
                 busyMessage = nil
             } else {
@@ -1690,9 +1696,7 @@ final class AppModel: ObservableObject {
         if row.engine.servesOneModel { llamaPending.append(key) }
         defer { if row.engine.servesOneModel { release(key) } }
         do {
-            // Simple mode never names an engine.
-            busyMessage = isSimpleMode ? String(localized: "Getting the model ready…")
-                                       : String(localized: "Starting \(Self.engineName(e.id))…")
+            busyMessage = startingMessage(for: e.id)
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
                 await measure(engine: e, model: row.name)
             }
