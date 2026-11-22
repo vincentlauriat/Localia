@@ -1774,6 +1774,70 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotNil(model.modelChoices.first { $0.entries.map(\.name) == ["plain"] })
     }
 
+    /// Simple mode's Delete carries on past an alert that was already on screen before the call.
+    func test_deleteModel_continuesWhenAnAlertWasAlreadyShown() async throws {
+        let (model, ollama, llama) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"])
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let choice = try XCTUnwrap(model.modelChoices.first { $0.key == "id:Qwen/Qwen3-8B" })
+        let rows = choice.entries.compactMap { e in model.installed.first { $0.engine == e.engine && $0.name == e.name } }
+        XCTAssertEqual(rows.count, 2)
+        model.alert = AppAlert(title: "Earlier", message: "Something else")
+        await model.deleteModel(rows)
+        let gone = (await ollama.deleted, await llama.deleted)
+        XCTAssertEqual(gone.0, ["q-localia"])
+        XCTAssertEqual(gone.1, ["q-gguf"])
+    }
+
+    /// The first copy cannot be deleted: the other copy is kept and the alert is that failure's.
+    func test_deleteModel_stopsAtTheFirstFailure() async throws {
+        let (model, ollama, llama) = twoEngineModel(ollamaInstalled: ["q-localia", "plain"])
+        await model.setActiveEngine(.ollama)
+        await model.refreshAll()
+        let choice = try XCTUnwrap(model.modelChoices.first { $0.key == "id:Qwen/Qwen3-8B" })
+        var rows = choice.entries.compactMap { e in model.installed.first { $0.engine == e.engine && $0.name == e.name } }
+        rows.sort { $0.name > $1.name }   // q-localia first
+        await ollama.failDelete("q-localia")
+        model.alert = AppAlert(title: "Earlier", message: "Something else")
+        await model.deleteModel(rows)
+        let gone = (await ollama.deleted, await llama.deleted)
+        XCTAssertEqual(gone.0, [])
+        XCTAssertEqual(gone.1, [], "the second copy is kept")
+        XCTAssertEqual(model.alert?.title, String(localized: "Could not delete the model"))
+    }
+
+    /// Simple mode never names an engine while a speed measurement starts it.
+    func test_measureSpeed_simpleMode_busyMessageHasNoEngineName() async throws {
+        let engine = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let model = makeModel(engine: engine) { $0.activeEngine = .llamaCpp; $0.advancedMode = false }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        let row = try XCTUnwrap(model.installed.first { $0.name == "X" })
+        await engine.holdStarts()
+        let task = Task { await model.measureSpeed(row) }
+        for _ in 0..<300 where await engine.startCount == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        let msg = try XCTUnwrap(model.busyMessage)
+        XCTAssertEqual(msg, String(localized: "Getting the model ready…"))
+        for raw in ["Ollama", "llama.cpp", "MLX"] { XCTAssertFalse(msg.contains(raw), msg) }
+        await engine.releaseStarts()
+        await task.value
+    }
+
+    /// Advanced mode keeps naming the engine.
+    func test_measureSpeed_advancedMode_busyMessageNamesTheEngine() async throws {
+        let engine = FakeEngine(id: .llamaCpp, installed: ["X"])
+        let model = makeModel(engine: engine) { $0.activeEngine = .llamaCpp; $0.advancedMode = true }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        let row = try XCTUnwrap(model.installed.first { $0.name == "X" })
+        await engine.holdStarts()
+        let task = Task { await model.measureSpeed(row) }
+        for _ in 0..<300 where await engine.startCount == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(model.busyMessage, String(localized: "Starting \(AppModel.engineName(.llamaCpp))…"))
+        await engine.releaseStarts()
+        await task.value
+    }
+
     /// Simple mode's chooser goes through `choose`: a click on a model whose engine (llama.cpp) is stopped
     /// starts it, so a near-novice never lands on a stopped engine.
     func test_simpleChooser_click_startsTheResolvedEngine() async throws {
@@ -2013,7 +2077,11 @@ actor FakeEngine: Engine {
     func holdPulls() { holdingPulls = true }
     func releasePulls() { holdingPulls = false; heldPulls.forEach { $0.resume() }; heldPulls = [] }
     private(set) var deleted: [String] = []
+    private var failingDeletes: Set<String> = []
+    /// `delete` of this model throws (it is not removed).
+    func failDelete(_ modelName: String) { failingDeletes.insert(modelName) }
     func delete(_ modelName: String) async throws {
+        if failingDeletes.contains(modelName) { throw EngineError.http(500) }
         deleted.append(modelName)
         installed.removeAll { $0 == modelName }
     }

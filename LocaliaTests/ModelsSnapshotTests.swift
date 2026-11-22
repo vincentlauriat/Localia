@@ -405,6 +405,23 @@ final class ModelsSnapshotTests: XCTestCase {
         return content.bounds.size
     }
 
+    /// Simple mode shows the measured speed as a word (Fast / OK / Slow), never as tok/s.
+    func test_copyLines_simpleMode_measuredSpeedIsAWord() {
+        let tps = 42.0
+        let simple = InstalledCopyLine.speedText(tps: tps, advanced: false)
+        XCTAssertEqual(simple, SpeedBucket(tokensPerSecond: tps).title)
+        XCTAssertFalse(simple.localizedCaseInsensitiveContains("tok"), simple)
+        XCTAssertEqual(InstalledCopyLine.speedText(tps: tps, advanced: true), Fmt.tps(tps))
+    }
+
+    /// Simple mode's line has an empty label: no (selectable) Text is rendered for it.
+    func test_copyLines_simpleMode_noEmptyLabelText() {
+        let empty = InstalledLine(id: "a", label: "", sizeGB: 1, rows: [])
+        let named = InstalledLine(id: "b", label: "Ollama · m", sizeGB: 1, rows: [])
+        XCTAssertFalse(InstalledCopyLine.showsLabel(empty))
+        XCTAssertTrue(InstalledCopyLine.showsLabel(named))
+    }
+
     private static func views(in v: NSView, named name: String) -> [NSView] {
         String(describing: type(of: v)) == name ? [v] : v.subviews.flatMap { views(in: $0, named: name) }
     }

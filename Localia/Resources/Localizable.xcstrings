@@ -2465,6 +2465,22 @@
         }
       }
     },
+    "Getting the model ready…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Getting the model ready…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation du modèle…"
+          }
+        }
+      }
+    },
     "Getting things ready…": {
       "localizations": {
         "en": {

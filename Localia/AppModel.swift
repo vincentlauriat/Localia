@@ -1406,13 +1406,16 @@ final class AppModel: ObservableObject {
         await downloadTasks[id]?.value
     }
 
-    func delete(_ row: InstalledRow) async {
-        guard row.deletable, let e = await registry.engine(row.engine) else { return }
+    /// Returns false when this delete failed (an alert says why); a row that is not deletable is skipped.
+    @discardableResult
+    func delete(_ row: InstalledRow) async -> Bool {
+        guard row.deletable, let e = await registry.engine(row.engine) else { return true }
         if await tracker.modelsStillInUse().contains(ModelKey(engine: row.engine, model: row.name)) {
             alert = AppAlert(title: String(localized: "Model in use"),
                              message: String(localized: "A Claude Code session still uses this model."))
-            return
+            return false
         }
+        var deleted = true
         do {
             try await e.delete(row.name)
             loadedByLocalia.remove(ModelKey(engine: row.engine, model: row.name))
@@ -1425,18 +1428,19 @@ final class AppModel: ObservableObject {
             if settings.defaultModel == row.name { settings.defaultModel = nil }
             if settings.lastModel == row.name { settings.lastModel = nil }
         } catch {
+            deleted = false
             show(error, title: String(localized: "Could not delete the model"))
         }
         await refreshInstalled()
         await pushProxyConfig()
+        return deleted
     }
 
     /// Simple mode's single Delete for a model: every copy Localia downloaded goes; stops at the first refusal
-    /// (a session still uses it) or error, which shows its alert.
+    /// (a session still uses it) or error, which shows its alert. An alert already on screen does not stop it.
     func deleteModel(_ rows: [InstalledRow]) async {
         for row in rows where row.deletable {
-            await delete(row)
-            if alert != nil { return }
+            if !(await delete(row)) { return }
         }
     }
 
@@ -1686,7 +1690,9 @@ final class AppModel: ObservableObject {
         if row.engine.servesOneModel { llamaPending.append(key) }
         defer { if row.engine.servesOneModel { release(key) } }
         do {
-            busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
+            // Simple mode never names an engine.
+            busyMessage = isSimpleMode ? String(localized: "Getting the model ready…")
+                                       : String(localized: "Starting \(Self.engineName(e.id))…")
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
                 await measure(engine: e, model: row.name)
             }
