@@ -76,7 +76,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     nonisolated public static let legacyDefaultEngine: EngineID = .ollama
     nonisolated private static let activeEngineKey = "activeEngine"
     /// Every other key this store writes (1.4.0 already had them all): any of them means an earlier Localia
-    /// ran with these settings.
+    /// ran with these settings. Frozen at what 1.4.0 wrote: never extend it (later installs always store `activeEngine`).
     nonisolated private static let settingsKeys = ["terminalApp", "localModeScope", "engineDownPolicy",
         "launchProfile", "localModeOn", "autoLocalWhenOffline", "advancedMode", "defaultModel", "lastModel",
         "modelIDs", "estimatedMemoryGB", "engineRoutes", "logContent", "logRetentionDays", "measurements",

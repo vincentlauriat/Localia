@@ -110,7 +110,10 @@ struct AppDependencies {
     @MainActor
     static func live() -> AppDependencies {
         let settingsDefaults = UserDefaults(suiteName: SettingsStore.suiteName) ?? .standard
-        settleActiveEngine(settings: settingsDefaults, app: .standard, registry: .standard)
+        // The test host runs `live()` too: never settle into the developer's real defaults.
+        if !AppDelegate.isRunningTests {
+            settleActiveEngine(settings: settingsDefaults, app: .standard, registry: .standard)
+        }
         let settings = SettingsStore(defaults: settingsDefaults)
         let shimDir = Paths.shell()
         let llmfit = LlmfitManager(bundled: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/llmfit"))
