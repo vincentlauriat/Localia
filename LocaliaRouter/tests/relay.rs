@@ -984,7 +984,7 @@ async fn translated_stream_cut_by_the_engine_ends_with_an_error() {
     assert!(t.contains("event: error"), "{t}");
     assert!(!t.contains("message_stop"));
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled");
+    assert_eq!(r.status, "upstream_error");
     assert_eq!(
         r.error.as_deref(),
         Some("Stream ended without message_stop")
@@ -993,6 +993,23 @@ async fn translated_stream_cut_by_the_engine_ends_with_an_error() {
         .await
         .json();
     assert_eq!(health["route"]["engineFailure"], "mlx");
+}
+
+#[tokio::test]
+async fn translated_stream_engine_death_is_upstream_error() {
+    let stubs = engines().await;
+    let c = "data: {\"choices\":[{\"delta\":{\"content\":\"Hal\"}}]}\n\n";
+    stubs.2.on(move |_| Reply::sse("").steps(vec![Step::Data(c.into()), Step::Abort]));
+    let h = router_on(Mlx, &stubs, false).await;
+    let r = post(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    assert!(text_of(&r).contains("event: error"));
+    let r = &wait_rows(&h, 1).await[0];
+    assert_eq!(r.status, "upstream_error");
+    assert!(r
+        .error
+        .as_deref()
+        .unwrap()
+        .starts_with("Upstream stream interrupted:"));
 }
 
 // MARK: - Keepalives (manual clock)

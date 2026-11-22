@@ -1634,14 +1634,10 @@ fn finish_translated(
         .unwrap_or((None, None));
     if out.status != Status::Cancelled {
         if let Some(reason) = &end.interrupted {
-            out.status = if d == Dialect::Anthropic {
-                Status::Cancelled
-            } else {
-                Status::UpstreamError
-            };
+            out.status = Status::UpstreamError;
             out.error = Some(format!("Upstream stream interrupted: {reason}"));
         } else if !terminal {
-            out.status = Status::Cancelled;
+            out.status = Status::UpstreamError;
             out.error = Some(
                 match d {
                     Dialect::Responses => "Stream ended without response.completed",
