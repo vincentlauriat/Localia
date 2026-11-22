@@ -141,6 +141,10 @@ final class AppModel: ObservableObject {
     /// One-time plain-words notice of the Active model card: the engine of the active model moved (update to
     /// model-first, an engine switched off). Cleared by the card once shown or dismissed.
     @Published var modelNotice: String?
+    /// An Ollama that Localia did not start answers on its port (read by `refreshStatus`).
+    @Published private(set) var ollamaServedByOthers = false
+    /// "Not now" on the external Ollama offer: kept in memory only, so the offer returns on the next launch.
+    @Published private var externalOfferDismissed = false
     /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
     @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
 
@@ -320,6 +324,7 @@ final class AppModel: ObservableObject {
         heavyApps = deps.memoryGuard.check(requiredGB: 0, profile: profile)?.heavyApps ?? []
         runningSessions = await tracker.runningSessions()
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
+        ollamaServedByOthers = await registry.engine(.ollama)?.isServedByOthers() ?? false
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
         if let mlx = engine as? MLXEngine, let model = await mlx.takeFailure() {
@@ -1532,6 +1537,22 @@ final class AppModel: ObservableObject {
         if !activeServing || !servesIt { await startEngine() }
     }
 
+    /// Advanced mode only: an Ollama started outside Localia serves a copy of the active model while another
+    /// engine runs it. Accepting makes Ollama the model's engine; simple mode keeps the priority engine.
+    var externalEngineOffer: ExternalEngineOffer? {
+        guard !isSimpleMode, !externalOfferDismissed, ollamaServedByOthers,
+              enabledEngines.contains(.ollama), settings.activeEngine != .ollama,
+              let choice = activeChoice, choice.engines.contains(.ollama) else { return nil }
+        return ExternalEngineOffer(engine: .ollama, choice: choice)
+    }
+
+    func acceptExternalEngineOffer() async {
+        guard let offer = externalEngineOffer else { return }
+        await setOverride(offer.engine, for: offer.choice)
+    }
+
+    func dismissExternalEngineOffer() { externalOfferDismissed = true }
+
     /// Advanced mode "Engine" menu: `nil` is Automatic (priority order). The model is chosen again at once;
     /// a refused move (llama.cpp busy) keeps the previous override.
     func setOverride(_ engine: EngineID?, for choice: ModelChoice) async {
@@ -1985,4 +2006,10 @@ final class RoutingSource {
     var resolver: RouteResolver {
         RouteResolver(routes: settings.engineRoutes, proxyHealthy: !fallback && proxy.isHealthy)
     }
+}
+
+/// "Ollama is already running on this Mac. Use it for <model>?": the engine to offer and the model it is for.
+struct ExternalEngineOffer: Equatable {
+    let engine: EngineID
+    let choice: ModelChoice
 }

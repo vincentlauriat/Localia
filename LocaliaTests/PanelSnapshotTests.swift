@@ -136,18 +136,19 @@ final class PanelSnapshotTests: XCTestCase {
     /// models. Ollama is active and running, as an existing user before model-first; `llamaStopped`: the model
     /// is chosen on llama.cpp, which does not run, while Ollama does (the router's backup).
     private func twoEngineModel(proxy: any ProxyServiceControlling = InertProxyService(),
-                                llamaStopped: Bool = false) async throws -> AppModel {
+                                llamaStopped: Bool = false, foreignOllama: Bool = false) async throws -> AppModel {
         suite = "fr.vincentlauriat.localia.tests.\(UUID().uuidString)"
         suites.append(suite)
-        let ollama = FakeEngine(installed: [Self.served, "gemma3:12b"], loaded: [Self.served])
+        let ollama = FakeEngine(installed: [Self.served, "gemma3:12b"], loaded: [Self.served], foreign: foreignOllama)
         let llama = FakeEngine(id: .llamaCpp, installed: [Self.servedGGUF])
+        let llamaActive = llamaStopped || foreignOllama
         let model = makeModel(proxy: proxy, engines: [ollama, llama],
                               modelIDs: [Self.served: Self.candidate, Self.servedGGUF: Self.candidate]) {
-            $0.activeEngine = llamaStopped ? .llamaCpp : .ollama
-            $0.lastModel = llamaStopped ? Self.servedGGUF : Self.served
+            $0.activeEngine = llamaActive ? .llamaCpp : .ollama
+            $0.lastModel = llamaActive ? Self.servedGGUF : Self.served
         }
-        if llamaStopped {
-            try await ollama.startServing()
+        if llamaActive {
+            if !foreignOllama { try await ollama.startServing() }
             await model.setActiveEngine(.llamaCpp)
         } else {
             await model.setActiveEngine(.ollama)
@@ -230,6 +231,22 @@ final class PanelSnapshotTests: XCTestCase {
         XCTAssertNil(ActiveModelCard.State(model: model)?.notice)
         model.settings.advancedMode = true
         try renderCard(model, name: "ready")
+    }
+
+    /// Ollama.app runs outside Localia and has a copy of the active model: the card offers to use it, in
+    /// advanced mode only, and not in the compact style.
+    func test_activeCard_showsExternalOllamaOffer() async throws {
+        let model = try await twoEngineModel(foreignOllama: true)
+        XCTAssertEqual(model.settings.activeEngine, .llamaCpp)
+        let state = try XCTUnwrap(ActiveModelCard.State(model: model))
+        XCTAssertEqual(state.externalOffer,
+                       String(localized: "Ollama is already running on this Mac. Use it for \(state.title)?"))
+        model.settings.advancedMode = false
+        XCTAssertNil(ActiveModelCard.State(model: model)?.externalOffer)
+        model.settings.advancedMode = true
+        try renderCard(model, name: "external-offer")
+        model.dismissExternalEngineOffer()
+        XCTAssertNil(ActiveModelCard.State(model: model)?.externalOffer)
     }
 
     /// The router answers from the backup while the chosen engine is stopped: the line says so from the route,

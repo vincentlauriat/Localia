@@ -87,6 +87,50 @@ final class OllamaEngineTests: XCTestCase {
         XCTAssertEqual(launcher.handle.terminateCount, 1)
     }
 
+    func test_isServedByOthers_trueForAForeignServer() async {
+        EngineStubProtocol.handler = { _ in StubResponse(text: #"{"version":"0.40.3"}"#) }
+        let engine = makeEngine()
+        let others = await engine.isServedByOthers()
+        XCTAssertTrue(others)
+    }
+
+    func test_isServedByOthers_falseForOwnServer() async throws {
+        let launcher = FakeLauncher()
+        let bin = tmp.appendingPathComponent("fake-ollama")
+        try Data("#!/bin/sh\n".utf8).write(to: bin)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        EngineStubProtocol.handler = { _ in
+            launcher.spawnCount > 0 ? StubResponse(text: #"{"version":"0.40.3"}"#) : StubResponse(status: 503)
+        }
+        let engine = makeEngine(launcher: launcher, systemBinaries: [bin])
+        try await engine.startServing()
+        let others = await engine.isServedByOthers()
+        XCTAssertFalse(others)
+    }
+
+    /// Localia's own server from a previous run: no handle, but a pid record for a live process.
+    func test_isServedByOthers_falseForOwnServerRecordFromAPreviousRun() async throws {
+        let bin = tmp.appendingPathComponent("fake-ollama")
+        try Data("#!/bin/sh\n".utf8).write(to: bin)
+        let inspector = FakeInspector()
+        inspector.setAlive(4242, path: bin.resolvingSymlinksInPath().path)
+        let engines = Paths.engines(base: tmp)
+        try FileManager.default.createDirectory(at: engines, withIntermediateDirectories: true)
+        OwnServerRecord(file: engines.appendingPathComponent("ollama-serve.pid"), inspector: inspector)
+            .write(pid: 4242, binary: bin)
+        EngineStubProtocol.handler = { _ in StubResponse(text: #"{"version":"0.40.3"}"#) }
+        let engine = makeEngine(inspector: inspector)
+        let others = await engine.isServedByOthers()
+        XCTAssertFalse(others)
+    }
+
+    func test_isServedByOthers_falseWhenDown() async {
+        EngineStubProtocol.handler = { _ in StubResponse(status: 503) }
+        let engine = makeEngine()
+        let others = await engine.isServedByOthers()
+        XCTAssertFalse(others)
+    }
+
     func test_startServing_withoutBinary_throws() async {
         EngineStubProtocol.handler = { _ in StubResponse(status: 503) }
         let engine = makeEngine()

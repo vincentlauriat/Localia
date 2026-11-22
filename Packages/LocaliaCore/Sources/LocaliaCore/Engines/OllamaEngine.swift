@@ -187,6 +187,14 @@ public actor OllamaEngine: Engine {
 
     public func isServing() async -> Bool { await serverVersion() != nil }
 
+    /// True when a server answers but Localia neither holds a live handle on it nor has a pid record for
+    /// a live process: an Ollama started outside Localia (Ollama.app, a terminal `ollama serve`).
+    public func isServedByOthers() async -> Bool {
+        guard await isServing() else { return false }
+        if let h = ownServer, h.isRunning { return false }
+        return record.recordedPID() == nil
+    }
+
     private var record: OwnServerRecord {
         OwnServerRecord(file: Paths.engines(base: appSupportBase).appendingPathComponent("ollama-serve.pid"),
                         inspector: inspector, pollInterval: pollInterval, exitTimeout: exitTimeout, killAfter: killAfter)

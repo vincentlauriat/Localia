@@ -31,6 +31,9 @@ struct ActiveModelCard: View {
         let override: EngineID?
         /// The one-time notice (advanced mode only).
         let notice: String?
+        /// Advanced mode: "Ollama is already running on this Mac. Use it for <model>?" while Ollama was started
+        /// outside Localia and holds a copy of this model.
+        let externalOffer: String?
 
         /// What VoiceOver reads for the dot and the text: the line already says the status, so the dot is not
         /// read again; Start/Stop is a separate button.
@@ -86,6 +89,9 @@ struct ActiveModelCard: View {
             engineMenu = advanced ? choice.engines : nil
             override = model.settings.engineOverrides[choice.key]
             notice = advanced ? model.modelNotice : nil
+            externalOffer = model.externalEngineOffer.map {
+                String(localized: "Ollama is already running on this Mac. Use it for \($0.choice.displayName)?")
+            }
         }
     }
 
@@ -175,6 +181,9 @@ struct ActiveModelCard: View {
             if let notice = state.notice {
                 noticeLine(notice)
             }
+            if let offer = state.externalOffer {
+                offerLine(offer)
+            }
         }
     }
 
@@ -262,6 +271,40 @@ struct ActiveModelCard: View {
             await model.setOverride(engine, for: choice)
             onResult()
         }
+    }
+
+    private func offerLine(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "info.circle.fill").font(.system(size: 12)).foregroundStyle(Theme.blue)
+                Text(text).font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button { model.dismissExternalEngineOffer() } label: {
+                    Text(String(localized: "Not now")).font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Theme.track.opacity(0.7), in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button {
+                    Task { await model.acceptExternalEngineOffer(); onResult() }
+                } label: {
+                    Text(String(localized: "Use Ollama")).font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .foregroundStyle(Theme.onAccent)
+                        .background(Theme.accent, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.selectingModel != nil)
+            }
+        }
+        .padding(8)
+        .background(Theme.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func noticeLine(_ notice: String) -> some View {

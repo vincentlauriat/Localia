@@ -1480,10 +1480,10 @@ final class AppModelTests: XCTestCase {
 
     /// The same llmfit candidate on Ollama and llama.cpp: two engines, one model to pick.
     private func twoEngineModel(active: EngineID = .ollama, ollamaInstalled: [String] = ["q-localia"],
-                                llamaInstalled: [String] = ["q-gguf"],
+                                llamaInstalled: [String] = ["q-gguf"], ollamaForeign: Bool = false,
                                 configure: @escaping (SettingsStore) -> Void = { _ in })
     -> (AppModel, FakeEngine, FakeEngine) {
-        let ollama = FakeEngine(installed: ollamaInstalled)
+        let ollama = FakeEngine(installed: ollamaInstalled, foreign: ollamaForeign)
         let llama = FakeEngine(id: .llamaCpp, installed: llamaInstalled)
         let model = makeModel(engine: ollama, others: [llama]) {
             $0.activeEngine = active
@@ -1520,6 +1520,73 @@ final class AppModelTests: XCTestCase {
         let starts = await llama.startCount
         XCTAssertEqual(starts, 1)
         XCTAssertEqual(model.activeChoice?.key, "id:Qwen/Qwen3-8B")
+    }
+
+    // MARK: External Ollama offer
+
+    /// llama.cpp is active on the model; Ollama.app (not started by Localia) holds a copy.
+    private func offerModel(foreign: Bool = true, advanced: Bool = true, ollamaInstalled: [String] = ["q-localia"],
+                            disabled: Set<EngineID> = []) async -> (AppModel, FakeEngine) {
+        let (model, ollama, _) = twoEngineModel(active: .llamaCpp, ollamaInstalled: ollamaInstalled, ollamaForeign: foreign) {
+            $0.advancedMode = advanced
+            $0.lastModel = "q-gguf"; $0.defaultModel = "q-gguf"
+            $0.disabledEngines = disabled
+        }
+        await model.setActiveEngine(.llamaCpp)
+        await model.refreshAll()
+        return (model, ollama)
+    }
+
+    func test_externalOffer_shownWhenForeignOllamaServesTheActiveModel() async throws {
+        let (model, _) = await offerModel()
+        let choice = try XCTUnwrap(model.activeChoice)
+        XCTAssertEqual(model.externalEngineOffer, ExternalEngineOffer(engine: .ollama, choice: choice))
+    }
+
+    func test_externalOffer_absentInSimpleMode() async throws {
+        let (model, _) = await offerModel(advanced: false)
+        XCTAssertNil(model.externalEngineOffer)
+    }
+
+    func test_externalOffer_absentWhenModelHasNoOllamaCopy() async throws {
+        let (model, _) = await offerModel(ollamaInstalled: ["other"])
+        XCTAssertNotNil(model.activeChoice)
+        XCTAssertNil(model.externalEngineOffer)
+    }
+
+    func test_externalOffer_absentWhenOllamaDisabled() async throws {
+        let (model, _) = await offerModel(disabled: [.ollama])
+        XCTAssertNil(model.externalEngineOffer)
+    }
+
+    /// Ollama answers but it is Localia's own server (live handle or pid record from a previous run).
+    func test_externalOffer_absentForOwnServerRecord() async throws {
+        let (model, ollama) = await offerModel(foreign: false)
+        try await ollama.startServing()
+        await model.refreshStatus()
+        XCTAssertNil(model.externalEngineOffer)
+    }
+
+    func test_acceptExternalOffer_setsOverrideAndServesOnOllama() async throws {
+        let (model, ollama) = await offerModel()
+        let choice = try XCTUnwrap(model.externalEngineOffer?.choice)
+        await model.acceptExternalEngineOffer()
+        XCTAssertEqual(model.settings.engineOverrides[choice.key], .ollama)
+        XCTAssertEqual(model.settings.activeEngine, .ollama)
+        XCTAssertEqual(model.settings.defaultModel, "q-localia")
+        let starts = await ollama.startCount
+        XCTAssertEqual(starts, 0, "the user's server is used, not started")
+        XCTAssertNil(model.externalEngineOffer)
+    }
+
+    func test_dismissExternalOffer_staysHiddenUntilRelaunch() async throws {
+        let (model, _) = await offerModel()
+        XCTAssertNotNil(model.externalEngineOffer)
+        model.dismissExternalEngineOffer()
+        XCTAssertNil(model.externalEngineOffer)
+        await model.refreshStatus()
+        XCTAssertNil(model.externalEngineOffer, "a status poll does not bring it back")
+        XCTAssertNil(model.settings.engineOverrides[try XCTUnwrap(model.activeChoice).key], "dismissing changes nothing")
     }
 
     func test_choose_withOverride_usesOverrideEngine() async throws {
@@ -1898,6 +1965,8 @@ actor FakeEngine: Engine {
     private var holdingPulls = false
     private var heldPulls: [CheckedContinuation<Void, Never>] = []
     private let state: InstallState
+    /// A server Localia did not start already answers (Ollama.app): serving, but not started by us.
+    private let foreign: Bool
 
     private let window: Int
 
@@ -1905,10 +1974,11 @@ actor FakeEngine: Engine {
     private let failUntilStarted: Bool
 
     init(id: EngineID = .ollama, installed: [String], loaded: Set<String> = [], failInstalled: Bool = false,
-         failUntilStarted: Bool = false,
+         failUntilStarted: Bool = false, foreign: Bool = false,
          state: InstallState = .installed("1.0", managedByLocalia: false), contextWindow: Int = 32768) {
         self.id = id; self.installed = installed; self.loaded = loaded; self.failInstalled = failInstalled
         self.failUntilStarted = failUntilStarted
+        self.foreign = foreign
         self.window = contextWindow
         self.singleModel = id.servesOneModel
         self.state = state
@@ -1917,7 +1987,8 @@ actor FakeEngine: Engine {
     func installState() async -> InstallState { state }
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {}
     func uninstall() async throws {}
-    func isServing() async -> Bool { startCount > 0 }
+    func isServing() async -> Bool { startCount > 0 || foreign }
+    func isServedByOthers() async -> Bool { foreign }
     func startServing() async throws {
         startCount += 1
         if holdingStarts { await withCheckedContinuation { heldStarts.append($0) } }
