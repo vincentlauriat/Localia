@@ -125,9 +125,10 @@ final class ProxyServiceManagerTests: XCTestCase {
                             pollInterval: .milliseconds(5), deadline: deadline, restartDeadline: restartDeadline)
     }
 
-    /// launchd may hold a respawn back ~10 s: after a restart the poll waits longer than the first one.
-    func test_defaultRestartDeadline_outlastsTheLaunchdThrottle() {
-        XCTAssertGreaterThanOrEqual(ProxyServiceManager.defaultRestartDeadline, .seconds(12))
+    /// The old router drains for DRAIN_TIMEOUT (15 s) + CUT_TIMEOUT (2 s) before the respawn: the restart poll
+    /// must outlast both, plus startup.
+    func test_defaultRestartDeadline_outlastsTheRouterShutdownDrain() {
+        XCTAssertGreaterThanOrEqual(ProxyServiceManager.defaultRestartDeadline, .seconds(15 + 2 + 5))
     }
 
     func test_restart_waitsForItsOwnDeadline_notTheFirstOne() async {

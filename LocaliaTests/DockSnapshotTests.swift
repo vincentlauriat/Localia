@@ -232,7 +232,9 @@ final class DockSnapshotTests: XCTestCase {
             record(1, tool: "Codex", model: "qwen3-coder:30b-a3b-instruct-q4_K_M", status: 200, output: nil),
             record(2, tool: "Claude Code", model: "gemma3:12b", status: 500, output: 0, error: "upstream closed the connection"),
             record(3, tool: nil, model: "gemma3:12b", status: 200, output: 1_250),
-            // A stream the engine cut after its 200: long, on a raw served id the page shows by its human name.
+            // Legacy 1.4.0 row: a cut stream was logged as "cancelled" + "Upstream stream interrupted". Such rows
+            // can stay in users' usage.sqlite for up to 90 days, so the fixture keeps them (long, on a raw served
+            // id the page shows by its human name).
             record(4, tool: "Claude Code", model: Self.servedHF, status: 200, output: 3_100,
                    error: "Upstream stream interrupted: The network connection was lost.", outcome: "cancelled",
                    durationMs: 192_000),
@@ -289,7 +291,7 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertEqual(LogPage.statusRole(cancelled), .cancelled, "grey, no error icon")
         usage.filter.errorsOnly = true
         XCTAssertFalse(usage.filteredRequests.contains { $0.id == cancelled.id }, "Errors only leaves it out")
-        XCTAssertTrue(usage.filteredRequests.contains { $0.id == usage.requests[4].id }, "a cut stream stays an error")
+        XCTAssertTrue(usage.filteredRequests.contains { $0.id == usage.requests[4].id }, "a legacy interrupted-stream row stays listed as an error")
     }
 
     func test_log_upstreamErrorMidStream_showsInterruptedAndTheError() {
