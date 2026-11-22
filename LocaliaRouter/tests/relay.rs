@@ -1702,6 +1702,11 @@ async fn passthrough_stream_request_with_json_answer_echoes_client_model() {
         assert_eq!(got, want, "{rest}: only the model changed");
         let row = &wait_rows(&h, 1).await[0];
         assert_eq!(row.status, "ok", "{rest}");
+        assert_eq!(
+            row.model.as_deref(),
+            Some(QWEN_LLAMA),
+            "{rest}: the real model, as a non-streamed answer records it"
+        );
         assert_eq!(row.input, Some(3), "{rest}: usage read from the JSON");
         assert_eq!(row.output, Some(1), "{rest}");
     }
