@@ -292,6 +292,16 @@ final class DockSnapshotTests: XCTestCase {
         XCTAssertTrue(usage.filteredRequests.contains { $0.id == usage.requests[4].id }, "a cut stream stays an error")
     }
 
+    func test_log_upstreamErrorMidStream_showsInterruptedAndTheError() {
+        let r = RequestRecord(id: UUID(), start: Date(), durationMs: 5_000, session: "s", tool: "Claude Code",
+                              folder: "/Users/me/Dev/Localia", engine: .ollama, model: "gemma3:12b", api: .anthropic,
+                              status: "upstream_error", httpStatus: 200, usage: TokenUsage(input: 100, output: 10),
+                              error: "Upstream stream interrupted: connection reset")
+        XCTAssertEqual(LogPage.statusText(r), String(localized: "Interrupted"))
+        XCTAssertFalse(r.isUserCancelled)
+        XCTAssertEqual(RequestFilter(errorsOnly: true).apply([r]).count, 1, "Errors only keeps it")
+    }
+
     func test_duration_fitsAColumn() {
         XCTAssertFalse(UsagePage.duration(ms: 192_000).contains(","), "no list separator")
         XCTAssertTrue(UsagePage.duration(ms: 192_000).hasPrefix("3"))

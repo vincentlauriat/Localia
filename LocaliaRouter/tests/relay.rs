@@ -480,7 +480,7 @@ async fn client_disconnect_records_cancelled() {
 }
 
 #[tokio::test]
-async fn stream_without_message_stop_is_cancelled() {
+async fn stream_without_message_stop_is_upstream_error() {
     let stubs = engines().await;
     let cut = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1200,\"output_tokens\":1}}}\n\n";
     stubs.0.on(move |_| Reply::sse(cut));
@@ -493,12 +493,53 @@ async fn stream_without_message_stop_is_cancelled() {
         "a clean end is passed through as it is"
     );
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled");
+    assert_eq!(r.status, "upstream_error");
     assert_eq!(
         r.error.as_deref(),
         Some("Stream ended without message_stop")
     );
     assert_eq!(r.input, Some(1200));
+}
+
+#[tokio::test]
+async fn responses_stream_without_completed_is_upstream_error() {
+    let stubs = engines().await;
+    let cut = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
+    stubs.1.on(move |_| Reply::sse(cut));
+    let h = router_on(LlamaCpp, &stubs, false).await;
+    let body = r#"{"model":"localia","stream":true,"input":"hi"}"#;
+    let r = post(&h, &path("auto", "/v1/responses"), body).await;
+    assert_eq!(r.status, 200);
+    let r = &wait_rows(&h, 1).await[0];
+    assert_eq!(r.status, "upstream_error");
+    assert_eq!(
+        r.error.as_deref(),
+        Some("Stream ended without response.completed")
+    );
+}
+
+#[tokio::test]
+async fn client_close_during_engine_failure_stays_cancelled() {
+    let stubs = engines().await;
+    let first = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1200,\"output_tokens\":1}}}\n\n";
+    let second = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n";
+    let die = Arc::new(Notify::new());
+    let d = die.clone();
+    stubs.0.on(move |_| {
+        Reply::sse(first).steps(vec![
+            Step::Data(first.into()),
+            Step::Data(second.into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
+    let h = router_on(Ollama, &stubs, false).await;
+    let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("content_block_start", 1).await;
+    drop(s); // the client leaves first
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    die.notify_one(); // then the engine dies
+    one_cancelled_row(&h).await;
 }
 
 #[tokio::test]
@@ -781,7 +822,7 @@ async fn midstream_engine_death_never_switches() {
     assert!(tail.contains("The local model server stopped"), "{tail}");
     assert!(stubs.1.seen().is_empty(), "no byte from another engine");
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled", "Anthropic stream, 1.4 parity");
+    assert_eq!(r.status, "upstream_error", "an engine failure is not a client cancel");
     assert!(r
         .error
         .as_deref()

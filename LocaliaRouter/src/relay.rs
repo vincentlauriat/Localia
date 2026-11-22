@@ -1097,21 +1097,17 @@ fn passthrough(
         if out.status != Status::Cancelled {
             if let Some(reason) = &interrupted {
                 if ok {
-                    out.status = if row.dialect == Dialect::Anthropic && streamed {
-                        Status::Cancelled
-                    } else {
-                        Status::UpstreamError
-                    };
+                    out.status = Status::UpstreamError;
                     out.error = Some(format!("Upstream stream interrupted: {reason}"));
                 }
             } else if ok && streamed && !terminal {
                 match row.dialect {
                     Dialect::Anthropic => {
-                        out.status = Status::Cancelled;
+                        out.status = Status::UpstreamError;
                         out.error = Some("Stream ended without message_stop".into());
                     }
                     Dialect::Responses => {
-                        out.status = Status::Cancelled;
+                        out.status = Status::UpstreamError;
                         out.error = Some("Stream ended without response.completed".into());
                     }
                     Dialect::Chat => {}
