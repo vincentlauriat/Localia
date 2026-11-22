@@ -173,8 +173,10 @@ final class ProxyServiceManager: ObservableObject, ProxyServiceControlling {
         self.restartDeadline = restartDeadline
     }
 
-    /// After a restart: launchd may hold the respawn back ~10 s when the old process still held the port.
-    nonisolated static let defaultRestartDeadline: Duration = .seconds(12)
+    /// After a restart: the old router drains in-flight requests for up to DRAIN_TIMEOUT (15 s) and then cuts
+    /// the rest within CUT_TIMEOUT (2 s) (LocaliaRouter/src/server.rs), and launchd may hold the respawn back
+    /// ~10 s; the new one then still has to start. 25 s covers 15 + 2 plus startup.
+    nonisolated static let defaultRestartDeadline: Duration = .seconds(25)
 
     /// Ephemeral session, 1 s per request: a health poll never waits on a hung connection.
     nonisolated static func liveFetch() -> Fetch {

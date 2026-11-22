@@ -39,7 +39,7 @@ pub async fn spawn(tweak: impl FnOnce(&mut ServiceConfig)) -> Harness {
     };
     tweak(&mut cfg);
     tokio::spawn(async move {
-        if let Err(e) = serve(cfg, listener).await {
+        if let Err(e) = serve(cfg, listener, std::future::pending()).await {
             panic!("serve failed: {e:#}");
         }
     });

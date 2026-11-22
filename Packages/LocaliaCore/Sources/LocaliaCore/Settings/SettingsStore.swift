@@ -69,6 +69,34 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
     /// True once the one-time model-first re-resolution of the active model ran.
     @Published public var modelFirstMigrated: Bool { didSet { defaults.set(modelFirstMigrated, forKey: "modelFirstMigrated") } }
 
+    /// The engine of a first launch on a Mac where no Localia ran before: Localia manages llama.cpp entirely.
+    nonisolated public static let firstRunEngine: EngineID = .llamaCpp
+    /// What an unset `activeEngine` meant up to 1.4.0, and still means for a store created without
+    /// `settleActiveEngine(in:priorLaunch:)` (tests).
+    nonisolated public static let legacyDefaultEngine: EngineID = .ollama
+    nonisolated private static let activeEngineKey = "activeEngine"
+    /// Every other key this store writes (1.4.0 already had them all): any of them means an earlier Localia
+    /// ran with these settings. Frozen at what 1.4.0 wrote: never extend it (later installs always store `activeEngine`).
+    nonisolated private static let settingsKeys = ["terminalApp", "localModeScope", "engineDownPolicy",
+        "launchProfile", "localModeOn", "autoLocalWhenOffline", "advancedMode", "defaultModel", "lastModel",
+        "modelIDs", "estimatedMemoryGB", "engineRoutes", "logContent", "logRetentionDays", "measurements",
+        "routerSettingsVersion", "disabledEngines", "engineOverrides", "modelFirstMigrated", recentKey]
+
+    /// Stores `activeEngine` once, before the store is created, when no version of Localia ever wrote it:
+    /// `firstRunEngine` on a fresh install, `legacyDefaultEngine` when an earlier Localia ran here (it then
+    /// used Ollama without storing it; switching would hide the user's Ollama models). An earlier run shows
+    /// as any other key of this store, or `priorLaunch`: state the app keeps outside this suite. Never
+    /// changes a stored engine, so the choice never flips later. Returns the stored engine.
+    @discardableResult
+    nonisolated public static func settleActiveEngine(in defaults: UserDefaults, priorLaunch: Bool) -> EngineID {
+        if let stored = defaults.string(forKey: activeEngineKey).flatMap(EngineID.init(rawValue:)) { return stored }
+        let earlier = priorLaunch || defaults.object(forKey: activeEngineKey) != nil   // unreadable: written before
+            || settingsKeys.contains { defaults.object(forKey: $0) != nil }
+        let engine = earlier ? legacyDefaultEngine : firstRunEngine
+        defaults.set(engine.rawValue, forKey: activeEngineKey)
+        return engine
+    }
+
     public var recentFolders: [String] {
         get { load() }
         set { objectWillChange.send(); save(newValue) }
@@ -76,7 +104,7 @@ public final class SettingsStore: ObservableObject, LocalModeSettings, RecentFol
 
     public init(defaults: UserDefaults = UserDefaults(suiteName: SettingsStore.suiteName) ?? .standard) {
         self.defaults = defaults
-        activeEngine = Self.raw(defaults, "activeEngine", .ollama)
+        activeEngine = Self.raw(defaults, Self.activeEngineKey, Self.legacyDefaultEngine)
         terminalApp = Self.raw(defaults, "terminalApp", .terminal)
         localModeScope = Self.raw(defaults, "localModeScope", .localiaOnly)
         engineDownPolicy = Self.raw(defaults, "engineDownPolicy", .autoStart)

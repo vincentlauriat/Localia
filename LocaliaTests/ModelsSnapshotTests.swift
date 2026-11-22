@@ -369,8 +369,7 @@ final class ModelsSnapshotTests: XCTestCase {
         window.title = String(localized: "Models")
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(size)
-        window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-        window.orderFront(nil)
+        window.orderFrontOffscreen()
         // Suspends (not a nested run loop), so the view's `.task`s run on the main actor meanwhile.
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         window.displayIfNeeded()
@@ -403,6 +402,23 @@ final class ModelsSnapshotTests: XCTestCase {
         guard let png = rep.representation(using: .png, properties: [:]) else { return .zero }
         try? png.write(to: url)
         return content.bounds.size
+    }
+
+    /// Simple mode shows the measured speed as a word (Fast / OK / Slow), never as tok/s.
+    func test_copyLines_simpleMode_measuredSpeedIsAWord() {
+        let tps = 42.0
+        let simple = InstalledCopyLine.speedText(tps: tps, advanced: false)
+        XCTAssertEqual(simple, SpeedBucket(tokensPerSecond: tps).title)
+        XCTAssertFalse(simple.localizedCaseInsensitiveContains("tok"), simple)
+        XCTAssertEqual(InstalledCopyLine.speedText(tps: tps, advanced: true), Fmt.tps(tps))
+    }
+
+    /// Simple mode's line has an empty label: no (selectable) Text is rendered for it.
+    func test_copyLines_simpleMode_noEmptyLabelText() {
+        let empty = InstalledLine(id: "a", label: "", sizeGB: 1, rows: [])
+        let named = InstalledLine(id: "b", label: "Ollama · m", sizeGB: 1, rows: [])
+        XCTAssertFalse(InstalledCopyLine.showsLabel(empty))
+        XCTAssertTrue(InstalledCopyLine.showsLabel(named))
     }
 
     private static func views(in v: NSView, named name: String) -> [NSView] {

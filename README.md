@@ -1,20 +1,25 @@
 # Localia
 
-Localia is a macOS menu-bar app that finds the local LLMs that run well on your Mac, downloads and runs them, and opens Claude Code on them. It is for any Mac user: nothing needs to be installed beforehand (no Homebrew, Ollama, Python or Claude Code).
+Localia is the local AI layer for your Mac's coding agents: local first, in the cloud only when you allow it.
+
+It is a menu-bar app that finds the local models that run well on your Mac, downloads and runs them, and opens Claude Code, Codex, OpenCode or Pi on them. Nothing needs to be installed beforehand (no Homebrew, Ollama, Python or Claude Code).
 
 - **Recommendations that fit.** Models ranked for your hardware by [llmfit](https://github.com/AlexsJones/llmfit), speed first, with a clear warning when your Mac will be slow. The whole llmfit catalog is read, and every compatible model is listed with the reason others were set aside.
 - **Hugging Face.** Recent GGUF releases from trusted providers and a free search, each with its memory breakdown and a fits / tight / doesn't-fit verdict for this Mac.
+- **Pick a model, Localia picks the engine.** You choose a model; when it is installed on more than one engine, Localia uses llama.cpp, then MLX, then Ollama. In advanced mode, **Settings › Advanced › Engines Localia uses** switches engines off.
 - **Model management.** Download with progress, cancel, see what is installed and loaded, unload, delete.
-- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Tested end to end on llama.cpp and MLX. Models under 14B carry a "simple tasks" badge: fine for small fixes, unreliable across several files.
+- **Claude Code on a local model.** One click opens Terminal in a folder you choose, running Claude Code against the local model. Localia passes the model's real context window (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). Models under 30B carry a "simple tasks" badge: fine for small fixes, unreliable across several files.
 - **Local mode switch.** An airplane-mode-style toggle that sends AI work to the local models.
 - **Other coding tools.** In local mode, Codex, OpenCode and Pi launch the same way, each with its own config written by Localia (your `~/.codex`, `~/.config/opencode` and `~/.pi` are never touched). Localia warns when the model's context window is too small for them.
-- **Localia proxy and usage statistics.** A small background service on `127.0.0.1:11438` sits between your coding tools and the engines. Per engine you choose Direct or Via Localia (Engines & proxy page of the main window; Ollama and llama.cpp are via Localia by default, MLX always). It records metadata only (time, tool, folder, model, engine, tokens in and out, duration, status); request content is recorded only if you turn on "Record request content" (off by default). Everything stays on this Mac in `~/Library/Application Support/Localia/proxy/usage.sqlite`: the log is kept 1 to 90 days (7 by default), daily totals for a year, and "Erase…" deletes either. Sessions keep running when you quit Localia (MLX sessions still stop with the app). If the service is unavailable, for example turned off in System Settings › General › Login Items, Localia runs the engines direct and shows "Usage statistics are paused".
-- **Main window.** "Open Localia" in the panel opens a window with a sidebar: **Overview** (a live "How it works" diagram of your tools, the proxy, the engines and the models), **Models**, **Engines & proxy**, **Sessions**, **Usage**, **Log** and **Settings**. In simple mode the sidebar shows only Overview, Models and Settings. The Dock icon appears only while the window is open; ⌘W hides the window (and the icon), ⌘, opens Settings. Quitting with sessions running asks for confirmation.
-- **Engines.** Ollama (default), llama.cpp and MLX, installed, updated and removed from the app. MLX runs `mlx-lm` in a private Python made with `uv`, behind an in-app gateway that speaks the Anthropic API to Claude Code (Codex needs Ollama or llama.cpp).
+- **The Localia router.** A small background service on `127.0.0.1:11438` sits between your coding tools and the engines. It answers Claude Code (Anthropic API) and Codex (OpenAI Responses API) for every engine, translating for MLX, so Codex works on MLX too. If the engine serving your model stops, the router sends the request to the same model on another enabled engine that is running and has it (the router never starts an engine itself). On the **Engines & proxy** page, Ollama and llama.cpp can each go **Via Localia** (the default) or **Direct** (no fallback, not counted); MLX always goes via Localia.
+- **Usage statistics.** The router records metadata only (time, tool, folder, model, engine, tokens in and out, duration, status); request content is recorded only if you turn on "Record request content" (off by default). Everything stays on this Mac in `~/Library/Application Support/Localia/proxy/usage.sqlite`: the log is kept 1 to 90 days (7 by default), daily totals for a year, and "Erase…" deletes either. Sessions keep running when you quit Localia (MLX sessions still stop with the app). If the router is unavailable, for example turned off in System Settings › General › Login Items, Ollama and llama.cpp run direct and Localia shows "Usage statistics are paused"; MLX needs the router, and Localia offers to restart it.
+- **Main window.** "Open Localia" in the panel opens a window with a sidebar: **Overview** (a live "How it works" diagram of your tools, the router, the engines and the models), **Models**, **Engines & proxy**, **Sessions**, **Usage**, **Log** and **Settings**. In simple mode the sidebar shows only Overview, Models and Settings. The Dock icon appears only while the window is open; ⌘, opens Settings. Quitting with sessions running asks for confirmation.
+- **Menu-bar status.** The pin is an outline when local mode is off and filled when it is on. An orange "!" badge means the local AI still answers through a fallback; a red "×" means nothing answers.
+- **Engines.** llama.cpp, MLX and Ollama, installed, updated and removed from the **Engines & proxy** page, with no Homebrew. MLX runs `mlx-lm` in a private Python made with `uv`. Localia can also use an Ollama you started yourself.
 
 **Simple by default.** Out of the box Localia shows only what you need: a status line in plain words, the Local mode switch, "Open Claude in a folder…" and the model in use. The first run picks the best model for your Mac and installs everything with one progress bar. Turn on **Settings › Advanced mode** to see engines, sessions, memory-hungry apps, Codex/OpenCode/Pi and the full model catalog on the Models page.
 
-Requires macOS 14 or later. Recommendations are tuned for Apple Silicon.
+Requires macOS 14 or later on a Mac with Apple silicon.
 
 ## Install
 
@@ -26,16 +31,16 @@ The app is signed with a Developer ID and notarized by Apple.
 
 ## First run
 
-1. Click the Localia pin in the menu bar. The panel shows the active model's speed, free memory, installed models, memory-hungry apps, running sessions and the engine.
-2. Open the models window and download one of the recommended models. Localia installs the engine it needs first (Ollama by default), after asking.
-3. Pick a folder and choose "Launch Claude Code". If Claude Code is missing, Localia offers to run Anthropic's official installer; nothing runs without your confirmation.
+1. Launch Localia. The welcome window offers **Set Up My AI**: Localia picks the model that suits this Mac, then installs what is missing, one step at a time: an engine (llama.cpp, which Localia installs, starts and updates itself; a Mac that ran an earlier Localia keeps its engine), Claude Code (with Anthropic's official installer) and the model. Local mode is turned on last, once everything worked. Nothing is installed before you click.
+2. Click the Localia pin in the menu bar, then **Open Claude in a folder…** (in advanced mode, **Launch Claude Code**), and pick a folder.
+3. For more, click **Open Localia** in the panel: the **Models** page shows the three models recommended for this Mac, and **See all models…** (or advanced mode) opens the full catalog and Hugging Face. In advanced mode the panel also shows the speed, free memory, the active model and its engine, installed models, memory-hungry apps and running sessions, and, in local mode, Codex, OpenCode and Pi next to Claude Code.
 
 ## Local mode
 
-The **Local mode** switch (second row of the menu-bar panel) turns local mode on and off. When it is on, the menu-bar pin is filled and the panel shows a teal "✈︎ Local mode" badge; when it is off, the pin is an outline and "Launch Claude Code" says *Cloud*. Its scope is a setting:
+The **Local mode** switch in the menu-bar panel turns local mode on and off. When it is on, the menu-bar pin is filled; when it is off, the pin is an outline and, in advanced mode, "Launch Claude Code" says *Cloud*. Where it applies is a setting (**Settings › General › Local mode applies to**):
 
-- **Localia sessions only** (default). Only the Terminal windows Localia opens use the local model. Nothing outside the app changes, and your shell files are never touched.
-- **Every `claude`.** The `claude` you type in any terminal also goes to the local model. Localia installs a small shim in `~/Library/Application Support/Localia/shell/` and adds this block to `~/.zshrc` (and `~/.bashrc` if it exists):
+- **Claude opened from Localia** (default). Only the Terminal windows Localia opens use the local model. Nothing outside the app changes, and your shell files are never touched.
+- **Every Claude, in any terminal.** The `claude` you type in any terminal also goes to the local model. Localia installs a small shim in `~/Library/Application Support/Localia/shell/` and adds this block to `~/.zshrc` (and `~/.bashrc` if it exists):
 
   ```sh
   # >>> localia >>>
@@ -43,19 +48,19 @@ The **Local mode** switch (second row of the menu-bar panel) turns local mode on
   # <<< localia <<<
   ```
 
-  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching the scope back to "Localia sessions only" removes exactly this block and nothing else. What happens when the engine is down is a setting: auto-start it, fall back to the cloud, or fail with a clear message (llama.cpp gets up to 90 s to start, Ollama 20 s).
+  (`claude.bash` in `.bashrc`.) Before the first change Localia saves `<rc>.localia-backup-<timestamp>`. Switching back to "Claude opened from Localia" removes exactly this block and nothing else. What happens when the engine is down is a setting (**Settings › Advanced › When the engine is down**): start it automatically (the default; llama.cpp and MLX get up to 90 s to start, Ollama 20 s), fall back to the cloud, or stop with an error. The cloud is used only when you pick that option, and the shim says so when it happens.
 
-With local mode off, `claude` runs exactly as before. Either way, sessions go through the Localia proxy when the engine is set to Via Localia.
+With local mode off, `claude` runs exactly as before. With it on, sessions go through the Localia router, except on an engine set to Direct.
 
-llama.cpp and MLX serve one model at a time. While a session uses one of their models, Localia refuses to launch another session on a different model of the same engine instead of stopping the first one: wait for that session to end, or end it. Sessions started from a terminal in "every `claude`" mode appear in the Sessions card too.
+llama.cpp and MLX serve one model at a time. While a session uses one of their models, Localia refuses to launch another session on a different model of the same engine instead of stopping the first one: wait for that session to end, or end it. Sessions started from a terminal in "every Claude" mode appear on the Sessions page too.
 
 ## Uninstall
 
-Deleting the app does not remove the block from your shell files. Before you delete Localia, open **Settings** and click **Remove Localia from My Shell**: it turns local mode off and removes the block (your backups stay where they are). It also unregisters the Localia proxy background service. Then quit Localia and move it to the Trash. If the app is already gone, delete the `# >>> localia >>>` block from `~/.zshrc` and `~/.bashrc` by hand, run `launchctl bootout gui/$(id -u)/fr.vincentlauriat.localia.proxy`, and delete `~/Library/Application Support/Localia/proxy/` (the usage log). Models and engines Localia downloaded live in `~/Library/Application Support/Localia/`.
+Deleting the app does not remove the block from your shell files. Before you delete Localia, turn on **Settings › Advanced mode**, then in the **Advanced** tab, under "Before deleting Localia", click **Remove Localia from My Shell**: it turns local mode off and removes the block (your backups stay where they are). It also unregisters the Localia router's background service. Then quit Localia and move it to the Trash. If the app is already gone, delete the `# >>> localia >>>` block from `~/.zshrc` and `~/.bashrc` by hand, run `launchctl bootout gui/$(id -u)/fr.vincentlauriat.localia.proxy`, and delete `~/Library/Application Support/Localia/proxy/` (the usage log). Models and engines Localia downloaded live in `~/Library/Application Support/Localia/`.
 
 ## Build from source
 
-Prerequisites: Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Rust 1.98 with both macOS targets (`rustup toolchain install 1.98 && rustup target add aarch64-apple-darwin x86_64-apple-darwin`). The local router (`LocaliaRouter/`, Rust) is built by `Scripts/build-router.sh` and embedded in the app as `Contents/MacOS/LocaliaProxyService` (universal: arm64 and x86_64); `xcodegen` and every Xcode build run it.
+Prerequisites: Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Rust 1.98 with both macOS targets (`rustup toolchain install 1.98 && rustup target add aarch64-apple-darwin x86_64-apple-darwin`). The local router (`LocaliaRouter/`, Rust) is built by `Scripts/build-router.sh` and embedded in the app as `Contents/MacOS/LocaliaProxyService` (universal, arm64 and x86_64, although the app itself requires Apple silicon); `xcodegen` and every Xcode build run it.
 
 ```sh
 xcodegen
@@ -82,7 +87,7 @@ Sparkle updates read `https://raw.githubusercontent.com/vincentlauriat/Localia/m
 
 ## Credits
 
-Localia builds on [llmfit](https://github.com/AlexsJones/llmfit) (MIT), [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT), [Ollama](https://github.com/ollama/ollama) (MIT) and [Sparkle](https://github.com/sparkle-project/Sparkle). Full notices are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and in the app bundle. Claude Code is Anthropic's; Localia does not bundle it.
+Localia builds on [llmfit](https://github.com/AlexsJones/llmfit) (MIT), [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT), [Ollama](https://github.com/ollama/ollama) (MIT), [MLX](https://github.com/ml-explore/mlx) and [mlx-lm](https://github.com/ml-explore/mlx-lm) (MIT), [uv](https://github.com/astral-sh/uv) (MIT or Apache-2.0) and [Sparkle](https://github.com/sparkle-project/Sparkle). Full notices are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and in the app bundle. Claude Code is Anthropic's; Localia does not bundle it.
 
 ## Licence
 

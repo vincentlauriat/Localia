@@ -34,6 +34,10 @@ private final class Gate: @unchecked Sendable {
     }
 }
 
+/// Set once, read by the test that set it up (both on the main actor).
+@MainActor
+private final class Flag { var isSet = false }
+
 /// Records calls; never touches launchd.
 private final class FakeRegistrar: ServiceRegistering, @unchecked Sendable {
     private let lock = NSLock()
@@ -121,9 +125,10 @@ final class ProxyServiceManagerTests: XCTestCase {
                             pollInterval: .milliseconds(5), deadline: deadline, restartDeadline: restartDeadline)
     }
 
-    /// launchd may hold a respawn back ~10 s: after a restart the poll waits longer than the first one.
-    func test_defaultRestartDeadline_outlastsTheLaunchdThrottle() {
-        XCTAssertGreaterThanOrEqual(ProxyServiceManager.defaultRestartDeadline, .seconds(12))
+    /// The old router drains for DRAIN_TIMEOUT (15 s) + CUT_TIMEOUT (2 s) before the respawn: the restart poll
+    /// must outlast both, plus startup.
+    func test_defaultRestartDeadline_outlastsTheRouterShutdownDrain() {
+        XCTAssertGreaterThanOrEqual(ProxyServiceManager.defaultRestartDeadline, .seconds(15 + 2 + 5))
     }
 
     func test_restart_waitsForItsOwnDeadline_notTheFirstOne() async {
@@ -365,6 +370,19 @@ final class ProxyServiceManagerTests: XCTestCase {
         }
     }
 
+    /// Starts `body` in a main-actor task and returns once the task has run to its first suspension (here: a
+    /// manager call waiting for the check in flight). The task and the test share the main actor, so the flag
+    /// set before the call is only seen once the task has given the actor back, i.e. once it is waiting.
+    private func waiting(_ body: @escaping @MainActor () async -> Void) async -> Task<Void, Never> {
+        let started = Flag()
+        let task = Task { @MainActor in
+            started.isSet = true
+            await body()
+        }
+        await waitUntil { started.isSet }
+        return task
+    }
+
     /// A check is held on its health poll, Restart is pressed and waits for it, then the check finishes and
     /// the forced cycle is held mid-unregister. Returns the tasks and the gate holding the unregister.
     private func restartHeldMidUnregister(_ registrar: FakeRegistrar, _ http: StubHTTP, _ m: ProxyServiceManager)
@@ -374,8 +392,7 @@ final class ProxyServiceManagerTests: XCTestCase {
         registrar.unregisterGate = unregister
         let check = Task { await m.ensureRunning() }
         await waitUntil { health.waiting == 1 }
-        let restart = Task { await m.restart() }
-        try? await Task.sleep(for: .milliseconds(20))
+        let restart = await waiting { await m.restart() }
         health.release()
         await waitUntil { registrar.unregisters == 1 }
         return (check, restart, unregister)
@@ -387,8 +404,7 @@ final class ProxyServiceManagerTests: XCTestCase {
         let http = StubHTTP(versions: ["6"])
         let m = make(registrar, http)
         let (check, restart, unregister) = await restartHeldMidUnregister(registrar, http, m)
-        let joiner = Task { await m.ensureRunning() }
-        try? await Task.sleep(for: .milliseconds(50))
+        let joiner = await waiting { await m.ensureRunning() }
         unregister.release()
         _ = await (check.value, restart.value, joiner.value)
         XCTAssertEqual(registrar.calls, ["unregister", "register"])
@@ -401,8 +417,7 @@ final class ProxyServiceManagerTests: XCTestCase {
         let http = StubHTTP(versions: ["6"])
         let m = make(registrar, http)
         let (check, restart, unregister) = await restartHeldMidUnregister(registrar, http, m)
-        let uninstall = Task { await m.uninstall() }
-        try? await Task.sleep(for: .milliseconds(50))
+        let uninstall = await waiting { await m.uninstall() }
         unregister.release()
         _ = await (check.value, restart.value, uninstall.value)
         XCTAssertEqual(registrar.calls.last, "unregister", "\(registrar.calls)")

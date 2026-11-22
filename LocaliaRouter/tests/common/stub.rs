@@ -384,7 +384,7 @@ pub async fn routed(
     };
     let clock = clock.unwrap_or_else(|| Arc::new(localia_router::router::SystemClock));
     tokio::spawn(async move {
-        if let Err(e) = serve_with(cfg, listener, clock).await {
+        if let Err(e) = serve_with(cfg, listener, clock, std::future::pending()).await {
             panic!("serve failed: {e:#}");
         }
     });

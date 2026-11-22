@@ -14,6 +14,9 @@ pub type Result<T> = rusqlite::Result<T>;
 /// The error recorded when the client closed the connection.
 pub const CLIENT_CLOSED: &str = "Client closed the connection";
 
+/// The error recorded for a request the router cut because it was stopping (see `server::DRAIN_TIMEOUT`).
+pub const ROUTER_SHUTTING_DOWN: &str = "Router shutting down";
+
 const DAILY_RETENTION_DAYS: i64 = 365;
 const SCHEMA_VERSION: i64 = 2;
 

@@ -1146,9 +1146,12 @@ async fn port_in_use_throws() {
         max_body: 32 << 20,
         max_connections: 32,
     };
-    let second = tokio::time::timeout(Duration::from_secs(5), localia_router::listen(cfg))
-        .await
-        .expect("a second listener on the same port must fail at once, not serve");
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        localia_router::listen(cfg, std::future::pending()),
+    )
+    .await
+    .expect("a second listener on the same port must fail at once, not serve");
     let err = second.expect_err("second listener on the same port");
     assert!(format!("{err:#}").contains(&h.port.to_string()), "{err:#}");
 }

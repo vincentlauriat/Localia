@@ -141,6 +141,10 @@ final class AppModel: ObservableObject {
     /// One-time plain-words notice of the Active model card: the engine of the active model moved (update to
     /// model-first, an engine switched off). Cleared by the card once shown or dismissed.
     @Published var modelNotice: String?
+    /// An Ollama that Localia did not start answers on its port (read by `refreshStatus`).
+    @Published private(set) var ollamaServedByOthers = false
+    /// "Not now" on the external Ollama offer: kept in memory only, so the offer returns on the next launch.
+    @Published private var externalOfferDismissed = false
     /// MLX: what the Hub said about a candidate's `mlx-community` repo, by repo (absent: not asked yet).
     @Published private(set) var mlxRepoState: [String: MLXRepoState] = [:]
 
@@ -258,10 +262,13 @@ final class AppModel: ObservableObject {
 
     /// First run, or no model at all. An engine that is merely stopped is not "nothing installed".
     var needsOnboarding: Bool {
-        !deps.appDefaults.bool(forKey: "onboardingDone") || (unreachableEngines.isEmpty && installed.isEmpty)
+        !deps.appDefaults.bool(forKey: Self.onboardingDoneKey) || (unreachableEngines.isEmpty && installed.isEmpty)
     }
 
-    func finishOnboarding() { deps.appDefaults.set(true, forKey: "onboardingDone") }
+    func finishOnboarding() { deps.appDefaults.set(true, forKey: Self.onboardingDoneKey) }
+
+    /// In `appDefaults` since 1.0.
+    nonisolated static let onboardingDoneKey = "onboardingDone"
 
     /// Unloads what Localia loaded and stops the servers it started (never the user's own). A model or an
     /// engine that a Localia session still uses is left running, so quitting never cuts a live session.
@@ -320,6 +327,7 @@ final class AppModel: ObservableObject {
         heavyApps = deps.memoryGuard.check(requiredGB: 0, profile: profile)?.heavyApps ?? []
         runningSessions = await tracker.runningSessions()
         guard let engine = await registry.active else { activeServing = false; loaded = []; return }
+        ollamaServedByOthers = await registry.engine(.ollama)?.isServedByOthers() ?? false
         activeServing = await engine.isServing()
         loaded = activeServing ? ((try? await engine.loadedModels()) ?? []) : []
         if let mlx = engine as? MLXEngine, let model = await mlx.takeFailure() {
@@ -1032,9 +1040,15 @@ final class AppModel: ObservableObject {
         loadedForShim = loadedForShim.filter { $0.engine != engine.id || names.contains($0.model) }
     }
 
+    /// What the status shows while an engine starts: simple mode never names an engine.
+    func startingMessage(for engine: EngineID) -> String {
+        isSimpleMode ? String(localized: "Getting the model ready…")
+                     : String(localized: "Starting \(Self.engineName(engine))…")
+    }
+
     /// Starts the engine, warns about memory, loads the model and measures it the first time.
     private func prepareLocal(engine: any Engine, model: String) async throws -> LoadOutcome {
-        busyMessage = String(localized: "Starting \(Self.engineName(engine.id))…")
+        busyMessage = startingMessage(for: engine.id)
         let outcome = try await loadWithMemoryCheck(engine: engine, model: model)
         guard outcome != .cancelled else { return outcome }
         // Not while another session uses the engine: the figure would be wrong and the probe would slow it down.
@@ -1232,7 +1246,7 @@ final class AppModel: ObservableObject {
                 let key = ModelKey(engine: e.id, model: m)
                 llamaPending.append(key)
                 defer { release(key) }
-                busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
+                busyMessage = startingMessage(for: e.id)
                 _ = try await loadWithMemoryCheck(engine: e, model: m)
                 busyMessage = nil
             } else {
@@ -1401,13 +1415,16 @@ final class AppModel: ObservableObject {
         await downloadTasks[id]?.value
     }
 
-    func delete(_ row: InstalledRow) async {
-        guard row.deletable, let e = await registry.engine(row.engine) else { return }
+    /// Returns false when this delete failed (an alert says why); a row that is not deletable is skipped.
+    @discardableResult
+    func delete(_ row: InstalledRow) async -> Bool {
+        guard row.deletable, let e = await registry.engine(row.engine) else { return true }
         if await tracker.modelsStillInUse().contains(ModelKey(engine: row.engine, model: row.name)) {
             alert = AppAlert(title: String(localized: "Model in use"),
                              message: String(localized: "A Claude Code session still uses this model."))
-            return
+            return false
         }
+        var deleted = true
         do {
             try await e.delete(row.name)
             loadedByLocalia.remove(ModelKey(engine: row.engine, model: row.name))
@@ -1420,18 +1437,19 @@ final class AppModel: ObservableObject {
             if settings.defaultModel == row.name { settings.defaultModel = nil }
             if settings.lastModel == row.name { settings.lastModel = nil }
         } catch {
+            deleted = false
             show(error, title: String(localized: "Could not delete the model"))
         }
         await refreshInstalled()
         await pushProxyConfig()
+        return deleted
     }
 
     /// Simple mode's single Delete for a model: every copy Localia downloaded goes; stops at the first refusal
-    /// (a session still uses it) or error, which shows its alert.
+    /// (a session still uses it) or error, which shows its alert. An alert already on screen does not stop it.
     func deleteModel(_ rows: [InstalledRow]) async {
         for row in rows where row.deletable {
-            await delete(row)
-            if alert != nil { return }
+            if !(await delete(row)) { return }
         }
     }
 
@@ -1531,6 +1549,22 @@ final class AppModel: ObservableObject {
         let servesIt = !entry.engine.servesOneModel || loaded.contains { $0.name == entry.name }
         if !activeServing || !servesIt { await startEngine() }
     }
+
+    /// Advanced mode only: an Ollama started outside Localia serves a copy of the active model while another
+    /// engine runs it. Accepting makes Ollama the model's engine; simple mode keeps the priority engine.
+    var externalEngineOffer: ExternalEngineOffer? {
+        guard !isSimpleMode, !externalOfferDismissed, ollamaServedByOthers,
+              enabledEngines.contains(.ollama), settings.activeEngine != .ollama,
+              let choice = activeChoice, choice.engines.contains(.ollama) else { return nil }
+        return ExternalEngineOffer(engine: .ollama, choice: choice)
+    }
+
+    func acceptExternalEngineOffer() async {
+        guard let offer = externalEngineOffer else { return }
+        await setOverride(offer.engine, for: offer.choice)
+    }
+
+    func dismissExternalEngineOffer() { externalOfferDismissed = true }
 
     /// Advanced mode "Engine" menu: `nil` is Automatic (priority order). The model is chosen again at once;
     /// a refused move (llama.cpp busy) keeps the previous override.
@@ -1665,7 +1699,7 @@ final class AppModel: ObservableObject {
         if row.engine.servesOneModel { llamaPending.append(key) }
         defer { if row.engine.servesOneModel { release(key) } }
         do {
-            busyMessage = String(localized: "Starting \(Self.engineName(e.id))…")
+            busyMessage = startingMessage(for: e.id)
             if try await loadWithMemoryCheck(engine: e, model: row.name) != .cancelled {
                 await measure(engine: e, model: row.name)
             }
@@ -1985,4 +2019,10 @@ final class RoutingSource {
     var resolver: RouteResolver {
         RouteResolver(routes: settings.engineRoutes, proxyHealthy: !fallback && proxy.isHealthy)
     }
+}
+
+/// "Ollama is already running on this Mac. Use it for <model>?": the engine to offer and the model it is for.
+struct ExternalEngineOffer: Equatable {
+    let engine: EngineID
+    let choice: ModelChoice
 }

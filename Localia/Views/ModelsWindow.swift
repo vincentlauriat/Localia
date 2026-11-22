@@ -1210,11 +1210,19 @@ private struct InstalledChoiceRow: View {
 }
 
 /// One line of an installed model: a copy (advanced mode) or the whole model (simple mode, no file name).
-private struct InstalledCopyLine: View {
+struct InstalledCopyLine: View {
     @ObservedObject var model: AppModel
     let line: InstalledLine
     let modelName: String
     @State private var confirmDelete = false
+
+    /// Simple mode's line has no label (no engine, no file name): no empty selectable Text is rendered for it.
+    static func showsLabel(_ line: InstalledLine) -> Bool { !line.label.isEmpty }
+    /// Advanced mode shows tok/s; simple mode a word (Fast / OK / Slow).
+    static func speedText(tps: Double, advanced: Bool) -> String {
+        advanced ? Fmt.tps(tps) : SpeedBucket(tokensPerSecond: tps).title
+    }
+    private var advanced: Bool { model.settings.advancedMode }
 
     private var deletable: [InstalledRow] { line.rows.filter(\.deletable) }
     /// The copy measured: the first, in priority order (the one the model runs on by default).
@@ -1224,16 +1232,18 @@ private struct InstalledCopyLine: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(verbatim: line.label)
-                .font(.callout).foregroundStyle(.secondary)
-                .lineLimit(1).truncationMode(.middle)
-                .textSelection(.enabled)
+            if Self.showsLabel(line) {
+                Text(verbatim: line.label)
+                    .font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
             Spacer()
             Text(Fmt.gb(line.sizeGB)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
             if let row = measured, let tps = model.settings.measurements.tps[model.candidateID(for: row.name)] {
                 HStack(spacing: 4) {
                     MeasuredMark()
-                    Text(Fmt.tps(tps))
+                    Text(Self.speedText(tps: tps, advanced: advanced))
                 }
                 .font(.callout.monospacedDigit())
             }

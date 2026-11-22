@@ -10,9 +10,9 @@ use crate::engine::{
 use crate::ir::{cut_at_stop, ChatRequest, StreamEvent};
 use crate::metering::{error_message, requesting_usage, status_for, StreamMeter, UsageExtractor};
 use crate::router::{Clock, Decision, Reason, RouteError};
-use crate::server::{error_body, json_response, AppState};
+use crate::server::{error_body, json_response, AppState, Open};
 use crate::sse::{SseLine, SseParser};
-use crate::store::{Content, RequestRow, Status, CLIENT_CLOSED};
+use crate::store::{Content, RequestRow, Status, CLIENT_CLOSED, ROUTER_SHUTTING_DOWN};
 use axum::body::{Body, Bytes};
 use axum::http::header::{self, HeaderName, HeaderValue};
 use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
@@ -349,6 +349,8 @@ struct Ctx {
     /// The content log setting when the request arrived: the capture and the saved row follow this one value,
     /// so a toggle mid-request never stores an empty response or drops a captured one.
     log_content: bool,
+    /// Keeps a stop waiting for this request (see `server::Drain`).
+    _open: Open,
 }
 
 /// The drop guard: a model call whose context goes away unrecorded was cancelled by the client (1.4 recorded
@@ -472,10 +474,18 @@ impl Ctx {
     }
 
     /// Writes the row once the client has its whole answer; a store error is only logged.
-    fn save(&self, row: Row, out: Outcome) {
+    fn save(&self, row: Row, mut out: Outcome) {
         if self.recorded.swap(true, Ordering::AcqRel) {
             return;
         }
+        // A stop past its drain bound closed the client's connection: the router cut this request, not the client.
+        let cut = self.state.drain.is_cut();
+        if cut && out.status == Status::Cancelled && out.error.as_deref() == Some(CLIENT_CLOSED) {
+            out.status = Status::UpstreamError;
+            out.error = Some(ROUTER_SHUTTING_DOWN.to_string());
+        }
+        // The stop waits for the row as well as for the request.
+        let open = self.state.drain.open();
         let state = self.state.clone();
         let session = self.path.session.clone();
         let request = self.body.clone();
@@ -510,13 +520,15 @@ impl Ctx {
             if let Err(e) = state.store.insert(&r, content.as_ref()) {
                 log::error!(target: crate::LOG_CATEGORY, "cannot record request: {e}");
             }
+            drop(open);
         };
-        // The drop guard can run outside the runtime (at shutdown): then it writes in place.
+        // The drop guard can run outside the runtime (at shutdown), and a cut request's row must be written
+        // before the stop returns: then it writes in place.
         match tokio::runtime::Handle::try_current() {
-            Ok(rt) => {
+            Ok(rt) if !cut => {
                 rt.spawn_blocking(write);
             }
-            Err(_) => write(),
+            _ => write(),
         }
     }
 }
@@ -835,6 +847,7 @@ pub async fn handle(state: Arc<AppState>, req: Request<Body>, path: ProxyPath) -
         pending_row: Mutex::new(None),
         recorded: AtomicBool::new(false),
         log_content,
+        _open: state.drain.open(),
         state,
     };
     match ctx.path.segment {
@@ -1007,10 +1020,10 @@ fn passthrough(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let wants_stream = ctx.wants_stream();
-    let streamed = wants_stream || content_type.contains("text/event-stream");
+    // The answer decides, not the request: a streamed request can still get a JSON object back.
+    let streamed = content_type.contains("text/event-stream");
     let headers: Vec<(HeaderName, HeaderValue)> = if gateway {
-        gateway_head(wants_stream)
+        gateway_head(streamed)
     } else {
         resp.headers()
             .iter()
@@ -1097,21 +1110,17 @@ fn passthrough(
         if out.status != Status::Cancelled {
             if let Some(reason) = &interrupted {
                 if ok {
-                    out.status = if row.dialect == Dialect::Anthropic && streamed {
-                        Status::Cancelled
-                    } else {
-                        Status::UpstreamError
-                    };
+                    out.status = Status::UpstreamError;
                     out.error = Some(format!("Upstream stream interrupted: {reason}"));
                 }
             } else if ok && streamed && !terminal {
                 match row.dialect {
                     Dialect::Anthropic => {
-                        out.status = Status::Cancelled;
+                        out.status = Status::UpstreamError;
                         out.error = Some("Stream ended without message_stop".into());
                     }
                     Dialect::Responses => {
-                        out.status = Status::Cancelled;
+                        out.status = Status::UpstreamError;
                         out.error = Some("Stream ended without response.completed".into());
                     }
                     Dialect::Chat => {}
@@ -1624,14 +1633,10 @@ fn finish_translated(
         .unwrap_or((None, None));
     if out.status != Status::Cancelled {
         if let Some(reason) = &end.interrupted {
-            out.status = if d == Dialect::Anthropic {
-                Status::Cancelled
-            } else {
-                Status::UpstreamError
-            };
+            out.status = Status::UpstreamError;
             out.error = Some(format!("Upstream stream interrupted: {reason}"));
         } else if !terminal {
-            out.status = Status::Cancelled;
+            out.status = Status::UpstreamError;
             out.error = Some(
                 match d {
                     Dialect::Responses => "Stream ended without response.completed",

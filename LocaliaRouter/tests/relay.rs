@@ -480,7 +480,7 @@ async fn client_disconnect_records_cancelled() {
 }
 
 #[tokio::test]
-async fn stream_without_message_stop_is_cancelled() {
+async fn stream_without_message_stop_is_upstream_error() {
     let stubs = engines().await;
     let cut = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1200,\"output_tokens\":1}}}\n\n";
     stubs.0.on(move |_| Reply::sse(cut));
@@ -493,12 +493,55 @@ async fn stream_without_message_stop_is_cancelled() {
         "a clean end is passed through as it is"
     );
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled");
+    assert_eq!(r.status, "upstream_error");
     assert_eq!(
         r.error.as_deref(),
         Some("Stream ended without message_stop")
     );
     assert_eq!(r.input, Some(1200));
+}
+
+#[tokio::test]
+async fn responses_stream_without_completed_is_upstream_error() {
+    let stubs = engines().await;
+    let cut = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
+    stubs.1.on(move |_| Reply::sse(cut));
+    let h = router_on(LlamaCpp, &stubs, false).await;
+    let body = r#"{"model":"localia","stream":true,"input":"hi"}"#;
+    let r = post(&h, &path("auto", "/v1/responses"), body).await;
+    assert_eq!(r.status, 200);
+    let r = &wait_rows(&h, 1).await[0];
+    assert_eq!(r.status, "upstream_error");
+    assert_eq!(
+        r.error.as_deref(),
+        Some("Stream ended without response.completed")
+    );
+}
+
+#[tokio::test]
+async fn client_close_during_engine_failure_stays_cancelled() {
+    let stubs = engines().await;
+    let first = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1200,\"output_tokens\":1}}}\n\n";
+    let second = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n";
+    let die = Arc::new(Notify::new());
+    let d = die.clone();
+    stubs.0.on(move |_| {
+        Reply::sse(first).steps(vec![
+            Step::Data(first.into()),
+            Step::Data(second.into()),
+            Step::Wait(d.clone()),
+            Step::Abort,
+        ])
+    });
+    let h = router_on(Ollama, &stubs, false).await;
+    let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
+    s.read_count("content_block_start", 1).await;
+    // Note: this pins the structure, not a race. The pump's biased select takes `sink.closed()` first and
+    // drops the upstream, so the engine's Abort is never read; a client close wins by construction.
+    drop(s); // the client leaves first
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    die.notify_one(); // then the engine dies
+    one_cancelled_row(&h).await;
 }
 
 #[tokio::test]
@@ -781,7 +824,7 @@ async fn midstream_engine_death_never_switches() {
     assert!(tail.contains("The local model server stopped"), "{tail}");
     assert!(stubs.1.seen().is_empty(), "no byte from another engine");
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled", "Anthropic stream, 1.4 parity");
+    assert_eq!(r.status, "upstream_error", "an engine failure is not a client cancel");
     assert!(r
         .error
         .as_deref()
@@ -943,7 +986,7 @@ async fn translated_stream_cut_by_the_engine_ends_with_an_error() {
     assert!(t.contains("event: error"), "{t}");
     assert!(!t.contains("message_stop"));
     let r = &wait_rows(&h, 1).await[0];
-    assert_eq!(r.status, "cancelled");
+    assert_eq!(r.status, "upstream_error");
     assert_eq!(
         r.error.as_deref(),
         Some("Stream ended without message_stop")
@@ -952,6 +995,23 @@ async fn translated_stream_cut_by_the_engine_ends_with_an_error() {
         .await
         .json();
     assert_eq!(health["route"]["engineFailure"], "mlx");
+}
+
+#[tokio::test]
+async fn translated_stream_engine_death_is_upstream_error() {
+    let stubs = engines().await;
+    let c = "data: {\"choices\":[{\"delta\":{\"content\":\"Hal\"}}]}\n\n";
+    stubs.2.on(move |_| Reply::sse("").steps(vec![Step::Data(c.into()), Step::Abort]));
+    let h = router_on(Mlx, &stubs, false).await;
+    let r = post(&h, &path("auto", "/v1/messages"), ANTHROPIC_STREAM).await;
+    assert!(text_of(&r).contains("event: error"));
+    let r = &wait_rows(&h, 1).await[0];
+    assert_eq!(r.status, "upstream_error");
+    assert!(r
+        .error
+        .as_deref()
+        .unwrap()
+        .starts_with("Upstream stream interrupted:"));
 }
 
 // MARK: - Keepalives (manual clock)
@@ -1547,6 +1607,22 @@ async fn passthrough_non_stream_echoes_client_model() {
     assert_eq!(got, want, "only the model changed");
 }
 
+/// Gateway mode (MLX chat completions): a streamed request answered with a JSON object keeps the answer's
+/// own Content-Type, not the request's `text/event-stream`.
+#[tokio::test]
+async fn gateway_json_answer_to_streamed_request_keeps_json_content_type() {
+    let stubs = engines().await;
+    let body = r#"{"id":"c1","object":"chat.completion","model":"mlx-community/Qwen3-8B-4bit","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}"#;
+    stubs.2.on(move |_| Reply::json(body));
+    let h = router_on(Mlx, &stubs, false).await;
+    let r = post(&h, &path("auto", "/v1/chat/completions"), OPENAI_STREAM).await;
+    assert_eq!(r.status, 200);
+    assert_eq!(stubs.2.seen()[0].path, "/v1/chat/completions");
+    let ct = r.header("content-type").unwrap_or("");
+    assert!(ct.contains("application/json"), "content-type was {ct:?}");
+    wait_rows(&h, 1).await;
+}
+
 #[tokio::test]
 async fn passthrough_stream_echoes_client_model() {
     let sse = format!(
@@ -1623,6 +1699,52 @@ async fn passthrough_chat_echoes_client_model_streamed_and_not() {
     let got: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
     assert_eq!(got["model"], "localia");
     assert_eq!(got["choices"][0]["message"]["content"], "hi");
+}
+
+#[tokio::test]
+async fn passthrough_stream_request_with_json_answer_echoes_client_model() {
+    let cases = [
+        (
+            "/v1/messages",
+            r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+            format!(
+                r#"{{"id":"m1","type":"message","role":"assistant","model":"{ENGINE_MODEL}","content":[{{"type":"text","text":"hi"}}],"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+            ),
+        ),
+        (
+            "/v1/responses",
+            r#"{"model":"localia","stream":true,"input":"hi"}"#,
+            format!(
+                r#"{{"id":"r","object":"response","model":"{ENGINE_MODEL}","output":[],"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+            ),
+        ),
+        (
+            "/v1/chat/completions",
+            r#"{"model":"localia","stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+            format!(
+                r#"{{"id":"c","model":"{ENGINE_MODEL}","choices":[{{"message":{{"role":"assistant","content":"hi"}}}}],"usage":{{"prompt_tokens":3,"completion_tokens":1}}}}"#
+            ),
+        ),
+    ];
+    for (rest, client, engine_body) in cases {
+        let h = llama_answering(Reply::json(engine_body.clone())).await;
+        let r = post(&h, &path("auto", rest), client).await;
+        assert_eq!(r.status, 200, "{rest}");
+        let got: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(model_of(&got), Some("localia"), "{rest}: {}", text(&r));
+        let mut want: serde_json::Value = serde_json::from_str(&engine_body).unwrap();
+        want["model"] = "localia".into();
+        assert_eq!(got, want, "{rest}: only the model changed");
+        let row = &wait_rows(&h, 1).await[0];
+        assert_eq!(row.status, "ok", "{rest}");
+        assert_eq!(
+            row.model.as_deref(),
+            Some(QWEN_LLAMA),
+            "{rest}: the real model, as a non-streamed answer records it"
+        );
+        assert_eq!(row.input, Some(3), "{rest}: usage read from the JSON");
+        assert_eq!(row.output, Some(1), "{rest}");
+    }
 }
 
 #[tokio::test]

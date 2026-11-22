@@ -471,7 +471,7 @@ Full licence text (Apache-2.0):
 
 ## mlx-lm and MLX
 
-- Downloaded on request when the MLX engine is installed: `mlx-lm` 0.32.2 (pinned) and its dependency `mlx`, installed by uv into a private environment under `~/Library/Application Support/Localia/engines/mlx/`. `mlx_lm.server` serves MLX models; Localia's own gateway translates the Anthropic Messages API to it.
+- Downloaded on request when the MLX engine is installed: `mlx-lm` 0.32.2 (pinned) and its dependency `mlx`, installed by uv into a private environment under `~/Library/Application Support/Localia/engines/mlx/`. `mlx_lm.server` serves MLX models; the Localia router translates the Anthropic Messages and OpenAI Responses APIs to it.
 - Licence: MIT. Copyright (c) 2023 Apple Inc.
 - https://github.com/ml-explore/mlx-lm, https://github.com/ml-explore/mlx
 

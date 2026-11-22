@@ -23,12 +23,14 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Deserialize;
 use std::convert::Infallible;
+use std::future::Future;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 /// Local engine ports.
@@ -76,6 +78,53 @@ pub struct AppState {
     pub router: Arc<Router>,
     /// The client relayed requests go out with.
     pub http: reqwest::Client,
+    pub drain: Arc<Drain>,
+}
+
+/// What a stop waits for: the requests whose row is not written yet. Past `DRAIN_TIMEOUT` the stop cuts them,
+/// and a request that then loses its client was cut by the router, not by the client.
+#[derive(Default)]
+pub struct Drain {
+    open: AtomicUsize,
+    idle: Notify,
+    cut: AtomicBool,
+}
+
+/// Holds a request open for `Drain` until dropped.
+pub struct Open(Arc<Drain>);
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        if self.0.open.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.idle.notify_waiters();
+        }
+    }
+}
+
+impl Drain {
+    /// Counts a request (or its row being written) until the returned guard is dropped.
+    pub fn open(self: &Arc<Self>) -> Open {
+        self.open.fetch_add(1, Ordering::AcqRel);
+        Open(self.clone())
+    }
+
+    /// The stop has cut the requests still open.
+    pub fn is_cut(&self) -> bool {
+        self.cut.load(Ordering::Acquire)
+    }
+
+    /// Resolves once no request is open.
+    async fn idle(&self) {
+        loop {
+            let notified = self.idle.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.open.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 /// Anthropic-shaped error body: `{"type":"error","error":{"type":…,"message":…}}`.
@@ -101,13 +150,17 @@ pub fn json_response(status: StatusCode, body: Vec<u8>) -> Response<Body> {
     r
 }
 
-/// Binds `127.0.0.1:<cfg.port>` (loopback only) and serves it. Fails at once when the port is taken.
-pub async fn listen(cfg: ServiceConfig) -> anyhow::Result<()> {
+/// Binds `127.0.0.1:<cfg.port>` (loopback only) and serves it until `shutdown` resolves (see `serve_with`).
+/// Fails at once when the port is taken.
+pub async fn listen(cfg: ServiceConfig, shutdown: impl Future<Output = ()>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", cfg.port))
         .await
         .with_context(|| format!("cannot listen on 127.0.0.1:{}", cfg.port))?;
-    serve(cfg, listener).await
+    serve(cfg, listener, shutdown).await
 }
+
+/// How long a stop (SIGTERM) waits for in-flight requests before cutting them; launchd allows 20 s.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How often old rows are purged from the usage store.
 pub const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
@@ -127,16 +180,24 @@ async fn purge_loop(state: Arc<AppState>, clock: Arc<dyn Clock>) {
     }
 }
 
-/// Opens the data directory (token, config, store) and serves `listener` until it fails.
-pub async fn serve(cfg: ServiceConfig, listener: TcpListener) -> anyhow::Result<()> {
-    serve_with(cfg, listener, Arc::new(SystemClock)).await
+/// Opens the data directory (token, config, store) and serves `listener` until `shutdown` resolves.
+pub async fn serve(
+    cfg: ServiceConfig,
+    listener: TcpListener,
+    shutdown: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
+    serve_with(cfg, listener, Arc::new(SystemClock), shutdown).await
 }
 
 /// `serve` with the clock the router's waits and the relay's keepalive timer run on (tests drive it by hand).
+///
+/// Once `shutdown` resolves the listener is closed (new connections are refused) and the requests in flight
+/// may finish, for at most `DRAIN_TIMEOUT`; then the ones left are cut, their rows written, and this returns.
 pub async fn serve_with(
     cfg: ServiceConfig,
     listener: TcpListener,
     clock: Arc<dyn Clock>,
+    shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("cannot create {}", cfg.data_dir.display()))?;
@@ -177,15 +238,26 @@ pub async fn serve_with(
         service: cfg.clone(),
         router,
         http: relay_client,
+        drain: Arc::default(),
     });
     tokio::spawn(purge_loop(state.clone(), clock_for_purge));
+    let drain = state.drain.clone();
     let app = app(state);
 
     let slots = Arc::new(Semaphore::new(cfg.max_connections));
     // Refusals (503) being written; past `max_connections` of them a connection is simply closed.
     let rejecting = Arc::new(Semaphore::new(cfg.max_connections));
+    let mut conns = JoinSet::new();
+    tokio::pin!(shutdown);
     loop {
-        let (stream, _) = match listener.accept().await {
+        let accepted = tokio::select! {
+            biased;
+            _ = &mut shutdown => break,
+            // Reap finished connections so the set holds only live ones.
+            Some(_) = conns.join_next(), if !conns.is_empty() => continue,
+            a = listener.accept() => a,
+        };
+        let (stream, _) = match accepted {
             Ok(c) => c,
             Err(e) => {
                 // Out of descriptors and the like: back off instead of spinning.
@@ -207,7 +279,35 @@ pub async fn serve_with(
                 Err(_) => continue, // dropping the stream closes it
             },
         };
-        tokio::spawn(connection(stream, slot, app.clone(), cfg.clone()));
+        conns.spawn(connection(stream, slot, app.clone(), cfg.clone()));
+    }
+    drop(listener);
+    stop(conns, &drain).await;
+    Ok(())
+}
+
+/// How long the rows of cut requests may take to be written once the drain bound has passed.
+const CUT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Waits for the connections and their requests to end, at most `DRAIN_TIMEOUT`; then cuts what is left.
+async fn stop(mut conns: JoinSet<()>, drain: &Drain) {
+    log::info!(target: crate::LOG_CATEGORY, "stopping: {} connection(s) open", conns.len());
+    let finished = async {
+        while conns.join_next().await.is_some() {}
+        drain.idle().await;
+    };
+    if tokio::time::timeout(DRAIN_TIMEOUT, finished).await.is_ok() {
+        return;
+    }
+    log::error!(target: crate::LOG_CATEGORY, "stopping: requests still open after {DRAIN_TIMEOUT:?}, cutting them");
+    drain.cut.store(true, Ordering::Release);
+    conns.abort_all();
+    let cut = async {
+        while conns.join_next().await.is_some() {}
+        drain.idle().await;
+    };
+    if tokio::time::timeout(CUT_TIMEOUT, cut).await.is_err() {
+        log::error!(target: crate::LOG_CATEGORY, "stopping: rows of cut requests not written");
     }
 }
 

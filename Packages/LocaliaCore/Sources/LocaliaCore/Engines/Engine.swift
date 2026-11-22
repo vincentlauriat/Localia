@@ -58,6 +58,9 @@ public protocol Engine: Sendable {
     /// Only removes an install that Localia manages.
     func uninstall() async throws
     func isServing() async -> Bool
+    /// A server answers that Localia did not start (Ollama.app, a terminal `ollama serve`). Only Ollama can
+    /// tell; every other engine reports false.
+    func isServedByOthers() async -> Bool
     /// No-op if a server already answers (the user's own server is reused).
     func startServing() async throws
     /// Only stops a server that Localia itself started.
@@ -73,6 +76,10 @@ public protocol Engine: Sendable {
     /// Context window (tokens) the server gives this model: `LocaliaConstants.localContextTokens`, lowered to
     /// the model's trained length when that is shorter. Unknown length: `localContextTokens`.
     func contextWindow(_ modelName: String) async -> Int
+}
+
+extension Engine {
+    public func isServedByOthers() async -> Bool { false }
 }
 
 extension LocaliaConstants {

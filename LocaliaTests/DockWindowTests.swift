@@ -78,7 +78,8 @@ final class DockWindowTests: XCTestCase {
         let w = makeWindows(advanced: true)
         w.navigation.selectedPage = .log
         w.model.settings.advancedMode = false
-        try await Task.sleep(nanoseconds: 200_000_000)
+        let deadline = Date().addingTimeInterval(2)
+        while w.navigation.selectedPage != .overview, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertEqual(w.navigation.selectedPage, .overview)
     }
 

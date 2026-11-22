@@ -1,10 +1,13 @@
 //! Runs the real `LocaliaProxyService` binary against a temporary data directory and a free port.
 
+mod common;
+
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 struct Service(Child);
@@ -16,7 +19,49 @@ impl Drop for Service {
     }
 }
 
+/// Held while `free_port` probes a port and while a child is spawned (fork to exec: `spawn` returns once the
+/// child has exec'd). `free_port` only finds a port free and the service binds it later: a child forked
+/// meanwhile would get a copy of the probe socket, keep the port bound, and the service started for it would
+/// exit on "address in use".
+static PROBE_OR_SPAWN: Mutex<()> = Mutex::new(());
+
+fn probe_or_spawn() -> MutexGuard<'static, ()> {
+    PROBE_OR_SPAWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Spawns `cmd` keeping none of this test process's descriptors but stdio.
+///
+/// The tests run on parallel threads, and std on macOS opens a socket first and marks it close-on-exec only
+/// afterwards: a child spawned by another thread in between inherits it for its whole life (a leaked
+/// listener then shows in a service's `lsof` listing, or keeps a port another test's service needs). Just
+/// before exec the child marks every descriptor above stderr close-on-exec (std's exec-error pipe already
+/// is), and it is spawned under `PROBE_OR_SPAWN` so it never copies a `free_port` probe.
+fn spawn_clean(cmd: &mut Command) -> Child {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit only writes the struct it is given.
+    let max_fd = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        limit.rlim_cur.min(65_536) as libc::c_int
+    } else {
+        65_536
+    };
+    // SAFETY: the closure only calls fcntl, which is async-signal-safe, and allocates nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            for fd in 3..max_fd {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+            Ok(())
+        });
+    }
+    let _guard = probe_or_spawn();
+    cmd.spawn().unwrap()
+}
+
 fn free_port() -> u16 {
+    let _guard = probe_or_spawn();
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -25,14 +70,13 @@ fn free_port() -> u16 {
 }
 
 fn start(data: &std::path::Path, port: u16) -> Service {
-    let child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
-        .env("LOCALIA_ROUTER_PORT", port.to_string())
-        .env("LOCALIA_DATA_DIR", data)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    Service(child)
+    Service(spawn_clean(
+        Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+            .env("LOCALIA_ROUTER_PORT", port.to_string())
+            .env("LOCALIA_DATA_DIR", data)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    ))
 }
 
 fn get(port: u16, path: &str) -> Option<String> {
@@ -92,10 +136,13 @@ fn binary_listens_on_loopback_only() {
     let svc = start(data.path(), port);
     wait_health(port);
     let pid = svc.0.id().to_string();
-    let out = Command::new("lsof")
-        .args(["-nP", "-a", "-p", &pid, "-iTCP", "-sTCP:LISTEN", "-Fn"])
-        .output()
-        .unwrap();
+    let out = spawn_clean(
+        Command::new("lsof")
+            .args(["-nP", "-a", "-p", &pid, "-iTCP", "-sTCP:LISTEN", "-Fn"])
+            .stdout(Stdio::piped()),
+    )
+    .wait_with_output()
+    .unwrap();
     let listing = String::from_utf8_lossy(&out.stdout).to_string();
     let addrs: Vec<String> = listing
         .lines()
@@ -163,15 +210,15 @@ fn binary_reads_the_app_version_when_started_like_launchd() {
     std::fs::copy(env!("CARGO_BIN_EXE_LocaliaProxyService"), &exe).unwrap();
     let data = tempfile::tempdir().unwrap();
     let port = free_port();
-    let child = Command::new(&exe)
-        .arg0("Contents/MacOS/LocaliaProxyService")
-        .current_dir("/")
-        .env("LOCALIA_ROUTER_PORT", port.to_string())
-        .env("LOCALIA_DATA_DIR", data.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let child = spawn_clean(
+        Command::new(&exe)
+            .arg0("Contents/MacOS/LocaliaProxyService")
+            .current_dir("/")
+            .env("LOCALIA_ROUTER_PORT", port.to_string())
+            .env("LOCALIA_DATA_DIR", data.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
     let _svc = Service(child);
     let reply = wait_health(port);
     let body: serde_json::Value =
@@ -182,13 +229,13 @@ fn binary_reads_the_app_version_when_started_like_launchd() {
 #[test]
 fn binary_exits_1_on_an_invalid_port_override() {
     let data = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
-        .env("LOCALIA_ROUTER_PORT", "not-a-port")
-        .env("LOCALIA_DATA_DIR", data.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = spawn_clean(
+        Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+            .env("LOCALIA_ROUTER_PORT", "not-a-port")
+            .env("LOCALIA_DATA_DIR", data.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped()),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -211,5 +258,248 @@ fn binary_exits_1_on_an_invalid_port_override() {
             panic!("the service kept running with an invalid port");
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+// MARK: - SIGTERM (launchd unregistering the agent during an update)
+
+mod sigterm {
+    use super::common::stub::{routing, rows, target, Reply, Step, Stub};
+    use super::common::{request, Harness, TOKEN};
+    use localia_router::config::ProxyConfig;
+    use localia_router::engine::EngineKind::{LlamaCpp, Mlx, Ollama};
+    use localia_router::server::DRAIN_TIMEOUT;
+    use std::process::{Child, Command, ExitStatus, Stdio};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    use tokio::sync::Notify;
+
+    const SESSION: &str = "0F2B7C1E-5A1D-4E5B-9C33-1D2E3F405162";
+    const BODY: &str = r#"{"model":"qwen3:8b","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+
+    /// The real binary in front of three stub engines, Ollama active.
+    struct Running {
+        child: Child,
+        h: Harness,
+        _stubs: (Stub, Stub, Stub),
+    }
+
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    impl Running {
+        fn sigterm(&self) {
+            assert_eq!(
+                unsafe { libc::kill(self.child.id() as i32, libc::SIGTERM) },
+                0
+            );
+        }
+
+        /// Waits up to `limit` for the process to exit.
+        async fn exit_within(&mut self, limit: Duration) -> Option<ExitStatus> {
+            let deadline = Instant::now() + limit;
+            while Instant::now() < deadline {
+                if let Some(st) = self.child.try_wait().unwrap() {
+                    return Some(st);
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            None
+        }
+    }
+
+    /// The fixture stream, cut after its first event: (first event, the rest).
+    fn stream() -> (Vec<u8>, Vec<u8>) {
+        let sse = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden/matrix/anthropic-stream-usage.sse"),
+        )
+        .unwrap();
+        let cut = sse.windows(2).position(|w| w == b"\n\n").unwrap() + 2;
+        (sse[..cut].to_vec(), sse[cut..].to_vec())
+    }
+
+    async fn start(stubs: (Stub, Stub, Stub)) -> Running {
+        let data = tempfile::tempdir().unwrap();
+        let sessions = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("token"), TOKEN).unwrap();
+        ProxyConfig {
+            log_content: false,
+            retention_days: 7,
+            routing: Some(routing(
+                Some(target(Ollama, "qwen3:8b", 65536)),
+                vec![],
+                None,
+            )),
+        }
+        .save(&data.path().join("config.json"))
+        .unwrap();
+        let port = super::free_port();
+        let child = super::spawn_clean(
+            Command::new(env!("CARGO_BIN_EXE_LocaliaProxyService"))
+                .env("LOCALIA_ROUTER_PORT", port.to_string())
+                .env("LOCALIA_DATA_DIR", data.path())
+                .env(
+                    "LOCALIA_ENGINE_PORTS",
+                    format!("{},{},{}", stubs.0.port, stubs.1.port, stubs.2.port),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        );
+        let running = Running {
+            child,
+            h: Harness {
+                port,
+                data,
+                sessions,
+            },
+            _stubs: stubs,
+        };
+        tokio::task::spawn_blocking(move || super::wait_health(port))
+            .await
+            .unwrap();
+        running
+    }
+
+    async fn engines() -> (Stub, Stub, Stub) {
+        (
+            Stub::start(Ollama, &["qwen3:8b"]).await,
+            Stub::start(LlamaCpp, &[]).await,
+            Stub::start(Mlx, &[]).await,
+        )
+    }
+
+    /// Opens a streamed Anthropic request and reads until its first event arrived.
+    async fn open_stream(port: u16) -> (TcpStream, Vec<u8>) {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let path = format!("/s/{SESSION}/ollama/v1/messages");
+        s.write_all(&request(port, "POST", &path, &[], BODY.as_bytes()))
+            .await
+            .unwrap();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 4096];
+        while !String::from_utf8_lossy(&got).contains("message_start") {
+            let k = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
+                .await
+                .expect("no first event within 10 s")
+                .unwrap();
+            assert!(
+                k > 0,
+                "closed before the first event: {:?}",
+                String::from_utf8_lossy(&got)
+            );
+            got.extend_from_slice(&buf[..k]);
+        }
+        (s, got)
+    }
+
+    /// One stream held after its first event, until `release` is notified.
+    async fn held_stream(release: Arc<Notify>) -> Running {
+        let (first, rest) = stream();
+        let stubs = engines().await;
+        stubs.0.on(move |_| {
+            Reply::sse(Vec::new()).steps(vec![
+                Step::Data(first.clone()),
+                Step::Wait(release.clone()),
+                Step::Data(rest.clone()),
+            ])
+        });
+        start(stubs).await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sigterm_lets_an_inflight_stream_finish() {
+        let release = Arc::new(Notify::new());
+        let mut r = held_stream(release.clone()).await;
+        let (mut s, mut got) = open_stream(r.h.port).await;
+        r.sigterm();
+        // The engine goes on answering for a while after the signal.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut got))
+            .await
+            .expect("the stream never ended")
+            .unwrap();
+        let text = String::from_utf8_lossy(&got).to_string();
+        assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+        assert!(text.contains("message_stop"), "the stream was cut: {text}");
+        let st = r
+            .exit_within(Duration::from_secs(5))
+            .await
+            .expect("still running 5 s after the stream ended");
+        assert_eq!(st.code(), Some(0), "{st:?}");
+        let rows = rows(&r.h);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].status, "ok", "{rows:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sigterm_refuses_new_connections() {
+        let release = Arc::new(Notify::new());
+        let r = held_stream(release.clone()).await;
+        let (_s, _) = open_stream(r.h.port).await;
+        r.sigterm();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let answered = match TcpStream::connect(("127.0.0.1", r.h.port)).await {
+            Err(_) => None,
+            Ok(mut s) => {
+                let _ = s
+                    .write_all(&request(r.h.port, "GET", "/localia/health", &[], b""))
+                    .await;
+                // Closed (end of stream or reset) without an answer; a connection left waiting fails too.
+                let mut buf = Vec::new();
+                match tokio::time::timeout(Duration::from_secs(2), s.read_to_end(&mut buf)).await {
+                    Err(_) => Some(b"(accepted, left waiting)".to_vec()),
+                    Ok(_) => Some(buf).filter(|b| !b.is_empty()),
+                }
+            }
+        };
+        assert_eq!(
+            answered.map(|b| String::from_utf8_lossy(&b).to_string()),
+            None,
+            "a connection after SIGTERM was served"
+        );
+        release.notify_one();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sigterm_idle_exits_quickly() {
+        let mut r = start(engines().await).await;
+        let sent = Instant::now();
+        r.sigterm();
+        let st = r
+            .exit_within(Duration::from_secs(1))
+            .await
+            .expect("still running 1 s after SIGTERM with nothing in flight");
+        assert_eq!(st.code(), Some(0), "{st:?}");
+        assert!(sent.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sigterm_drain_is_bounded() {
+        // Never released: the engine stalls forever after its first event.
+        let release = Arc::new(Notify::new());
+        let mut r = held_stream(release.clone()).await;
+        let (_s, _) = open_stream(r.h.port).await;
+        r.sigterm();
+        let st = r
+            .exit_within(DRAIN_TIMEOUT + Duration::from_secs(3))
+            .await
+            .expect("the drain was not bounded");
+        assert_eq!(st.code(), Some(0), "{st:?}");
+        let rows = rows(&r.h);
+        assert_eq!(rows.len(), 1, "the cut stream was not recorded: {rows:?}");
+        assert_eq!(rows[0].status, "upstream_error", "{rows:?}");
+        assert_eq!(
+            rows[0].error.as_deref(),
+            Some("Router shutting down"),
+            "{rows:?}"
+        );
     }
 }
