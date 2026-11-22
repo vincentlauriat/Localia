@@ -6,6 +6,15 @@
     <description>Localia release feed</description>
     <language>en</language>
     <item>
+      <title>v1.4.1</title>
+      <pubDate>Sun, 22 Nov 2026 22:58:52 +0100</pubDate>
+      <sparkle:version>12</sparkle:version>
+      <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/vincentlauriat/Localia/releases/tag/v1.4.1</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/vincentlauriat/Localia/releases/download/v1.4.1/Localia-1.4.1.dmg" type="application/octet-stream" sparkle:edSignature="MsrzoRbiRAdS1jAjc2VveLj5bFqAZXuB33wJ41DB0XGZoWuCrwQ0zF5ZVWp4eZnjM5ppnaufFC2eKqEPL3k8Bw==" length="18031456" />
+    </item>
+    <item>
       <title>v1.4.0</title>
       <pubDate>Sat, 21 Nov 2026 11:47:35 +0100</pubDate>
       <sparkle:version>11</sparkle:version>
