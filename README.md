@@ -31,7 +31,7 @@ The app is signed with a Developer ID and notarized by Apple.
 
 ## First run
 
-1. Launch Localia. The welcome window offers **Set Up My AI**: Localia picks the model that suits this Mac, then installs what is missing, one step at a time: an engine (Ollama, on a Mac that has none), Claude Code (with Anthropic's official installer) and the model. Local mode is turned on last, once everything worked. Nothing is installed before you click.
+1. Launch Localia. The welcome window offers **Set Up My AI**: Localia picks the model that suits this Mac, then installs what is missing, one step at a time: an engine (llama.cpp, which Localia installs, starts and updates itself; a Mac that ran an earlier Localia keeps its engine), Claude Code (with Anthropic's official installer) and the model. Local mode is turned on last, once everything worked. Nothing is installed before you click.
 2. Click the Localia pin in the menu bar, then **Open Claude in a folder…** (in advanced mode, **Launch Claude Code**), and pick a folder.
 3. For more, click **Open Localia** in the panel: the **Models** page shows the three models recommended for this Mac, and **See all models…** (or advanced mode) opens the full catalog and Hugging Face. In advanced mode the panel also shows the speed, free memory, the active model and its engine, installed models, memory-hungry apps and running sessions, and, in local mode, Codex, OpenCode and Pi next to Claude Code.
 
