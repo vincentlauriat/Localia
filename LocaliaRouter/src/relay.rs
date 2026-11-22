@@ -1008,7 +1008,8 @@ fn passthrough(
         .unwrap_or("")
         .to_ascii_lowercase();
     let wants_stream = ctx.wants_stream();
-    let streamed = wants_stream || content_type.contains("text/event-stream");
+    // The answer decides, not the request: a streamed request can still get a JSON object back.
+    let streamed = content_type.contains("text/event-stream");
     let headers: Vec<(HeaderName, HeaderValue)> = if gateway {
         gateway_head(wants_stream)
     } else {

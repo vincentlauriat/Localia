@@ -1667,6 +1667,47 @@ async fn passthrough_chat_echoes_client_model_streamed_and_not() {
 }
 
 #[tokio::test]
+async fn passthrough_stream_request_with_json_answer_echoes_client_model() {
+    let cases = [
+        (
+            "/v1/messages",
+            r#"{"model":"localia","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+            format!(
+                r#"{{"id":"m1","type":"message","role":"assistant","model":"{ENGINE_MODEL}","content":[{{"type":"text","text":"hi"}}],"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+            ),
+        ),
+        (
+            "/v1/responses",
+            r#"{"model":"localia","stream":true,"input":"hi"}"#,
+            format!(
+                r#"{{"id":"r","object":"response","model":"{ENGINE_MODEL}","output":[],"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+            ),
+        ),
+        (
+            "/v1/chat/completions",
+            r#"{"model":"localia","stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+            format!(
+                r#"{{"id":"c","model":"{ENGINE_MODEL}","choices":[{{"message":{{"role":"assistant","content":"hi"}}}}],"usage":{{"prompt_tokens":3,"completion_tokens":1}}}}"#
+            ),
+        ),
+    ];
+    for (rest, client, engine_body) in cases {
+        let h = llama_answering(Reply::json(engine_body.clone())).await;
+        let r = post(&h, &path("auto", rest), client).await;
+        assert_eq!(r.status, 200, "{rest}");
+        let got: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(model_of(&got), Some("localia"), "{rest}: {}", text(&r));
+        let mut want: serde_json::Value = serde_json::from_str(&engine_body).unwrap();
+        want["model"] = "localia".into();
+        assert_eq!(got, want, "{rest}: only the model changed");
+        let row = &wait_rows(&h, 1).await[0];
+        assert_eq!(row.status, "ok", "{rest}");
+        assert_eq!(row.input, Some(3), "{rest}: usage read from the JSON");
+        assert_eq!(row.output, Some(1), "{rest}");
+    }
+}
+
+#[tokio::test]
 async fn pinned_passthrough_keeps_engine_model() {
     let body = format!(r#"{{"model":"{ENGINE_MODEL}","content":[]}}"#);
     let stubs = engines().await;
