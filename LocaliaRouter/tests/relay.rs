@@ -536,6 +536,8 @@ async fn client_close_during_engine_failure_stays_cancelled() {
     let h = router_on(Ollama, &stubs, false).await;
     let mut s = open_request(&h, &path("ollama", "/v1/messages"), ANTHROPIC_STREAM).await;
     s.read_count("content_block_start", 1).await;
+    // Note: this pins the structure, not a race. The pump's biased select takes `sink.closed()` first and
+    // drops the upstream, so the engine's Abort is never read; a client close wins by construction.
     drop(s); // the client leaves first
     tokio::time::sleep(Duration::from_millis(200)).await;
     die.notify_one(); // then the engine dies
@@ -1603,6 +1605,22 @@ async fn passthrough_non_stream_echoes_client_model() {
     assert_eq!(got["model"], "localia");
     want["model"] = "localia".into();
     assert_eq!(got, want, "only the model changed");
+}
+
+/// Gateway mode (MLX chat completions): a streamed request answered with a JSON object keeps the answer's
+/// own Content-Type, not the request's `text/event-stream`.
+#[tokio::test]
+async fn gateway_json_answer_to_streamed_request_keeps_json_content_type() {
+    let stubs = engines().await;
+    let body = r#"{"id":"c1","object":"chat.completion","model":"mlx-community/Qwen3-8B-4bit","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}"#;
+    stubs.2.on(move |_| Reply::json(body));
+    let h = router_on(Mlx, &stubs, false).await;
+    let r = post(&h, &path("auto", "/v1/chat/completions"), OPENAI_STREAM).await;
+    assert_eq!(r.status, 200);
+    assert_eq!(stubs.2.seen()[0].path, "/v1/chat/completions");
+    let ct = r.header("content-type").unwrap_or("");
+    assert!(ct.contains("application/json"), "content-type was {ct:?}");
+    wait_rows(&h, 1).await;
 }
 
 #[tokio::test]

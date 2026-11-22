@@ -1024,7 +1024,7 @@ fn passthrough(
     // The answer decides, not the request: a streamed request can still get a JSON object back.
     let streamed = content_type.contains("text/event-stream");
     let headers: Vec<(HeaderName, HeaderValue)> = if gateway {
-        gateway_head(wants_stream)
+        gateway_head(streamed)
     } else {
         resp.headers()
             .iter()
