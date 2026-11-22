@@ -76,7 +76,12 @@ async fn purges_at_start_then_every_hour() {
         max_connections: 4,
     };
     let clock = ManualClock::new();
-    tokio::spawn(serve_with(cfg, listener, clock.clone() as Arc<_>));
+    tokio::spawn(serve_with(
+        cfg,
+        listener,
+        clock.clone() as Arc<_>,
+        std::future::pending(),
+    ));
 
     // at start: the 40-day-old row goes, the 1-day-old one stays
     eventually(&db, 1).await;
