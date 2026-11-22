@@ -483,6 +483,46 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(shim.bases.count, 1)
     }
 
+    /// In "every claude" scope the shim follows the router: Direct while it is down, the routed URL (and a
+    /// proxy probe) once the status poll sees it healthy, the engine's own address again when it dies.
+    func test_everyClaudeScope_shimMovesToTheRouterWhenItBecomesHealthy() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .unavailable(reason: "starting"))
+        proxy.routeAnswers = false
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5),
+                              proxyRecheckInterval: .milliseconds(1)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+            $0.engineRoutes[.ollama] = .proxy
+        }
+        await model.ensureProxy()
+        XCTAssertEqual(shim.bases.last, engine.baseURL, "router down: the engine's own address")
+        XCTAssertNil(shim.proxyProbes.last ?? nil)
+        proxy.routeAnswers = true
+        proxy.stateAfterCheck = .running(version: "dev")
+        await waitUntil { shim.bases.last.map { ProxyURL.isRouted($0) } == true }
+        XCTAssertEqual(shim.bases.last?.port, LocaliaConstants.proxyPort)
+        XCTAssertNotNil(shim.proxyProbes.last ?? nil, "a routed state carries the proxy probe")
+    }
+
+    func test_everyClaudeScope_shimMovesBackToTheEngineWhenTheRouterStopsBeingHealthy() async {
+        let shim = FakeShim()
+        let proxy = FakeProxyService(state: .running(version: "dev"))
+        let engine = FakeEngine(installed: ["m1"])
+        let model = makeModel(engine: engine, shim: shim, proxy: proxy, routePollInterval: .milliseconds(5),
+                              proxyRecheckInterval: .milliseconds(1)) {
+            $0.localModeOn = true; $0.localModeScope = .everyClaude; $0.lastModel = "m1"
+            $0.engineRoutes[.ollama] = .proxy
+        }
+        await model.startRouting()
+        XCTAssertEqual(shim.bases.last?.port, LocaliaConstants.proxyPort)
+        proxy.routeAnswers = false
+        proxy.stateAfterCheck = .unavailable(reason: "died")
+        await waitUntil { shim.bases.last == engine.baseURL }
+        XCTAssertEqual(shim.bases.last, engine.baseURL)
+        XCTAssertNil(shim.proxyProbes.last ?? nil)
+    }
+
     func test_changingRoute_refreshesTheShimState() async {
         let shim = FakeShim()
         let model = makeModel(engine: FakeEngine(installed: []), shim: shim)
@@ -2189,11 +2229,14 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     private var _uninstalls = 0
     private var _states: [Bool] = []
     private var _bases: [URL] = []
+    private var _probes: [URL?] = []
     var uninstalls: Int { lock.lock(); defer { lock.unlock() }; return _uninstalls }
     /// `on` of each state write.
     var states: [Bool] { lock.lock(); defer { lock.unlock() }; return _states }
     /// `baseURL` of each state write.
     var bases: [URL] { lock.lock(); defer { lock.unlock() }; return _bases }
+    /// `proxyProbe` of each state write (nil: the engine goes direct).
+    var proxyProbes: [URL?] { lock.lock(); defer { lock.unlock() }; return _probes }
     init(failWrites: Bool = false) { self.failWrites = failWrites }
     func install() throws {}
     func uninstall() throws { lock.withLock { _uninstalls += 1 } }
@@ -2201,7 +2244,7 @@ final class FakeShim: ShellShimming, @unchecked Sendable {
     func writeState(on: Bool, baseURL: URL, model: String, contextTokens: Int, policy: EngineDownPolicy,
                     profile: LaunchProfile, engine: EngineID, proxyProbe: URL?) throws {
         if failWrites { throw ShellShimError.notWritable("state.env") }
-        lock.withLock { _states.append(on); _bases.append(baseURL) }
+        lock.withLock { _states.append(on); _bases.append(baseURL); _probes.append(proxyProbe) }
     }
 }
 
